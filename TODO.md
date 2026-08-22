@@ -8,75 +8,6 @@ Last audited: 2026-08-22 (Google Sign-In hosted chooser check).
 Sign-In is code-complete and the hosted app now reaches Google's account chooser; **the
 remaining end-to-end check is selecting an approved account and confirming the D1 row**.
 
----
-
-## HANDOVER — read this first
-
-The last action taken was checking the hosted app after the HTTP 500 fix. The app now
-reaches Google's account chooser, so the missing-`httpx` failure is cleared. Pick up at
-account selection and D1 persistence.
-
-### What is already true
-
-- Worker live at `https://onnm-community.kali-fz.workers.dev`; D1 `onnm-community`
-  (id `961f0440-7ff1-466e-88fe-0c2b30f3083b`) migrated to schema_version 2.
-- App live at `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`.
-- D1 is **empty and clean** (`users=0, submissions=0`) — all diagnostic rows removed.
-- Streamlit secrets are correct. The TOML was parsed and all five `ONNM_*` keys verified
-  at top level, none absorbed into `[auth]`. Do not re-litigate this.
-- Google Cloud project `onn-model`, OAuth client created, redirect URI
-  `.../oauth2callback` registered, consent screen in **Testing** mode (so only listed
-  test users can sign in — check this before believing an "access blocked" error).
-
-### The two bugs found and fixed this session
-
-1. **Account creation failed with an opaque `CommunityError`.** Cloudflare's edge bans the
-   default `Python-urllib/3.x` User-Agent with a 403 and a plain-text `error code: 1010`
-   body, before the Worker is reached. Fixed by `community.USER_AGENT`. **Verified fixed
-   against live D1** (users went 0 → 1 through the real client path).
-
-2. **Google sign-in returned a bare HTTP 500 `Internal server error.`** Root cause is a
-   missing `httpx`: `authlib.integrations.starlette_client` imports it, Authlib does not
-   declare it, and Streamlit's docs only say "install Authlib". The
-   `ModuleNotFoundError` is raised in `_create_oauth_client`, which sits *outside* the
-   `/auth/login` route's `try/except`, so it escapes as an unhandled 500 rather than the
-   route's tidy 400. Reproduced locally in a clean venv: `Authlib` + `starlette` alone
-   fails with `MISSING MODULE: httpx`; adding `httpx` makes the import succeed.
-   **Fix pushed (`httpx>=0.27`, `itsdangerous>=2.1` in `requirements.txt`) but NOT yet
-   confirmed on the deployed app.**
-
-### Next action (in order)
-
-1. **Dependency fix confirmed live.** The hosted app reaches Google's account chooser,
-   which proves the former missing-`httpx` 500 is no longer occurring. If this regresses
-   after a future dependency change, use Manage app → logs to confirm the install; saving
-   secrets alone only reboots and does not reinstall dependencies.
-2. **Have the user select an approved Google test account and complete sign-in** (they
-   must — it needs their credentials).
-3. **Confirm it reached D1, do not assume.** `users` must move 0 → 1:
-   ```
-   curl -H "Authorization: Bearer $ONNM_COMMUNITY_KEY" \
-        -H "User-Agent: ONNM-Streamlit/1.0" \
-        https://onnm-community.kali-fz.workers.dev/health
-   ```
-   The User-Agent header is not optional — see bug 1.
-4. If sign-in still 500s, get the traceback from Manage app → logs. Do not guess; the
-   route deliberately hides its error from the client.
-
-### Error → cause map for the sign-in flow
-
-| Symptom | Cause |
-|---|---|
-| HTTP 500 `Internal server error.` at `/auth/login` | missing `httpx` (or Authlib) |
-| HTTP 400 `Authentication error` | failure *inside* `authorize_redirect` — provider config |
-| `redirect_uri_mismatch` | URI in Google console differs by even one character |
-| `Access blocked` / not a test user | address not on the Testing-mode allowlist |
-| `invalid_client` | client id or secret pasted wrong |
-| Password forms still showing | `[auth]` not read — app has not restarted, or TOML malformed |
-| Signs in fine but `users` stays 0 | `ONNM_COMMUNITY_KEY` absorbed into `[auth]` by TOML ordering |
-
----
-
 ## Done
 
 ### Infrastructure
@@ -251,9 +182,9 @@ account selection and D1 persistence.
       Cloudflare and states what each receives
 - [x] `.streamlit/secrets.toml` added to `.gitignore` — it was committable in a public
       repo and would hold the Google client secret and cookie secret
-- [x] `httpx` + `itsdangerous` pinned. Authlib's Starlette integration imports httpx but
-      does not declare it, and the resulting error escapes the login route's handler as a
-      bare HTTP 500 (**fix pushed, not yet confirmed live — see handover**)
+- [x] `httpx` + `itsdangerous` pinned. Authlib's Starlette integration imports `httpx`
+      without declaring it; the hosted app now reaches Google's account chooser, proving
+      the former HTTP 500 is fixed.
 
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**,
