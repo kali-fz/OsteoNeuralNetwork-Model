@@ -22,6 +22,14 @@ dist/
 venv/
 env/
 
+# --- Secrets ----------------------------------------------------------------
+# .env holds API keys and backend credentials. None of the patterns above match
+# it: `env/` is a directory pattern and `.venv/` is a different name entirely,
+# so before this block .env was fully committable. Keep these lines.
+.env
+.env.*
+!.env.example
+
 # --- Tooling ----------------------------------------------------------------
 .pytest_cache/
 .ruff_cache/

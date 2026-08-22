@@ -99,6 +99,33 @@ def build_scheduler(optimizer: torch.optim.Optimizer, cfg, steps_per_epoch: int)
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
+def resolve_amp_dtype(cfg, device: torch.device) -> torch.dtype | None:
+    """Choose the autocast dtype, falling back when the GPU has no bf16.
+
+    bf16 is the project default because it shares fp32's exponent range, so it
+    needs no ``GradScaler`` and cannot silently underflow a gradient. Not every
+    card has it: Turing (Colab's free T4, sm_75) has none at all, and autocast
+    there either refuses or emulates it at a large cost. Both failures are
+    quiet and both waste an entire run, so the capability is checked up front
+    rather than inferred later from a suspicious epoch time.
+
+    Returns ``None`` when AMP is off or the device is CPU, which is what
+    ``run_epoch`` treats as "run in fp32".
+    """
+    if not bool(cfg.train.amp) or device.type != "cuda":
+        return None
+
+    dtype = amp_dtype_from_str(cfg.train.amp_dtype)
+    if dtype is torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        logger.warning(
+            "%s does not support bfloat16; falling back to float16 with a GradScaler. "
+            "Set train.amp_dtype explicitly to silence this.",
+            torch.cuda.get_device_name(device),
+        )
+        return torch.float16
+    return dtype
+
+
 def run_epoch(
     model: nn.Module,
     loader,
@@ -109,6 +136,7 @@ def run_epoch(
     amp_dtype: torch.dtype | None = None,
     grad_clip: float = 0.0,
     governor: Any = None,
+    scaler: Any = None,
 ) -> dict[str, Any]:
     """Run one pass. Training when ``optimizer`` is given, evaluation otherwise.
 
@@ -136,10 +164,23 @@ def run_epoch(
 
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                if grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                optimizer.step()
+                if scaler is not None and scaler.is_enabled():
+                    # fp16 only. The scale factor keeps small gradients out of
+                    # the subnormal range, and must be removed again before
+                    # clipping -- clipping a scaled gradient applies the
+                    # threshold at the wrong magnitude, which would either do
+                    # nothing or clip everything depending on the current scale.
+                    scaler.scale(loss).backward()
+                    if grad_clip > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    if grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    optimizer.step()
                 # ReduceLROnPlateau is driven per epoch from a metric, so it is
                 # stepped by the caller. Stepping it here would advance its
                 # patience counter once per batch and collapse the LR.
@@ -205,10 +246,14 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
 
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg, len(train_loader))
-    amp_dtype = (
-        amp_dtype_from_str(cfg.train.amp_dtype)
-        if bool(cfg.train.amp) and device.type == "cuda"
-        else None
+    amp_dtype = resolve_amp_dtype(cfg, device)
+    # Enabled only for fp16, so the bf16 path this project trains on locally is
+    # bit-for-bit unchanged: a disabled GradScaler is a no-op wrapper.
+    scaler = torch.amp.GradScaler(device.type, enabled=(amp_dtype is torch.float16))
+    logger.info(
+        "AMP: %s (GradScaler %s)",
+        "off" if amp_dtype is None else str(amp_dtype).removeprefix("torch."),
+        "on" if scaler.is_enabled() else "off",
     )
 
     monitor = str(cfg.train.early_stopping_metric)
@@ -231,7 +276,7 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
 
         train_metrics = run_epoch(
             model, train_loader, criterion, device, optimizer, scheduler,
-            amp_dtype, float(cfg.train.grad_clip), governor=governor,
+            amp_dtype, float(cfg.train.grad_clip), governor=governor, scaler=scaler,
         )
         val_metrics = run_epoch(model, val_loader, criterion, device, amp_dtype=amp_dtype)
 
@@ -328,6 +373,11 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
         "best_score": best_score,
         "best_epoch": best_epoch + 1,
         "history": history,
+        # The *effective* dtype, which is not always the configured one -- see
+        # resolve_amp_dtype. A run record that says bfloat16 when fp16 was used
+        # would make two runs look comparable when they are not.
+        "amp_dtype": None if amp_dtype is None else str(amp_dtype).removeprefix("torch."),
+        "grad_scaler": scaler.is_enabled(),
     }
     if device.type == "cuda":
         peak_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
