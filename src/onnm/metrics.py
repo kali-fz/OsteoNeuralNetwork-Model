@@ -17,6 +17,7 @@ reports the quantities that actually distinguish a useful model:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -109,6 +110,105 @@ def clinical_errors(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int = 3
         # Over-calling costs biopsies and anxiety, so it belongs in the report too.
         "normal_called_malignant": int(cm[NORMAL_INDEX, MALIGNANT_INDEX]),
     }
+
+
+def reliability_bins(
+    y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 15
+) -> list[dict[str, float]]:
+    """Per-bin confidence vs accuracy — the data behind a reliability diagram.
+
+    Scalar ECE compresses the whole calibration story into one number; a model
+    can be overconfident above 0.9 and underconfident below 0.5 and still post
+    a flattering average. These rows expose where on the confidence axis the
+    gap lives. Binning matches ``expected_calibration_error`` in
+    :mod:`onnm.calibrate` (equal-width, left-open) so the diagram and the
+    scalar are two views of the same computation, not two computations.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob, dtype=np.float64)
+    confidence = y_prob.max(axis=1)
+    correct = (y_prob.argmax(axis=1) == y_true).astype(np.float64)
+
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    rows: list[dict[str, float]] = []
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+        mask = (confidence > lo) & (confidence <= hi) if lo > 0 else confidence <= hi
+        count = int(mask.sum())
+        rows.append(
+            {
+                "bin_lo": float(lo),
+                "bin_hi": float(hi),
+                "count": count,
+                "mean_confidence": float(confidence[mask].mean()) if count else float("nan"),
+                "accuracy": float(correct[mask].mean()) if count else float("nan"),
+                "gap": (
+                    float(confidence[mask].mean() - correct[mask].mean())
+                    if count
+                    else float("nan")
+                ),
+            }
+        )
+    return rows
+
+
+def stratified_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    strata: Sequence[str],
+    normal_index: int = NORMAL_INDEX,
+    min_support: int = 5,
+) -> dict[str, dict[str, Any]]:
+    """Lesion-level error rates broken out by a per-sample stratum label.
+
+    ``strata`` is any per-sample grouping — anatomy region, tumour subtype,
+    view. The complaint driving this is specific ("false positives on complex
+    joint anatomy"), so the report answers a specific question: *which strata
+    produce the false positives, and which hide the missed lesions?*
+
+    Strata with fewer than ``min_support`` samples are still reported but
+    flagged ``low_support`` — at n=3 a single error is a 33-point rate swing
+    and must not be read as a finding.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    strata = np.asarray(list(strata), dtype=object)
+    if not (len(y_true) == len(y_pred) == len(strata)):
+        raise ValueError(
+            f"length mismatch: y_true={len(y_true)}, y_pred={len(y_pred)}, "
+            f"strata={len(strata)}"
+        )
+
+    true_lesion = y_true != normal_index
+    pred_lesion = y_pred != normal_index
+
+    out: dict[str, dict[str, Any]] = {}
+    for stratum in sorted({str(s) for s in strata}):
+        mask = strata == stratum
+        n = int(mask.sum())
+        n_lesion = int(true_lesion[mask].sum())
+        n_normal = n - n_lesion
+
+        false_positives = int((pred_lesion & ~true_lesion & mask).sum())
+        missed_lesions = int((~pred_lesion & true_lesion & mask).sum())
+        malignant_mask = mask & (y_true == MALIGNANT_INDEX)
+        n_malignant = int(malignant_mask.sum())
+
+        out[stratum] = {
+            "n": n,
+            "n_lesion": n_lesion,
+            "n_normal": n_normal,
+            "sensitivity": _safe_divide(n_lesion - missed_lesions, n_lesion),
+            "specificity": _safe_divide(n_normal - false_positives, n_normal),
+            "false_positives": false_positives,
+            "false_positive_rate": _safe_divide(false_positives, n_normal),
+            "missed_lesions": missed_lesions,
+            "n_malignant": n_malignant,
+            "malignant_recall": _safe_divide(
+                int((malignant_mask & (y_pred == MALIGNANT_INDEX)).sum()), n_malignant
+            ),
+            "low_support": n < min_support,
+        }
+    return out
 
 
 def compute_metrics(

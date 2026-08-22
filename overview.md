@@ -79,14 +79,16 @@ Machine has 31.8 GB RAM; `num_workers: 2` is the measured safe ceiling.
 src/onnm/
   io_radiograph.py   DICOM+JPEG loading: VOI LUT, MONOCHROME1 inversion
   dataset.py         records, label derivation, grouping, transforms, loaders, sampler
-  model.py           backbones, head swap, Grad-CAM layer lookup
+  model.py           backbones, head swap, Grad-CAM layer lookup, backbone freezing
   losses.py          FocalLoss, HardNegativeMiningLoss (OHEM), build_loss
-  metrics.py         clinical metrics, bootstrap CIs, operating point
+  metrics.py         clinical metrics, bootstrap CIs, operating point, reliability
+                     bins, per-stratum (anatomy/subtype) breakdowns
   train.py           training loop, schedulers, evaluate()
   calibrate.py       temperature scaling, threshold search, ECE
   explainability.py  Grad-CAM, box geometry, pointing game / IoU
   thermal.py         AMD ADL GPU telemetry + duty-cycle governor
-  inference.py       single-image prediction for the app; uncertainty gating
+  inference.py       single-image prediction for the app; uncertainty gating;
+                     production-checkpoint pinning (reports/PRODUCTION marker)
   ood.py             pre-inference radiograph validation + softmax entropy gate
   config.py, utils.py
 src/                 app-layer modules (not part of the onnm package):
@@ -94,12 +96,17 @@ src/                 app-layer modules (not part of the onnm package):
   database.py        SQLite (data/users.db): users + per-user scan history
   storage.py         de-identified upload storage under data/user_uploads/{uuid}/
   legal.py           ToS, Privacy Policy, Medical Disclaimer, Cookie Notice text
+  report.py          torch-free per-case HTML report builder (print-to-PDF ready)
   ood_validator.py   shim -> onnm.ood (as inference.py is for onnm.inference)
 scripts/             download, verify_data, verify_env, make_splits, train,
-                     calibrate, evaluate, gradcam_report, overfit_check
-configs/             base.yaml + overrides: densenet121_3class, full_run, overnight
-tests/               212 tests, synthetic fixtures, no dataset required
+                     calibrate, evaluate, gradcam_report, overfit_check,
+                     stratified_report (per-anatomy/subtype errors), ablate_tta
+configs/             base.yaml + overrides: densenet121_3class, full_run,
+                     overnight, specificity_tuning
+tests/               230 tests, synthetic fixtures, no dataset required
 app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
+MODEL_CARD.md        intended use, training data, measured limits, failure modes
+.github/workflows/   ci.yml — ruff + torch-free fast tests + full suite on CPU torch
 ```
 
 ---

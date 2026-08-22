@@ -55,3 +55,7 @@ src = ["src", "scripts", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks legitimately mutate sys.path before importing the package.
+"notebooks/*.ipynb" = ["E402"]

@@ -379,13 +379,19 @@ def find_operating_point(
 # Orchestration
 # ---------------------------------------------------------------------------
 def collect_logits(
-    model: torch.nn.Module, loader, device: torch.device
+    model: torch.nn.Module, loader, device: torch.device, tta_hflip: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run a split and return raw (uncalibrated, fp32) logits with their labels.
 
     Logits, not probabilities: temperature scaling has to be fitted before the
     softmax, and recovering logits from probabilities loses the scale that is
     the entire object of the fit.
+
+    ``tta_hflip`` averages each image's logits with those of its horizontal
+    mirror — anatomically legitimate for limb radiographs (a left femur is a
+    mirrored right femur) and a cheap variance reduction on a 49-image
+    malignant test split. Averaging happens in logit space, before the
+    temperature fit, so calibration fitted with TTA describes the TTA model.
     """
     model.eval()
     all_logits: list[np.ndarray] = []
@@ -397,6 +403,8 @@ def collect_logits(
             # No autocast: bf16 logits carry ~3 decimal digits, which is fine
             # for an argmax and far too coarse for an NLL minimisation.
             logits = model(images).float()
+            if tta_hflip:
+                logits = (logits + model(torch.flip(images, dims=[-1])).float()) / 2.0
             all_logits.append(logits.cpu().numpy())
             all_labels.append(batch["label"].numpy())
 

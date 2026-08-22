@@ -1,7 +1,8 @@
 # ONNM — Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
+Last audited: 2026-08-22 (backlog execution pass: housekeeping, app delivery,
+evaluation tooling, specificity-tuning enablers).
 
 ---
 
@@ -11,8 +12,15 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **212 tests** (189 pipeline + 23 auth/storage/OOD), synthetic fixtures, no
-      dataset required; the auth/storage/OOD subset also runs without torch
+- [x] **230 tests**, synthetic fixtures, no dataset required; the 48-test
+      auth/storage/OOD/report/metrics subset runs without torch (verified on a
+      clean 3.13 interpreter)
+- [x] CI workflow (`.github/workflows/ci.yml`): ruff lint, torch-free fast tests,
+      full suite on CPU torch — gates 1–2 stay local-only (GPU/dataset)
+- [x] `streamlit` in both requirements files; `rocm-sdk init` step documented in
+      `requirements-rocm.txt` with its failure symptom
+- [x] Notebook lint clean (`E501`/`B905`/`I001` fixed; `E402` per-file-ignored — the
+      `sys.path` bootstrap must precede imports); `ruff check .` is 0 errors repo-wide
 - [x] Diagnosed the MIOpen training-BatchNorm defect; workaround `train.miopen: false`
 - [x] `verify_env.py` gate 1 now runs a real train-mode forward/backward, so that
       defect is caught in seconds rather than 40 minutes into a run
@@ -46,7 +54,17 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
 
 ### App
 - [x] Streamlit UI: upload → verdict → confidence → Grad-CAM, DICOM/PNG/JPEG
-- [x] Auto-discovers newest checkpoint, auto-loads `calibration.json`
+- [x] **Production checkpoint pinning**: `reports/PRODUCTION` marker file names the
+      default run; throwaway runs (`smoke-`/`tmp-`/`debug-`) hidden from the dropdown;
+      stale pin fails loudly instead of silently falling back
+- [x] Auto-loads `calibration.json`; falls back to newest non-throwaway run when unpinned
+- [x] **Batch/folder upload**: multi-file uploader, per-file OOD rejection report,
+      batch summary table, per-case detail view; content-hash dedupe across reruns
+- [x] **Per-case HTML report export** (`src/report.py`) — verdict, probability table,
+      embedded original + Grad-CAM overlay, calibration note, full disclaimer,
+      print-to-PDF styling; plus overlay-PNG and JSON export buttons
+- [x] **Interactive ROC threshold-sweep chart** in the sidebar (altair, reads
+      `threshold_sweep.json` written by `scripts/calibrate.py --sweep`)
 - [x] Loopback-only bind, telemetry off
 - [x] Medical disclaimer; calibration state and warnings surfaced in sidebar
 - [x] **Local accounts**: SQLite `data/users.db`, salted PBKDF2-HMAC-SHA256 (600k
@@ -63,6 +81,19 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
       calls below the 0.65 floor or at/above 0.90 normalized entropy render as
       "Non-Diagnostic / Inconclusive", never as a finding
 
+### Evaluation & documentation
+- [x] **Calibration reliability diagrams** (`reliability_bins` + `plot_reliability_diagram`),
+      auto-included in every run's HTML report alongside scalar ECE
+- [x] **Stratified metrics engine** (`stratified_metrics`) + `scripts/stratified_report.py`
+      for per-anatomy and per-subtype error tables (script needs the GPU box to run)
+- [x] **`MODEL_CARD.md`**: intended use, training data, measured performance,
+      limitations, known failure modes, ethical considerations
+- [x] **TTA support**: `collect_logits(..., tta_hflip=True)` + `scripts/ablate_tta.py`
+- [x] **Backbone freezing**: `train.freeze_backbone_epochs` config knob
+      (`set_backbone_trainable` / `head_parameters` in `onnm.model`)
+- [x] **`configs/specificity_tuning.yaml`**: 320px + `alpha_beta 0.5` + 3-epoch freeze
+      profile, ready to run on the GPU box
+
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**)
 - [x] `overnight-20260822-055132` — trained only
@@ -73,8 +104,8 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
 
 ### Blocking — do these before trusting any result
 
-- [ ] **Re-run the full 212-test suite in the ROCm `.venv`.** The auth/storage/OOD
-      subset (23 tests) and ruff pass on a clean interpreter; the torch-dependent 189
+- [ ] **Re-run the full 230-test suite in the ROCm `.venv`.** The torch-free subset
+      (48 tests) and ruff pass on a clean interpreter; the torch-dependent rest
       have not been re-run since the app-layer changes landed. `predict()` defaults
       preserve old behavior by construction, but verify, don't assume.
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` has **0/15 cells
@@ -126,8 +157,10 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
         appears twice in the new data. Assign explicit group ids if the source has them.
 - [ ] **Re-test the known failure case** — the normal pelvis previously flagged at 59.6%,
       and the normal femur at 69.8%. These are the concrete regression tests for this work.
+      *(needs the GPU box + dataset; blocked on the retrained checkpoint above)*
 - [ ] **Report test-set specificity at the 90% floor** once a checkpoint is chosen.
       Validation says it costs ~6 additional missed cancers per 49; confirm on test.
+      *(needs the GPU box + dataset)*
 
 ### Medium — model quality
 
@@ -138,53 +171,40 @@ Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
 - [ ] **Multi-view radiograph consensus.** BTXRD has multiple views per surrogate
       patient; aggregating AP + lateral predictions is a cheap sensitivity gain and a
       false-positive filter (a lesion visible in one view only is suspect).
-- [ ] **Try `data.image_size: 320` or `384`.** The only meaningful way to use the idle VRAM
-      (currently 27% at batch 64), and plausibly helps on subtle lesions. Costs epoch time;
-      re-verify Grad-CAM box geometry at the new size.
+- [ ] **Run `configs/specificity_tuning.yaml` on the GPU box** *(code ready; needs
+      hardware)* — 320px, `alpha_beta 0.5`, 3-epoch backbone freeze. Compare against
+      `full-20260822-041653` on val macro ROC-AUC, then test specificity. If the
+      combined profile wins, ablate the three levers separately to attribute it.
+- [ ] **Run `scripts/ablate_tta.py`** on the pinned checkpoint *(code ready; needs
+      hardware)* — decide whether hflip TTA earns its 2× inference cost.
 - [ ] Backbone ablation: `resnet50`, `efficientnet_b0`, `densenet169` (all already wired)
-- [ ] Ensemble or TTA (hflip) — cheap variance reduction on a 49-image malignant test set
-- [ ] Revisit `loss.alpha_beta` (currently 1.0, weighting malignant 5.5× normal). Lowering
-      to 0.5 is the most direct specificity lever and is currently untried.
-- [ ] Freeze early backbone blocks for the first few epochs — 244 malignant training images
-      is very little to fine-tune 7M parameters on
 - [ ] **3D CT/MRI expansion** (long horizon): MONAI transforms generalise to 3D, but
       dataset, labels, VRAM budget, and the Grad-CAM geometry all need rework. Park
       behind a design doc; do not bolt onto the 2D pipeline.
 
 ### Medium — evaluation rigour
 
-- [ ] Subtype-stratified reporting (osteosarcoma vs "other mt"; benign subtypes)
-- [ ] Per-anatomy error analysis — the complaint is specifically *complex joint anatomy*,
-      and the metadata has anatomy columns. This would confirm or refute the hypothesis.
-- [ ] Calibration reliability diagram, not just scalar ECE
+- [ ] **Run `scripts/stratified_report.py` on the GPU box** *(code ready; needs
+      hardware + dataset)* — per-anatomy tables will confirm or refute the
+      complex-joint-anatomy hypothesis; per-subtype tables split osteosarcoma from
+      "other mt" and the benign subtypes.
 - [ ] Fix the 5 unmapped rows if `verify_data` still reports any (tumour=1 but neither
       benign nor malignant flagged — most likely malignant, the class least able to lose
-      cases)
+      cases) *(needs the dataset on disk)*
 
 ### Medium — app & delivery
 
-- [ ] Pin a "production" checkpoint rather than always taking the newest — the app
-      currently auto-selects by mtime, so a bad experimental run silently becomes default
 - [ ] **DICOM metadata parser enhancements**: surface anatomy/laterality/view-position
       tags in the UI and scan history; use them to route the right per-anatomy operating
       point once per-anatomy analysis exists
 - [ ] Per-user scan deletion in the UI (storage + DB rows currently require the Operator)
-- [ ] Batch/folder upload for reviewing a series
-- [ ] Export a per-case PDF/HTML report (verdict + overlay + disclaimer)
-- [ ] Show the threshold sweep as an interactive ROC curve in the sidebar
-- [ ] Model card documenting intended use, training data, measured limits, failure modes
+- [ ] Native PDF export (the HTML report ships print-to-PDF CSS; a direct PDF button
+      would need a renderer dependency — only add if users ask)
 
 ### Low — housekeeping
 
-- [ ] Add `streamlit` to `requirements-rocm.txt` / `requirements-cuda.txt` (currently only
-      in the `[app]` extra of `pyproject.toml`)
-- [ ] Document `rocm-sdk init` in `requirements-rocm.txt` — it is an undocumented required
-      step and its absence caused a confusing failure
-- [ ] Notebook lint failures (`E402`, `E501`, `B905`, `I001`) — pre-existing, unrelated to
-      the pipeline
-- [ ] CI workflow running gates 1–3 on push
-- [ ] Prune old `reports/` runs; `smoke-20260822-012828` is a 1-epoch throwaway still
-      appearing in the app's checkpoint dropdown
+- [ ] Create `reports/PRODUCTION` on the GPU box pinning `full-20260822-041653`, and
+      delete `smoke-20260822-012828` (the app now hides `smoke-*` runs regardless)
 
 ---
 

@@ -1,0 +1,38 @@
+# Specificity-tuning experiment: the three untried levers from TODO.md in one
+# named profile, each individually revertible by override.
+#
+#   python scripts/train.py --override configs/densenet121_3class.yaml \
+#                           --override configs/full_run.yaml \
+#                           --override configs/specificity_tuning.yaml
+#
+# Merged on top of full_run.yaml, so only the deltas appear here. Compare the
+# result against full-20260822-041653 on *val macro ROC-AUC first* (ranking
+# quality), then on test specificity at the calibrated operating point. Change
+# nothing else in the same run or the effect is unattributable — the overnight
+# run regressed exactly because augmentation and OHEM were changed together.
+
+data:
+  # 320px uses the VRAM currently sitting idle (27% util at 256px/batch 64) and
+  # plausibly resolves the subtle cortical detail that separates an overlapping
+  # normal structure from a lesion. Costs epoch time. Grad-CAM box geometry is
+  # size-aware but re-verify gradcam_report at the new size before scoring it.
+  image_size: 320
+
+loader:
+  # Compensate the 320px activation growth (~1.56x memory vs 256px).
+  batch_size: 20
+
+loss:
+  # 0.5 tempers the inverse-frequency class weights toward uniform (sqrt of the
+  # full correction): malignant drops from ~5.5x to ~2.3x the normal weight.
+  # This is the most direct specificity lever in the loss — the model is pushed
+  # less hard to call rare classes, so borderline normals stop tipping over.
+  # The cost to watch is malignant recall; judge the trade on the val ROC curve,
+  # not on the argmax.
+  alpha_beta: 0.5
+
+train:
+  # Head-only training for the first 3 epochs, then full fine-tuning. Protects
+  # the pretrained features from the randomly initialised head's early
+  # gradients — 244 malignant images cannot rebuild a wrecked feature.
+  freeze_backbone_epochs: 3

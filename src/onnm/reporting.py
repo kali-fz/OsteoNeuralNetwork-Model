@@ -129,6 +129,56 @@ def plot_curves(y_true: np.ndarray, y_prob: np.ndarray, out_path: Path | None = 
     return fig
 
 
+def plot_reliability_diagram(
+    y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 15, out_path: Path | None = None
+):
+    """Reliability diagram: per-bin accuracy against confidence, with the gap shaded.
+
+    The scalar ECE says *how much* miscalibration there is; this shows *where*.
+    A tall red gap at high confidence is the dangerous kind — those are the
+    predictions a reader is most likely to trust.
+    """
+    import matplotlib.pyplot as plt
+
+    from .calibrate import expected_calibration_error
+    from .metrics import reliability_bins
+
+    rows = [r for r in reliability_bins(y_true, y_prob, n_bins) if r["count"] > 0]
+    ece = expected_calibration_error(y_true, y_prob, n_bins)
+
+    fig, (ax, ax_hist) = plt.subplots(
+        2, 1, figsize=(7, 6.5), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1], "hspace": 0.08},
+    )
+
+    centers = [(r["bin_lo"] + r["bin_hi"]) / 2 for r in rows]
+    width = 1.0 / n_bins
+    accuracy = [r["accuracy"] for r in rows]
+    confidence = [r["mean_confidence"] for r in rows]
+
+    ax.bar(centers, accuracy, width=width * 0.92, color="#4C78A8",
+           edgecolor="white", label="accuracy")
+    # The gap between the bar top and the diagonal is the calibration error
+    # that bin contributes, weighted by its population.
+    ax.bar(centers, [c - a for c, a in zip(confidence, accuracy, strict=True)],
+           bottom=accuracy, width=width * 0.92, color="#E45756", alpha=0.55,
+           label="gap (confidence − accuracy)")
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="perfect calibration")
+    ax.set(ylabel="accuracy", ylim=(0, 1), xlim=(0, 1),
+           title=f"Reliability diagram (ECE = {ece:.4f})")
+    ax.legend(loc="upper left", fontsize=9)
+    ax.grid(alpha=0.3)
+
+    ax_hist.bar(centers, [r["count"] for r in rows], width=width * 0.92,
+                color="#9aa7b8", edgecolor="white")
+    ax_hist.set(xlabel="confidence", ylabel="n")
+    ax_hist.grid(alpha=0.3)
+
+    if out_path:
+        fig.savefig(ensure_dir(Path(out_path).parent) / Path(out_path).name, dpi=110)
+    return fig
+
+
 def write_html_report(
     metrics: dict[str, Any],
     confidence_intervals: dict,
@@ -152,6 +202,9 @@ def write_html_report(
     )
     if y_true is not None and y_prob is not None:
         figures.append(("ROC / PR curves", _figure_to_base64(plot_curves(y_true, y_prob))))
+        figures.append(
+            ("Reliability diagram", _figure_to_base64(plot_reliability_diagram(y_true, y_prob)))
+        )
 
     errors = metrics["clinical_errors"]
     rows = "".join(

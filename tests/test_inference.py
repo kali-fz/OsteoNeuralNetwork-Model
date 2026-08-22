@@ -392,3 +392,60 @@ def test_discovery_returns_newest_first(tmp_path: Path) -> None:
     assert [p.parent.name for p in find_checkpoints(tmp_path)] == [
         "newest", "middle", "oldest",
     ]
+
+
+def _make_run(root: Path, name: str, age_offset: float = 0.0) -> Path:
+    import os
+    import time
+
+    directory = root / name
+    directory.mkdir()
+    path = directory / "best.pt"
+    path.write_bytes(b"x")
+    stamp = time.time() + age_offset
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_production_marker_pins_the_default(tmp_path: Path) -> None:
+    """A pinned run wins even when a newer run exists — that is the whole point."""
+    from onnm.inference import default_checkpoint, production_checkpoint
+
+    pinned = _make_run(tmp_path, "full-run", age_offset=0)
+    _make_run(tmp_path, "experimental-newer", age_offset=100)
+    (tmp_path / "PRODUCTION").write_text("# comment\nfull-run\n", encoding="utf-8")
+
+    assert production_checkpoint(tmp_path) == pinned
+    assert default_checkpoint(tmp_path) == pinned
+
+
+def test_stale_production_marker_raises(tmp_path: Path) -> None:
+    """A pin naming a missing run must fail loudly, not fall back silently."""
+    import pytest
+
+    from onnm.inference import production_checkpoint
+
+    _make_run(tmp_path, "real-run")
+    (tmp_path / "PRODUCTION").write_text("deleted-run\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError):
+        production_checkpoint(tmp_path)
+
+
+def test_default_checkpoint_skips_throwaway_runs(tmp_path: Path) -> None:
+    """A newer smoke run must not silently become the default model."""
+    from onnm.inference import default_checkpoint, is_throwaway_run
+
+    real = _make_run(tmp_path, "full-run", age_offset=0)
+    smoke = _make_run(tmp_path, "smoke-20260822-012828", age_offset=100)
+
+    assert is_throwaway_run(smoke)
+    assert not is_throwaway_run(real)
+    assert default_checkpoint(tmp_path) == real
+
+
+def test_default_checkpoint_falls_back_to_throwaway_when_alone(tmp_path: Path) -> None:
+    from onnm.inference import default_checkpoint
+
+    smoke = _make_run(tmp_path, "smoke-only")
+    assert default_checkpoint(tmp_path) == smoke

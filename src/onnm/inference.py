@@ -243,8 +243,73 @@ def find_checkpoints(reports_dir: str | Path = "reports") -> list[Path]:
     return sorted(found, key=lambda p: found[p], reverse=True)
 
 
+#: Marker file naming the pinned production run. Contains one line: the run
+#: directory name under ``reports/`` (e.g. ``full-20260822-041653``). Written
+#: by the operator, read by the app so a fresh experimental run never silently
+#: becomes the default model.
+PRODUCTION_MARKER = "PRODUCTION"
+
+#: Run-directory name prefixes that are throwaway by convention and should be
+#: hidden from end-user checkpoint pickers (they remain on disk and reachable
+#: by explicit path for debugging).
+THROWAWAY_RUN_PREFIXES: tuple[str, ...] = ("smoke-", "tmp-", "debug-")
+
+
+def production_checkpoint(reports_dir: str | Path = "reports") -> Path | None:
+    """Resolve the pinned production checkpoint, or ``None`` when unpinned.
+
+    Reads ``reports/PRODUCTION`` (first non-empty, non-comment line = run
+    directory name) and returns that run's checkpoint. Returns ``None`` when
+    the marker is absent; raises ``FileNotFoundError`` when the marker names a
+    run whose checkpoint does not exist — a stale pin should be loud, not a
+    silent fallback to an arbitrary newer run.
+    """
+    root = Path(reports_dir)
+    if not root.is_absolute():
+        root = REPO_ROOT / root
+    marker = root / PRODUCTION_MARKER
+    if not marker.is_file():
+        return None
+
+    run_name = ""
+    for line in marker.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            run_name = line
+            break
+    if not run_name:
+        return None
+
+    for name in CHECKPOINT_NAMES:
+        candidate = root / run_name / name
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"reports/{PRODUCTION_MARKER} pins run '{run_name}' but no checkpoint "
+        f"({' or '.join(CHECKPOINT_NAMES)}) exists under {root / run_name}. "
+        "Fix or delete the marker file."
+    )
+
+
+def is_throwaway_run(checkpoint: Path) -> bool:
+    """True when a checkpoint belongs to a throwaway run (``smoke-*`` etc.)."""
+    return checkpoint.parent.name.startswith(THROWAWAY_RUN_PREFIXES)
+
+
 def default_checkpoint(reports_dir: str | Path = "reports") -> Path | None:
+    """The checkpoint the app should load: the production pin, else newest.
+
+    Preference order: the run pinned in ``reports/PRODUCTION``; otherwise the
+    newest non-throwaway checkpoint; otherwise the newest checkpoint of any
+    kind (so a repo containing only a smoke run still loads something).
+    """
+    pinned = production_checkpoint(reports_dir)
+    if pinned is not None:
+        return pinned
     found = find_checkpoints(reports_dir)
+    kept = [p for p in found if not is_throwaway_run(p)]
+    if kept:
+        return kept[0]
     return found[0] if found else None
 
 

@@ -1,0 +1,71 @@
+# CI for OsteoNeuralNetwork-Model.
+#
+# What runs here and what cannot:
+#   - lint          : ruff over the whole repo (src, scripts, tests, notebooks)
+#   - tests-fast    : the torch-free subset (auth, storage, database, OOD) --
+#                     fails in ~1 min if the app layer breaks
+#   - tests-full    : gate 3, the complete pytest suite on CPU-only torch.
+#                     Every test uses synthetic fixtures; no dataset needed.
+#   - gate 1 (scripts/verify_env.py)  NEEDS the AMD GPU  -> local only
+#   - gate 2 (scripts/verify_data.py) NEEDS BTXRD on disk -> local only
+#
+# Keep the torch version pinned to the one used locally (2.9.1) so CI
+# exercises the same API surface as the ROCm build.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ruff
+        run: |
+          python -m pip install "ruff>=0.5"
+          ruff check .
+
+  tests-fast:
+    name: tests (torch-free subset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal deps
+        run: python -m pip install pytest numpy pillow pydicom scikit-learn
+      - name: Run auth / storage / OOD tests
+        run: python -m pytest -q tests/test_auth_database.py tests/test_storage.py tests/test_ood.py tests/test_report.py tests/test_metrics.py
+
+  tests-full:
+    name: tests (gate 3, full suite, CPU torch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU torch + project
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            "torch==2.9.1" "torchvision==0.24.1"
+          python -m pip install -e ".[dev]"
+      - name: Run full suite
+        run: python -m pytest -q

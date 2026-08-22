@@ -167,3 +167,100 @@ def test_threshold_reaches_target_sensitivity() -> None:
 def test_threshold_without_positives_is_nan() -> None:
     y_true = np.zeros(10, dtype=int)
     assert np.isnan(threshold_for_sensitivity(y_true, np.zeros((10, 3)))["threshold"])
+
+
+# ---------------------------------------------------------------------------
+# Reliability bins (the data behind the reliability diagram)
+# ---------------------------------------------------------------------------
+def test_reliability_bins_perfectly_calibrated_has_zero_gap() -> None:
+    from onnm.metrics import reliability_bins
+
+    y_true = np.array([0, 1] * 50)
+    probs = np.zeros((100, 3))
+    probs[np.arange(100), y_true] = 1.0   # always right, always 100% confident
+
+    rows = reliability_bins(y_true, probs, n_bins=10)
+    populated = [r for r in rows if r["count"] > 0]
+    assert len(populated) == 1
+    assert populated[0]["accuracy"] == 1.0
+    assert abs(populated[0]["gap"]) < 1e-9
+
+
+def test_reliability_bins_expose_overconfidence() -> None:
+    from onnm.metrics import reliability_bins
+
+    # 90% confident but only 50% right: the gap must land near +0.4.
+    rng = np.random.default_rng(7)
+    n = 400
+    y_true = rng.integers(0, 2, n)
+    predicted = np.where(rng.random(n) < 0.5, y_true, 1 - y_true)
+    probs = np.zeros((n, 3))
+    probs[np.arange(n), predicted] = 0.9
+    probs[np.arange(n), 2] = 0.1
+
+    rows = reliability_bins(y_true, probs, n_bins=10)
+    bin_of_09 = next(r for r in rows if r["count"] > 0)
+    assert bin_of_09["mean_confidence"] > 0.85
+    assert 0.3 < bin_of_09["gap"] < 0.5
+
+
+def test_reliability_bins_cover_the_whole_axis_and_count_everything() -> None:
+    from onnm.metrics import reliability_bins
+
+    rng = np.random.default_rng(3)
+    probs = rng.dirichlet(np.ones(3), size=200)
+    y_true = rng.integers(0, 3, 200)
+
+    rows = reliability_bins(y_true, probs, n_bins=15)
+    assert len(rows) == 15
+    assert sum(r["count"] for r in rows) == 200
+
+
+# ---------------------------------------------------------------------------
+# Stratified (per-anatomy / per-subtype) metrics
+# ---------------------------------------------------------------------------
+def test_stratified_metrics_isolate_the_offending_stratum() -> None:
+    from onnm.metrics import stratified_metrics
+
+    # Pelvis: all 10 normals falsely called lesions. Femur: all clean.
+    y_true = np.array([0] * 10 + [0] * 10)
+    y_pred = np.array([1] * 10 + [0] * 10)
+    strata = ["pelvis"] * 10 + ["femur"] * 10
+
+    report = stratified_metrics(y_true, y_pred, strata)
+    assert report["pelvis"]["false_positives"] == 10
+    assert report["pelvis"]["specificity"] == 0.0
+    assert report["femur"]["false_positives"] == 0
+    assert report["femur"]["specificity"] == 1.0
+
+
+def test_stratified_metrics_track_missed_lesions_and_malignant_recall() -> None:
+    from onnm.metrics import stratified_metrics
+
+    y_true = np.array([2, 2, 2, 2, 0, 0])
+    y_pred = np.array([2, 2, 0, 0, 0, 0])   # half the cancers sent home
+    strata = ["tibia"] * 6
+
+    row = stratified_metrics(y_true, y_pred, strata)["tibia"]
+    assert row["missed_lesions"] == 2
+    assert row["malignant_recall"] == pytest.approx(0.5)
+    assert row["sensitivity"] == pytest.approx(0.5)
+
+
+def test_stratified_metrics_flag_low_support() -> None:
+    from onnm.metrics import stratified_metrics
+
+    y_true = np.array([0, 0, 0, 0, 0, 0, 2])
+    y_pred = np.array([0, 0, 0, 0, 0, 0, 2])
+    strata = ["hand"] * 6 + ["rib"]
+
+    report = stratified_metrics(y_true, y_pred, strata, min_support=5)
+    assert not report["hand"]["low_support"]
+    assert report["rib"]["low_support"]
+
+
+def test_stratified_metrics_reject_mismatched_lengths() -> None:
+    from onnm.metrics import stratified_metrics
+
+    with pytest.raises(ValueError, match="length mismatch"):
+        stratified_metrics(np.zeros(3), np.zeros(3), ["a", "b"])

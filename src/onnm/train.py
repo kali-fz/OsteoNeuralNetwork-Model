@@ -25,7 +25,7 @@ from torch import nn
 from .dataset import build_dataloader, build_records, class_weights
 from .losses import build_loss
 from .metrics import compute_metrics, format_report
-from .model import build_model, model_summary
+from .model import build_model, model_summary, set_backbone_trainable
 from .thermal import build_governor
 from .utils import (
     amp_dtype_from_str,
@@ -205,6 +205,18 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
 
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg, len(train_loader))
+
+    # Freeze *after* the optimizer is built so the backbone's parameter groups
+    # exist and resume updating the moment they are unfrozen; a frozen
+    # parameter simply produces no grad and is skipped by the step.
+    freeze_epochs = int(cfg.train.get("freeze_backbone_epochs", 0))
+    if freeze_epochs > 0:
+        counts = set_backbone_trainable(model, cfg, False)
+        logger.info(
+            "backbone frozen for the first %d epoch(s): %s of %s params trainable",
+            freeze_epochs, f"{counts['trainable']:,}", f"{counts['total']:,}",
+        )
+
     amp_dtype = (
         amp_dtype_from_str(cfg.train.amp_dtype)
         if bool(cfg.train.amp) and device.type == "cuda"
@@ -224,6 +236,12 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
 
     for epoch in range(int(cfg.train.epochs)):
         started = time.time()
+        if freeze_epochs > 0 and epoch == freeze_epochs:
+            counts = set_backbone_trainable(model, cfg, True)
+            logger.info(
+                "backbone unfrozen at epoch %d: %s params trainable",
+                epoch + 1, f"{counts['trainable']:,}",
+            )
         # OHEM stays inert until its warmup elapses, and resets its counters
         # each epoch so the log shows what it mined in *this* epoch.
         if hasattr(criterion, "set_epoch"):

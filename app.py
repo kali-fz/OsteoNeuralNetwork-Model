@@ -51,6 +51,8 @@ from onnm.inference import (  # noqa: E402
     InferenceResult,
     RadiographClassifier,
     find_checkpoints,
+    is_throwaway_run,
+    production_checkpoint,
     render_overlay,
     to_display_uint8,
 )
@@ -62,6 +64,7 @@ from onnm.ood import (  # noqa: E402
     validate_payload,
 )
 from onnm.utils import describe_device  # noqa: E402
+from report import build_html_report  # noqa: E402
 from storage import StorageError, delete_upload, is_user_file, save_upload  # noqa: E402
 
 COLORMAPS = ["jet", "turbo", "inferno", "magma", "viridis", "hot"]
@@ -344,13 +347,34 @@ with st.sidebar:
         render_legal_footer()
         st.stop()
 
+    # Hide throwaway runs (smoke-*, tmp-*, debug-*) from the picker unless
+    # they are all that exists. They stay on disk for debugging.
+    visible = [p for p in checkpoints if not is_throwaway_run(p)] or checkpoints
+
+    try:
+        pinned = production_checkpoint()
+    except FileNotFoundError as exc:
+        pinned = None
+        st.warning(str(exc))
+    if pinned is not None and pinned not in visible:
+        visible.insert(0, pinned)
+
     selected = st.selectbox(
         "Checkpoint",
-        options=checkpoints,
-        format_func=lambda p: p.parent.name,
-        help="Every `reports/*/best.pt`, newest first. Preprocessing is read from "
-             "inside the checkpoint, so each one runs under its own training config.",
+        options=visible,
+        index=visible.index(pinned) if pinned is not None else 0,
+        format_func=lambda p: (
+            f"{p.parent.name}  [production]" if p == pinned else p.parent.name
+        ),
+        help="Defaults to the run pinned in `reports/PRODUCTION`; otherwise the newest "
+             "non-throwaway `reports/*/best.pt`. Preprocessing is read from inside the "
+             "checkpoint, so each one runs under its own training config.",
     )
+    if pinned is None:
+        st.caption(
+            "No production pin — defaulting to the newest run. To pin one, write its "
+            "folder name into `reports/PRODUCTION`."
+        )
 
     try:
         with st.spinner("Loading model onto the GPU…"):
@@ -426,6 +450,57 @@ with st.sidebar:
              "is Normal, which answers 'where would it have been?'.",
     )
 
+    with st.expander("Threshold sweep (ROC)"):
+        sweep_file = selected.parent / "threshold_sweep.json"
+        if sweep_file.is_file():
+            try:
+                sweep_rows = json.loads(sweep_file.read_text(encoding="utf-8"))["sweep"]
+            except (OSError, KeyError, ValueError) as exc:
+                sweep_rows = []
+                st.warning(f"`threshold_sweep.json` is unreadable: {exc}")
+            if sweep_rows:
+                import altair as alt
+                import pandas as pd
+
+                frame = pd.DataFrame(sweep_rows)
+                frame["fpr"] = 1.0 - frame["specificity"]
+                roc = (
+                    alt.Chart(frame)
+                    .mark_line(point=True, interpolate="step-after")
+                    .encode(
+                        x=alt.X("fpr:Q", title="1 − specificity",
+                                scale=alt.Scale(domain=[0, 1])),
+                        y=alt.Y("sensitivity:Q", title="sensitivity",
+                                scale=alt.Scale(domain=[0, 1])),
+                        tooltip=[
+                            alt.Tooltip("threshold:Q", format=".3f"),
+                            alt.Tooltip("sensitivity:Q", format=".3f"),
+                            alt.Tooltip("specificity:Q", format=".3f"),
+                            alt.Tooltip("youden_j:Q", format=".3f"),
+                        ],
+                    )
+                )
+                # Nearest sweep row to the live slider, so moving the slider
+                # shows where on the curve the app is currently operating.
+                current = frame.iloc[(frame["threshold"] - threshold).abs().argmin()]
+                marker = (
+                    alt.Chart(current.to_frame().T)
+                    .mark_point(size=140, color="#c62828", filled=True)
+                    .encode(x="fpr:Q", y="sensitivity:Q")
+                )
+                st.altair_chart(roc + marker, use_container_width=True)
+                st.caption(
+                    "Fitted on the validation split. The red point is the slider's "
+                    "current operating point; hover the curve for the threshold behind "
+                    "each trade-off."
+                )
+        else:
+            st.caption(
+                "No sweep saved for this run. Generate one with:\n"
+                "`python scripts/calibrate.py --checkpoint "
+                f"reports/{selected.parent.name}/best.pt --sweep`"
+            )
+
     st.divider()
     st.header("Heatmap")
 
@@ -443,30 +518,120 @@ with st.sidebar:
     )
 
 # -- Upload ----------------------------------------------------------------
-uploaded = st.file_uploader(
-    "Upload a radiograph",
+uploads = st.file_uploader(
+    "Upload one or more radiographs",
     type=UPLOAD_TYPES,
+    accept_multiple_files=True,
     help="DICOM (.dcm/.dicom/.ima), PNG, JPEG, BMP or TIFF. DICOM headers are honoured: "
-         "modality LUT, VOI window, and MONOCHROME1 inversion are all applied.",
+         "modality LUT, VOI window, and MONOCHROME1 inversion are all applied. Select "
+         "multiple files to review a series; each gets its own verdict and report.",
 )
 
-if uploaded is None:
+if not uploads:
     st.info(
-        "Upload an X-ray to begin. The model classifies the film, reports a confidence "
-        "score, and renders a Grad-CAM heatmap showing which region drove the call."
+        "Upload an X-ray to begin — or several at once to review a series. The model "
+        "classifies each film, reports a confidence score, and renders a Grad-CAM "
+        "heatmap showing which region drove the call."
     )
     render_legal_footer()
     st.stop()
 
-payload = uploaded.getvalue()
+# Per-file store/predict cache. Keyed on content digest so a Streamlit rerun
+# (every slider move) never re-saves a file or duplicates a history row.
+if "cases" not in st.session_state:
+    st.session_state["cases"] = {}
+cases: dict = st.session_state["cases"]
 
-# -- OOD gate: reject non-radiographs before they reach storage or the model.
-# A closed-set softmax forces any input into one of its three classes, so an
-# unvalidated photograph would come back as a ~50% "benign" call.
-validation = validate_payload(payload, uploaded.name)
-if not validation.is_radiograph:
-    st.error(REJECTION_MESSAGE)
-    with st.expander("Why was this rejected?"):
+rejected: list[tuple[str, object]] = []
+failed: list[tuple[str, str]] = []
+ready: list[tuple[str, dict]] = []
+
+for uploaded in uploads:
+    payload = uploaded.getvalue()
+
+    # OOD gate: reject non-radiographs before they reach storage or the model.
+    # A closed-set softmax forces any input into one of its three classes, so
+    # an unvalidated photograph would come back as a ~50% "benign" call.
+    validation = validate_payload(payload, uploaded.name)
+    if not validation.is_radiograph:
+        rejected.append((uploaded.name, validation))
+        continue
+
+    digest = hashlib.sha256(payload).hexdigest()
+    file_key = f"{st.session_state['user_id']}:{uploaded.name}:{digest}"
+
+    entry = cases.get(file_key)
+    if entry is None:
+        try:
+            stored = save_upload(
+                payload,
+                user_id=st.session_state["user_id"],
+                original_filename=uploaded.name,
+            )
+        except StorageError as exc:
+            failed.append((uploaded.name, str(exc)))
+            continue
+        entry = {"stored": stored, "record_id": None}
+        cases[file_key] = entry
+
+    cache_key = (str(selected), threshold, cam_class)
+    if entry.get("cache_key") != cache_key:
+        stored = entry["stored"]
+        try:
+            with st.spinner(f"Running inference on {uploaded.name}…"):
+                result = classifier.predict(
+                    stored.path,
+                    with_heatmap=True,
+                    threshold=threshold,
+                    cam_class=cam_class,
+                    uncertainty_floor=DEFAULT_CONFIDENCE_FLOOR,
+                    entropy_gate=DEFAULT_ENTROPY_GATE,
+                )
+            # Re-running inference after a threshold or heatmap change updates
+            # one history record instead of duplicating files or scan entries.
+            if entry["record_id"]:
+                update_upload_result(
+                    entry["record_id"],
+                    st.session_state["user_id"],
+                    model_verdict=result.label,
+                    confidence_score=result.confidence,
+                )
+            else:
+                record = create_upload(
+                    upload_id=stored.upload_id,
+                    user_id=st.session_state["user_id"],
+                    filename=stored.original_filename,
+                    file_path=stored.path,
+                    model_verdict=result.label,
+                    confidence_score=result.confidence,
+                )
+                entry["record_id"] = record.upload_id
+            entry["result"] = result
+            entry["cache_key"] = cache_key
+        except RadiographReadError as exc:
+            if not entry["record_id"]:
+                delete_upload(stored.path)
+                cases.pop(file_key, None)
+            failed.append((uploaded.name, f"could not decode: {exc}"))
+            continue
+        except (DatabaseError, StorageError) as exc:
+            if not entry["record_id"]:
+                delete_upload(stored.path)
+                cases.pop(file_key, None)
+            failed.append((uploaded.name, str(exc)))
+            continue
+        except Exception as exc:  # noqa: BLE001 - one bad file must not kill the batch
+            if not entry["record_id"]:
+                delete_upload(stored.path)
+                cases.pop(file_key, None)
+            failed.append((uploaded.name, f"inference failed: {exc}"))
+            continue
+
+    ready.append((uploaded.name, entry))
+
+for name, validation in rejected:
+    st.error(f"`{name}` — {REJECTION_MESSAGE}")
+    with st.expander(f"Why was {name} rejected?"):
         for check in validation.failures:
             st.markdown(f"- **{check.name}** — {check.detail}")
         st.caption(
@@ -474,90 +639,40 @@ if not validation.is_radiograph:
             "intensity entropy, edge density). If a genuine radiograph is rejected, "
             "export it as an uncropped grayscale DICOM or PNG and try again."
         )
+for name, message in failed:
+    st.error(f"`{name}` — {message}")
+
+if not ready:
     render_legal_footer()
     st.stop()
 
-payload_digest = hashlib.sha256(payload).hexdigest()
-file_key = (st.session_state["user_id"], uploaded.name, payload_digest)
+# -- Batch summary (only when reviewing a series) ----------------------------
+if len(ready) > 1:
+    st.subheader(f"Series review — {len(ready)} films")
+    st.dataframe(
+        [
+            {
+                "file": name,
+                "verdict": entry["result"].label,
+                "confidence %": round(entry["result"].confidence, 1),
+                "lesion %": round(100 * entry["result"].lesion_probability, 1),
+                "malignant %": round(100 * entry["result"].malignant_probability, 1),
+            }
+            for name, entry in ready
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+    case_name = st.selectbox(
+        "Open case",
+        options=[name for name, _ in ready],
+        help="Detailed verdict, probabilities, and Grad-CAM for one film of the series.",
+    )
+    entry = next(e for n, e in ready if n == case_name)
+else:
+    case_name, entry = ready[0]
 
-if st.session_state.get("stored_file_key") != file_key:
-    try:
-        stored = save_upload(
-            payload,
-            user_id=st.session_state["user_id"],
-            original_filename=uploaded.name,
-        )
-    except StorageError as exc:
-        st.error(str(exc))
-        render_legal_footer()
-        st.stop()
-    st.session_state["stored_upload"] = stored
-    st.session_state["stored_file_key"] = file_key
-    st.session_state.pop("upload_record_id", None)
-
-stored = st.session_state["stored_upload"]
-# Re-running inference after a threshold or heatmap change updates one history
-# record instead of creating duplicate files or scan entries.
-cache_key = (file_key, str(selected), threshold, cam_class)
-
-if st.session_state.get("cache_key") != cache_key:
-    try:
-        with st.spinner("Running inference…"):
-            st.session_state["result"] = classifier.predict(
-                stored.path,
-                with_heatmap=True,
-                threshold=threshold,
-                cam_class=cam_class,
-                uncertainty_floor=DEFAULT_CONFIDENCE_FLOOR,
-                entropy_gate=DEFAULT_ENTROPY_GATE,
-            )
-        result = st.session_state["result"]
-        record_id = st.session_state.get("upload_record_id")
-        if record_id:
-            update_upload_result(
-                record_id,
-                st.session_state["user_id"],
-                model_verdict=result.label,
-                confidence_score=result.confidence,
-            )
-        else:
-            record = create_upload(
-                upload_id=stored.upload_id,
-                user_id=st.session_state["user_id"],
-                filename=stored.original_filename,
-                file_path=stored.path,
-                model_verdict=result.label,
-                confidence_score=result.confidence,
-            )
-            st.session_state["upload_record_id"] = record.upload_id
-        st.session_state["cache_key"] = cache_key
-    except RadiographReadError as exc:
-        if not st.session_state.get("upload_record_id"):
-            delete_upload(stored.path)
-            st.session_state.pop("stored_upload", None)
-            st.session_state.pop("stored_file_key", None)
-        st.error(f"Could not decode `{uploaded.name}`: {exc}")
-        render_legal_footer()
-        st.stop()
-    except (DatabaseError, StorageError) as exc:
-        if not st.session_state.get("upload_record_id"):
-            delete_upload(stored.path)
-            st.session_state.pop("stored_upload", None)
-            st.session_state.pop("stored_file_key", None)
-        st.error(str(exc))
-        render_legal_footer()
-        st.stop()
-    except Exception as exc:  # noqa: BLE001
-        if not st.session_state.get("upload_record_id"):
-            delete_upload(stored.path)
-            st.session_state.pop("stored_upload", None)
-            st.session_state.pop("stored_file_key", None)
-        st.error("Inference failed.")
-        st.exception(exc)
-        render_legal_footer()
-        st.stop()
-
-result: InferenceResult = st.session_state["result"]
+result: InferenceResult = entry["result"]
 
 # -- Verdict ---------------------------------------------------------------
 if result.inconclusive:
@@ -620,6 +735,7 @@ st.divider()
 # -- Imagery ---------------------------------------------------------------
 st.subheader("Grad-CAM")
 
+overlay = None
 if result.heatmap is None:
     st.warning(
         "Grad-CAM could not be computed for this image; the classification above is "
@@ -664,21 +780,51 @@ else:
         "repository scores that failure mode explicitly via `scripts/gradcam_report.py`."
     )
 
-    download_left, download_right = st.columns(2)
-    stem = Path(uploaded.name).stem
-    with download_left:
+# -- Exports -----------------------------------------------------------------
+stem = Path(case_name).stem
+export_a, export_b, export_c = st.columns(3)
+
+with export_a:
+    report_html = build_html_report(
+        filename=case_name,
+        verdict=result.label,
+        confidence_pct=result.confidence,
+        class_probabilities=result.class_probabilities,
+        lesion_probability=result.lesion_probability,
+        threshold=result.threshold,
+        calibrated=result.calibrated,
+        temperature=result.temperature,
+        inconclusive=result.inconclusive,
+        max_probability=result.max_probability,
+        predictive_entropy=result.predictive_entropy,
+        checkpoint_name=selected.parent.name,
+        app_version=__version__,
+        disclaimer=MEDICAL_DISCLAIMER,
+        original_png=png_bytes(to_display_uint8(result.original_image)),
+        overlay_png=png_bytes(overlay) if overlay is not None else None,
+        cam_class=result.cam_class,
+    )
+    st.download_button(
+        "Report (HTML → print to PDF)", report_html,
+        file_name=f"{stem}_onnm_report.html", mime="text/html",
+        use_container_width=True,
+        help="Self-contained case report: verdict, probabilities, Grad-CAM overlay, "
+             "and the medical disclaimer. Open it in any browser and print to PDF.",
+    )
+with export_b:
+    if overlay is not None:
         st.download_button(
-            "Download overlay (PNG)", png_bytes(overlay),
+            "Overlay (PNG)", png_bytes(overlay),
             file_name=f"{stem}_gradcam.png", mime="image/png",
             use_container_width=True,
         )
-    with download_right:
-        st.download_button(
-            "Download result (JSON)",
-            json.dumps(result.as_dict(), indent=2),
-            file_name=f"{stem}_onnm.json", mime="application/json",
-            use_container_width=True,
-        )
+with export_c:
+    st.download_button(
+        "Result (JSON)",
+        json.dumps(result.as_dict(), indent=2),
+        file_name=f"{stem}_onnm.json", mime="application/json",
+        use_container_width=True,
+    )
 
 with st.expander("Decoding details"):
     st.json(result.source_meta)
@@ -694,3 +840,4 @@ st.caption(
     "downloaded images local rather than redistributing them."
 )
 render_legal_footer()
+

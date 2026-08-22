@@ -22,7 +22,9 @@ from onnm.inference import (  # noqa: F401
     RadiographClassifier,
     default_checkpoint,
     find_checkpoints,
+    is_throwaway_run,
     predict_file,
+    production_checkpoint,
     render_overlay,
     to_display_uint8,
 )
@@ -37,7 +39,9 @@ __all__ = [
     "RadiographClassifier",
     "default_checkpoint",
     "find_checkpoints",
+    "is_throwaway_run",
     "predict_file",
+    "production_checkpoint",
     "render_overlay",
     "to_display_uint8",
 ]

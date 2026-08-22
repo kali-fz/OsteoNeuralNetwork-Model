@@ -7,7 +7,14 @@
 # Install order matters -- the ROCm SDK must land before torch.
 #
 #   python -m pip install -r requirements-rocm.txt
+#   rocm-sdk init
 #   python -m pip install -e ".[dev]"
+#
+# REQUIRED: `rocm-sdk init` (between the two pip installs above) unpacks the
+# ROCm runtime libraries that the torch wheels link against. It is NOT run
+# automatically by pip; skipping it makes `import torch` fail with a cryptic
+# DLL-load error ("shm.dll not found" or similar) rather than anything that
+# mentions ROCm. If torch import fails after a fresh install, run it and retry.
 #
 # Then gate on: python scripts/verify_env.py
 
@@ -21,3 +28,7 @@ https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
 https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
 https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
 https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+
+# --- Step 3: app layer ------------------------------------------------------
+# The Streamlit UI (app.py). Also available as the `[app]` extra of pyproject.
+streamlit>=1.37

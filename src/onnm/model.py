@@ -162,6 +162,45 @@ def count_parameters(model: nn.Module) -> dict[str, int]:
     return {"total": total, "trainable": trainable, "frozen": total - trainable}
 
 
+def head_parameters(model: nn.Module, cfg) -> list[nn.Parameter]:
+    """The classification head's parameters, for freeze/unfreeze bookkeeping."""
+    name = str(cfg.model.name).lower()
+    entry = TORCHVISION_BACKBONES.get(name)
+    if entry is not None:
+        return list(getattr(model, entry[2]).parameters())
+    if hasattr(model, "get_classifier"):  # timm convention
+        return list(model.get_classifier().parameters())
+    if hasattr(model, "class_layers"):  # MONAI DenseNet convention
+        return list(model.class_layers.parameters())
+    return []
+
+
+def set_backbone_trainable(model: nn.Module, cfg, trainable: bool) -> dict[str, int]:
+    """Toggle ``requires_grad`` on every parameter *outside* the classification head.
+
+    Freezing the pretrained features for the first few epochs protects them
+    while the randomly initialised head finds its footing — with ~244 malignant
+    training images there is very little signal to re-earn a wrecked feature,
+    so not wrecking it in the first place is the cheaper strategy.
+
+    Deliberately leaves BatchNorm layers in train mode while frozen: their
+    running statistics still adapt to radiographs, which is the part of
+    domain shift a frozen conv cannot absorb. Returns the parameter counts so
+    the caller can log what actually happened.
+    """
+    head = {id(p) for p in head_parameters(model, cfg)}
+    if not head:
+        logger.warning(
+            "cannot identify the classification head for %s; freeze request ignored",
+            cfg.model.name,
+        )
+        return count_parameters(model)
+    for parameter in model.parameters():
+        if id(parameter) not in head:
+            parameter.requires_grad = trainable
+    return count_parameters(model)
+
+
 def model_summary(model: nn.Module, cfg) -> str:
     counts = count_parameters(model)
     size = int(cfg.data.image_size)
