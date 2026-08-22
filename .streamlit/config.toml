@@ -1,12 +1,20 @@
 # Defaults for `streamlit run app.py`, so the zero-argument launch is the safe one.
 
 [server]
-# Streamlit binds 0.0.0.0 out of the box and prints a "Network URL" and an
-# "External URL" -- on a LAN, and behind a forwarding router, that makes an
-# uploaded radiograph reachable by other machines. This app handles medical
-# images and is specified to run locally, so it binds loopback only.
-address = "localhost"
-port = 8501
+# NOTE: `address` and `port` are deliberately NOT set here.
+#
+# This file is committed, and Streamlit Community Cloud reads it. Pinning the
+# bind address to localhost or the port to 8501 risks the platform's proxy
+# being unable to reach the app, which presents as a deploy that simply never
+# comes up -- with no useful error, on a machine you cannot attach to.
+#
+# Locally the loopback bind still matters: Streamlit's default is 0.0.0.0,
+# which on a LAN (or behind a forwarding router) makes an uploaded radiograph
+# reachable by other machines. Use the launcher, which sets it explicitly:
+#
+#     python run_local.py
+#
+# or pass it yourself:  streamlit run app.py --server.address localhost
 headless = true          # do not auto-open a browser; the terminal prints the URL
 maxUploadSize = 400      # MB. Uncompressed 16-bit DICOM gets large.
 fileWatcherType = "auto"
