@@ -5,10 +5,15 @@ of the data. Plain cross-entropy on that distribution converges happily to a
 model that almost never predicts malignant: it is a cheap way to be right 91% of
 the time and useless for the one call that matters.
 
-Two corrections are available here. Apply exactly one of them. Combining focal
-loss with a ``WeightedRandomSampler`` double-counts the imbalance -- the rare
-class gets upweighted in the gradient *and* oversampled in the batch -- which in
-practice drives the model to over-predict malignant and destabilises training.
+Two corrections are available here. Apply exactly one of them. Combining a
+weighted loss with a ``WeightedRandomSampler`` double-counts the imbalance -- the
+rare class gets upweighted in the gradient *and* oversampled in the batch --
+which in practice drives the model to over-predict malignant and destabilises
+training. Over-calling normal controls is the visible symptom.
+
+``onnm.train.build_sampler`` enforces the exclusivity rather than trusting the
+config to be written correctly, because the failure is silent: the run trains,
+the loss falls, and only specificity gives it away.
 """
 
 from __future__ import annotations
@@ -86,6 +91,36 @@ class FocalLoss(nn.Module):
         return f"gamma={self.gamma}, alpha={alpha}, label_smoothing={self.label_smoothing}"
 
 
+def resolve_alpha(cfg, alpha: torch.Tensor | None) -> torch.Tensor | None:
+    """Decide the final per-class weight vector from config and computed weights.
+
+    Precedence, most explicit first:
+
+    1. ``loss.alpha`` -- a hand-written list, e.g. ``[1.0, 1.0, 2.5]``. Use this
+       when a validation sweep has produced a specific operating point and you
+       want it pinned rather than re-derived.
+    2. ``loss.auto_alpha: false`` -- no weighting at all. This is the correct
+       setting when ``loader.balanced_sampler`` is on, because the sampler is
+       already equalising the classes.
+    3. otherwise the computed inverse-frequency weights, already tempered by
+       ``loss.alpha_beta`` at the call site.
+    """
+    explicit = cfg.loss.get("alpha", None)
+    if explicit is not None:
+        vector = torch.as_tensor(list(explicit), dtype=torch.float32)
+        expected = int(cfg.model.num_classes)
+        if vector.numel() != expected:
+            raise ValueError(
+                f"loss.alpha has {vector.numel()} entries but the model has {expected} "
+                f"classes; order must follow labels.classes"
+            )
+        if bool((vector < 0).any()):
+            raise ValueError(f"loss.alpha must be non-negative, got {vector.tolist()}")
+        return vector
+
+    return alpha if bool(cfg.loss.get("auto_alpha", True)) else None
+
+
 def build_loss(cfg, alpha: torch.Tensor | None = None) -> nn.Module:
     """Construct the configured loss.
 
@@ -94,7 +129,7 @@ def build_loss(cfg, alpha: torch.Tensor | None = None) -> nn.Module:
     composition into training.
     """
     name = str(cfg.loss.name).lower()
-    use_alpha = alpha if bool(cfg.loss.get("auto_alpha", True)) else None
+    use_alpha = resolve_alpha(cfg, alpha)
     smoothing = float(cfg.loss.get("label_smoothing", 0.0))
 
     if name == "focal":

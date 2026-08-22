@@ -118,13 +118,36 @@ Each fails faster than the one after it. Do not start training until all six are
 |---|---|---|
 | 1 | `scripts\verify_env.py` | A real matmul and bf16 autocast execute on the GPU |
 | 2 | `scripts\verify_data.py` | Class counts match the paper; splits are leakage-free |
-| 3 | `python -m pytest tests\ -q` | 116 assertions on I/O, transforms, losses, metrics, geometry, inference |
+| 3 | `python -m pytest tests\ -q` | 167 assertions on I/O, transforms, losses, metrics, geometry, inference, calibration |
 | 4 | `notebooks/01_data_sanity.ipynb` | **Human eyes.** Images are not inverted; boxes land on lesions |
 | 5 | `scripts\verify_data.py --deep` | Every image file decodes |
 | 6 | `scripts\overfit_check.py` | The model memorises 32 images — the pipeline actually learns |
 
 Gate 4 is not optional. Assertions verify shape; only looking verifies content. An inverted
 radiograph produces perfectly valid float32 arrays and a converging loss curve.
+
+### Gate 1 now checks a training step, not just a matmul
+
+MIOpen JIT-compiles kernels at first use. On the ROCm 7.2.1 Windows wheels the **training-mode**
+BatchNorm kernel fails to build — the C++ header `<type_traits>` is not shipped, and
+`rocm-sdk init` supplies only thrust's, not libc++'s:
+
+```
+MIOpen(HIP): Error [BuildHip] HIPRTC_ERROR_COMPILATION
+fatal error: 'type_traits' file not found
+RuntimeError: miopenStatusUnknownError
+```
+
+Inference is unaffected, because it takes the eval-mode BatchNorm path. So the machine passes
+every other check, serves predictions correctly, and dies partway into epoch 1. Gate 1 now runs
+one real forward/backward in both modes and names the workaround if it fails.
+
+The workaround is `train.miopen: false`, which routes conv and norm through ATen's native
+kernels. Measured on the 7900 XT at 256px batch 32: 284 ms/step versus 205 ms/step for MIOpen
+with BatchNorm frozen — about 16 minutes rather than 11 for a 40-epoch run. Freezing BatchNorm
+was rejected because it stops the running statistics updating from this dataset, leaving
+ImageNet's in place; that is a real change to what gets trained, to save four minutes.
+`configs/full_run.yaml` sets `miopen: false`.
 
 Gate 6 is the highest-value check in the list. A model that cannot memorise 32 images has
 misaligned labels, broken normalisation, or gradients not reaching the backbone — found in two
@@ -142,6 +165,124 @@ minutes rather than after a wasted day.
 
 `--profile smoke` runs one short epoch to validate the loop; `--profile kaggle` switches paths
 and loader settings for the notebook fallback.
+
+**A smoke checkpoint is not a model.** One epoch lands around 0.10 malignant recall and 0.48
+balanced accuracy — near chance. Its probabilities are arbitrary, so a normal film scoring 70%
+"lesion" is the expected behaviour of an untrained network, not a calibration fault. Train to
+convergence before drawing any conclusion from a prediction.
+
+---
+
+## Calibration and the operating point
+
+A trained model still needs two things before its numbers mean anything, and they are
+different problems:
+
+| Problem | Fix | What it changes |
+|---|---|---|
+| Probabilities are the wrong *scale* — focal loss leaves a network overconfident | Temperature scaling | Confidence values only. It is monotone, so accuracy, recall and AUC are unchanged **by definition** |
+| The decision boundary is arbitrary — 0.50 is no clinical policy | Threshold search on validation | Which films get flagged |
+
+```powershell
+# 40 epochs, LR 1e-4, cosine, checkpoint on macro ROC-AUC, early stop at 7
+.venv\Scripts\python.exe scripts\train.py --override configs\densenet121_3class.yaml --override configs\full_run.yaml --tag full
+.venv\Scripts\python.exe scripts\calibrate.py --checkpoint reports\full-<ts>\best.pt --sweep
+.venv\Scripts\python.exe scripts\evaluate.py --checkpoint reports\full-<ts>\best.pt
+```
+
+`calibrate.py` writes `calibration.json` beside the checkpoint. The app and `evaluate.py` both
+read it automatically — there is no flag to remember. It exits non-zero when the operating
+point is unusable, so `&&` chains stop rather than proceeding on a bad threshold.
+
+Both are fitted on **validation** and applied unchanged to test. Tuning a threshold on the
+split you report is the most common way an otherwise honest pipeline produces an inflated
+number, so `--split test` exists only as a disclosed diagnostic and prints a warning.
+
+**Calibration cannot fix a model that has not learned the task.** It is a monotone rescaling of
+an existing ranking; if the ranking is wrong, every threshold on it is wrong too. Run it on the
+smoke checkpoint and it says so:
+
+```
+threshold           0.3062   (vs the naive 0.50)
+sensitivity         0.9513
+specificity         0.1604
+  ! the 95%-sensitivity threshold yields only 0.160 specificity, below the 0.50 floor.
+    At this operating point the model flags most normal films; it is not yet good
+    enough to deploy at this sensitivity.
+```
+
+That is the tool working. 95% sensitivity is reachable only by flagging 84% of normal films,
+which is a discrimination problem — no threshold on that ROC curve is a good one.
+
+### Tuning specificity
+
+Three knobs, in the order worth trying:
+
+**`loss.alpha_beta`** (default `1.0`) tempers the inverse-frequency class weights.
+`1.0` weights malignant ~3.7x normal and maximises sensitivity; `0.5` is the usual compromise;
+`0.0` disables weighting. This is the most direct lever — lower it first if normal controls are
+being over-called.
+
+**`loader.balanced_sampler`** draws all three classes equally into every batch. It is an
+**alternative** to the weighted loss, not a companion: applying both corrects the imbalance
+twice and drives the model to over-predict malignant, which presents as exactly the
+false-positive problem it was meant to solve. `build_sampler` raises rather than let that
+happen quietly, so enabling it means also setting `loss.auto_alpha: false`.
+
+**`data.crop_foreground`** strips the black collimation border so the model cannot key on frame
+geometry. Off by default for a real reason: it changes the geometry between the original image
+and the model input, which is the mapping `explainability.map_box_to_model_space` reproduces to
+score Grad-CAM against lesion boxes. With it on, `evaluate_localisation` refuses to run rather
+than report meaningless pointing-game numbers. Enabling it trades localisation scoring for
+classification robustness — a deliberate choice, not a free win.
+
+---
+
+## Results
+
+Full run: DenseNet-121, 40 epochs configured, **early stopped at 26** (best epoch 19 on macro
+ROC-AUC), ~40 s/epoch on an RX 7900 XT. Total wall time under 20 minutes at zero cost.
+
+**Held-out test split (n = 536, never seen during training or calibration):**
+
+| class | sens | spec | PPV | NPV | F1 | ROC-AUC | PR-AUC | n |
+|---|---|---|---|---|---|---|---|---|
+| normal | 0.859 | 0.805 | 0.816 | 0.850 | 0.837 | 0.898 | 0.886 | 269 |
+| benign | 0.757 | 0.852 | 0.778 | 0.836 | 0.767 | 0.871 | 0.847 | 218 |
+| malignant | 0.633 | 0.979 | 0.756 | 0.964 | 0.689 | 0.912 | 0.708 | 49 |
+
+Macro ROC-AUC **0.893**, macro PR-AUC **0.814**, macro F1 **0.764**, balanced accuracy **0.749**.
+
+Bootstrap 95% CIs (stratified, 2000 resamples): malignant recall 0.633 [0.490, 0.776];
+malignant PR-AUC 0.705 [0.588, 0.816]; malignant ROC-AUC 0.910 [0.864, 0.950]. With 49
+malignant test images the interval is wide by construction — quote it, never the point estimate
+alone.
+
+Clinical error breakdown: 6/49 malignant called normal (12.2%, patient sent home), 12/49 called
+benign (24.5%, still followed up), and **3 normal films called malignant**.
+
+**Calibration** (fitted on validation, applied unchanged to test): temperature 1.41 — above 1,
+i.e. the network was overconfident and got softened, exactly the direction focal-loss training
+predicts. Expected calibration error improved 3x, 0.053 to 0.017.
+
+At the calibrated threshold of 0.496 the binary normal-vs-lesion decision scores **0.813
+sensitivity and 0.848 specificity on test**, flagging 41 of 269 normal films.
+
+### The constraint that could not be met
+
+Holding specificity at 80% caps sensitivity at 78.3% on the validation ROC curve. Both the 95%
+sensitivity target and the 80% specificity floor cannot be satisfied at once, and
+`calibrate.py` says so rather than quietly picking one:
+
+```
+! holding specificity at 0.80 caps sensitivity at 0.783, below the 95% target.
+  The two constraints cannot both be met on this ROC curve -- decide which one
+  is the real requirement, or improve the model.
+```
+
+The full trade-off is recorded in `calibration.json`: threshold 0.496 gives 78/80
+sensitivity/specificity, while threshold 0.238 gives 95/52. Which is right is a clinical
+decision, not a modelling one.
 
 ---
 
@@ -197,10 +338,12 @@ src/onnm/
   explainability.py  Grad-CAM, box geometry, pointing game / IoU
   config.py          YAML loading with deep-merge overrides and profiles
   inference.py       single-image prediction + Grad-CAM for the web app
+  calibrate.py       temperature scaling, threshold search, ECE
   utils.py           seeding, logging, device, checkpoints
-scripts/             thin CLI wrappers (download, verify, split, train, evaluate, gradcam)
+scripts/             thin CLI wrappers (download, verify, split, train, calibrate,
+                     evaluate, gradcam)
 tests/               pytest suite; synthetic DICOM fixtures, no dataset required
-configs/             base.yaml + experiment overrides
+configs/             base.yaml + experiment overrides (densenet121_3class, full_run)
 app.py               Streamlit UI (upload -> verdict -> heatmap), localhost only
 .streamlit/          server defaults: loopback bind, telemetry off
 notebooks/           01_data_sanity.ipynb (Gate 4), kaggle_train.ipynb (fallback)

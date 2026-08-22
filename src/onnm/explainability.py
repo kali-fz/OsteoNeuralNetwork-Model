@@ -15,7 +15,9 @@ Recall alone cannot tell those cases apart; pointing-game accuracy can.
 The geometric mapping in :func:`map_box_to_model_space` must mirror
 ``onnm.dataset.build_transforms`` exactly. If the two ever disagree, every
 localisation number silently becomes meaningless, so ``tests/test_explainability.py``
-pins them together.
+pins them together, and :func:`evaluate_localisation` refuses to run when
+``data.crop_foreground`` has introduced a geometry stage the mapping does not
+model.
 """
 
 from __future__ import annotations
@@ -202,6 +204,22 @@ def evaluate_localisation(
     lesion, so localisation is undefined for them.
     """
     from .dataset import build_transforms
+
+    # `map_box_to_model_space` reproduces exactly two geometric stages: resize
+    # the longest side, then pad symmetrically. Foreground cropping inserts a
+    # third, with an offset that is different for every image, so the mapping
+    # silently stops describing the transform chain. Every pointing-game hit and
+    # IoU below would still be a number, and all of them would be wrong -- so
+    # this refuses rather than reports.
+    if bool(cfg.data.get("crop_foreground", False)):
+        raise ValueError(
+            "data.crop_foreground is enabled, which changes the geometry between "
+            "the original image and the model input. Ground-truth lesion-box "
+            "scoring cannot be mapped through it, so these metrics would be "
+            "meaningless. Either evaluate localisation with crop_foreground: "
+            "false, or extend map_box_to_model_space to carry the per-image crop "
+            "offset first."
+        )
 
     size = int(cfg.data.image_size)
     threshold = float(cfg.explain.get("cam_threshold", 0.5))

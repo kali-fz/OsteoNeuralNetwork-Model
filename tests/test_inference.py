@@ -354,3 +354,41 @@ def test_shim_reexports_the_public_api() -> None:
 
     assert inference.RadiographClassifier is RadiographClassifier
     assert inference.render_overlay is render_overlay
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint discovery
+# ---------------------------------------------------------------------------
+def test_discovery_accepts_both_checkpoint_names(tmp_path: Path) -> None:
+    """`best.pt` is what training writes; `best_model.pt` is the other convention."""
+    import os
+    import time
+
+    for i, (run, name) in enumerate([("run_a", "best.pt"), ("run_b", "best_model.pt")]):
+        directory = tmp_path / run
+        directory.mkdir()
+        path = directory / name
+        path.write_bytes(b"x")
+        # Distinct mtimes so the ordering assertion below is deterministic.
+        os.utime(path, (time.time() + i, time.time() + i))
+
+    found = find_checkpoints(tmp_path)
+    assert {p.name for p in found} == {"best.pt", "best_model.pt"}
+
+
+def test_discovery_returns_newest_first(tmp_path: Path) -> None:
+    """The app defaults to the first entry, so a fresh run must sort to the top."""
+    import os
+    import time
+
+    now = time.time()
+    for age, run in enumerate(["oldest", "middle", "newest"]):
+        directory = tmp_path / run
+        directory.mkdir()
+        path = directory / "best.pt"
+        path.write_bytes(b"x")
+        os.utime(path, (now - 1000 * (2 - age), now - 1000 * (2 - age)))
+
+    assert [p.parent.name for p in find_checkpoints(tmp_path)] == [
+        "newest", "middle", "oldest",
+    ]

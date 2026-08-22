@@ -26,7 +26,13 @@ from .dataset import build_dataloader, build_records, class_weights
 from .losses import build_loss
 from .metrics import compute_metrics, format_report
 from .model import build_model, model_summary
-from .utils import amp_dtype_from_str, get_logger, save_json, set_seed
+from .utils import (
+    amp_dtype_from_str,
+    configure_backend,
+    get_logger,
+    save_json,
+    set_seed,
+)
 
 logger = get_logger(__name__)
 
@@ -134,6 +140,12 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
     device = device or get_device()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Must happen before the first conv/BN call. See configure_backend for why
+    # this exists; scripts/verify_env.py checks the same thing up front.
+    backend = configure_backend(bool(cfg.train.get("miopen", True)))
+    logger.info("compute backend: %s (cudnn/MIOpen enabled=%s)",
+                backend["backend"], backend["cudnn_enabled"])
+
     train_records = build_records(cfg, split="train")
     val_records = build_records(cfg, split="val")
 
@@ -144,8 +156,13 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
     logger.info("\n%s", model_summary(model, cfg))
 
     # alpha from the TRAIN split only -- deriving it from the full dataset would
-    # leak the test set's class composition into training.
-    alpha = class_weights(train_records).to(device)
+    # leak the test set's class composition into training. `alpha_beta` tempers
+    # how hard the correction pushes; see onnm.dataset.class_weights.
+    alpha = class_weights(
+        train_records,
+        num_classes=int(cfg.model.num_classes),
+        beta=float(cfg.loss.get("alpha_beta", 1.0)),
+    ).to(device)
     criterion = build_loss(cfg, alpha=alpha).to(device)
     logger.info("loss: %s", criterion)
 
@@ -175,22 +192,43 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
         if not np.isfinite(score):
             score = -float("inf")
 
+        malignant = val_metrics["per_class"]["malignant"]
         logger.info(
-            "epoch %3d/%d | %5.1fs | train loss %.4f | val loss %.4f | "
-            "val malignant recall %.3f | val PR-AUC(mal) %.3f",
+            "epoch %3d/%d | %5.1fs | loss %.4f/%.4f | ROC %.3f | PR(mal) %.3f | "
+            "sens(mal) %.3f | spec(mal) %.3f | bal-acc %.3f | F1 %.3f%s",
             epoch + 1, int(cfg.train.epochs), time.time() - started,
             train_metrics["loss"], val_metrics["loss"],
-            val_metrics["malignant_recall"], val_metrics["pr_auc"].get("malignant", float("nan")),
+            val_metrics["roc_auc_macro"],
+            val_metrics["pr_auc"].get("malignant", float("nan")),
+            malignant["sensitivity"], malignant["specificity"],
+            val_metrics["balanced_accuracy"], val_metrics["f1_macro"],
+            "  <- best" if score > best_score else "",
         )
 
+        # Per-class specificity is recorded for normal as well as malignant:
+        # "normal specificity" is the rate at which lesion films are correctly
+        # not called normal, and it is the number that moves when the model
+        # starts over-calling lesions.
         history.append(
             {
                 "epoch": epoch + 1,
                 "train_loss": train_metrics["loss"],
                 "val_loss": val_metrics["loss"],
-                "val_malignant_recall": val_metrics["malignant_recall"],
+                "val_roc_auc_macro": val_metrics["roc_auc_macro"],
+                "val_roc_auc_malignant": val_metrics["roc_auc"].get("malignant"),
+                "val_pr_auc_macro": val_metrics["pr_auc_macro"],
                 "val_pr_auc_malignant": val_metrics["pr_auc"].get("malignant"),
+                "val_f1_macro": val_metrics["f1_macro"],
                 "val_balanced_accuracy": val_metrics["balanced_accuracy"],
+                "val_malignant_recall": val_metrics["malignant_recall"],
+                "val_malignant_specificity": malignant["specificity"],
+                "val_malignant_ppv": malignant["ppv"],
+                "val_normal_sensitivity": val_metrics["per_class"]["normal"]["sensitivity"],
+                "val_normal_specificity": val_metrics["per_class"]["normal"]["specificity"],
+                "val_normal_called_lesion": int(
+                    val_metrics["confusion_matrix"][0][1]
+                    + val_metrics["confusion_matrix"][0][2]
+                ),
                 "lr": optimizer.param_groups[0]["lr"],
             }
         )
@@ -296,7 +334,14 @@ def overfit_batch(
 
 
 def evaluate(cfg, checkpoint: Path, split: str = "test", device: torch.device | None = None):
-    """Evaluate a saved checkpoint on one split, with bootstrap CIs."""
+    """Evaluate a saved checkpoint on one split, with bootstrap CIs.
+
+    Applies the calibration fitted by ``scripts/calibrate.py`` when one exists
+    beside the checkpoint. The metrics are then reported at the operating point
+    the model would actually be used at, rather than at an argmax that no
+    deployment uses.
+    """
+    from .calibrate import Calibration, lesion_scores
     from .metrics import threshold_for_sensitivity, with_confidence_intervals
     from .utils import get_device
 
@@ -312,6 +357,17 @@ def evaluate(cfg, checkpoint: Path, split: str = "test", device: torch.device | 
     metrics = run_epoch(model, loader, criterion, device)
 
     y_true, y_prob = metrics.pop("_y_true"), metrics.pop("_y_prob")
+
+    calibration = Calibration.for_checkpoint(checkpoint)
+    if calibration is not None and calibration.temperature != 1.0:
+        # Re-softmax at the fitted temperature. Monotone, so the confusion
+        # matrix above is untouched; only the probability-valued metrics move.
+        logits = np.log(np.clip(y_prob, 1e-12, 1.0))
+        y_prob = torch.softmax(
+            torch.as_tensor(logits / calibration.temperature), dim=1
+        ).numpy()
+        logger.info("applied fitted temperature T=%.4f", calibration.temperature)
+
     cis = with_confidence_intervals(
         y_true, y_prob,
         n_boot=int(cfg.eval.bootstrap_n),
@@ -322,4 +378,56 @@ def evaluate(cfg, checkpoint: Path, split: str = "test", device: torch.device | 
     )
 
     print(format_report(metrics, cis))
-    return {"metrics": metrics, "confidence_intervals": cis, "operating_point": operating_point}
+
+    result = {
+        "metrics": metrics,
+        "confidence_intervals": cis,
+        "operating_point": operating_point,
+    }
+
+    if calibration is None:
+        print(
+            "\n".join(
+                [
+                    "",
+                    "  Note: no calibration.json beside this checkpoint. Probabilities",
+                    "  are uncalibrated and the binary decision falls back to a naive",
+                    "  0.50 cut. Fit one with:",
+                    f"    python scripts/calibrate.py --checkpoint {checkpoint}",
+                ]
+            )
+        )
+        return result
+
+    # Report the binary normal-vs-lesion decision at the calibrated threshold --
+    # this is the number the app shows, and it is not visible in the 3-way
+    # confusion matrix above.
+    scores = lesion_scores(y_prob, normal_index=0)
+    predicted_lesion = scores >= calibration.lesion_threshold
+    actually_lesion = y_true != 0
+    binary = {
+        "threshold": calibration.lesion_threshold,
+        "temperature": calibration.temperature,
+        "fitted_on": calibration.fitted_on,
+        "sensitivity": float(predicted_lesion[actually_lesion].mean())
+        if actually_lesion.any() else float("nan"),
+        "specificity": float((~predicted_lesion[~actually_lesion]).mean())
+        if (~actually_lesion).any() else float("nan"),
+        "false_positives": int((predicted_lesion & ~actually_lesion).sum()),
+        "n_normal": int((~actually_lesion).sum()),
+    }
+    print(
+        "\n".join(
+            [
+                "",
+                f"  Binary decision at the calibrated threshold "
+                f"({binary['threshold']:.3f}, fitted on {binary['fitted_on']}):",
+                f"    sensitivity   {binary['sensitivity']:.3f}",
+                f"    specificity   {binary['specificity']:.3f}",
+                f"    normal films called lesion: "
+                f"{binary['false_positives']} / {binary['n_normal']}",
+            ]
+        )
+    )
+    result["binary_decision"] = binary
+    return result

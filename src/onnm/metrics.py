@@ -46,11 +46,18 @@ def per_class_rates(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int = 3
         fp = float(cm[:, idx].sum() - tp)
         tn = float(cm.sum() - tp - fn - fp)
 
+        sensitivity = _safe_divide(tp, tp + fn)
+        ppv = _safe_divide(tp, tp + fp)
         out[CLASS_NAMES[idx]] = {
-            "sensitivity": _safe_divide(tp, tp + fn),
+            "sensitivity": sensitivity,
             "specificity": _safe_divide(tn, tn + fp),
-            "ppv": _safe_divide(tp, tp + fp),
+            "ppv": ppv,
             "npv": _safe_divide(tn, tn + fn),
+            # Harmonic mean of PPV and sensitivity. Reported because it is a
+            # common early-stopping monitor, but note what it ignores: F1 has no
+            # term for true negatives, so it says nothing about how many normal
+            # films get flagged. For that, read specificity.
+            "f1": _safe_divide(2 * ppv * sensitivity, ppv + sensitivity),
             "support": int(tp + fn),
         }
     return out
@@ -128,6 +135,12 @@ def compute_metrics(
         # and the number the whole project is judged on.
         "malignant_recall": rates[CLASS_NAMES[MALIGNANT_INDEX]]["sensitivity"],
         "malignant_ppv": rates[CLASS_NAMES[MALIGNANT_INDEX]]["ppv"],
+        "malignant_f1": rates[CLASS_NAMES[MALIGNANT_INDEX]]["f1"],
+        # Macro F1 weights all three classes equally, so the 244-image malignant
+        # class counts as much as the 1342-image normal one. That is the point.
+        "f1_macro": float(
+            np.nanmean([rates[c]["f1"] for c in CLASS_NAMES[:num_classes]])
+        ),
         **auc_scores(y_true, y_prob, num_classes),
         "clinical_errors": clinical_errors(y_true, y_pred, num_classes),
         "confusion_matrix": confusion_matrix(
@@ -256,20 +269,21 @@ def format_report(metrics: dict, cis: dict | None = None) -> str:
         f"balanced accuracy = {metrics['balanced_accuracy']:.3f}",
         "",
         f"  {'class':<12}{'sens':>8}{'spec':>8}{'PPV':>8}{'NPV':>8}"
-        f"{'ROC':>8}{'PR':>8}{'n':>7}",
-        "  " + "-" * 62,
+        f"{'F1':>8}{'ROC':>8}{'PR':>8}{'n':>7}",
+        "  " + "-" * 70,
     ]
 
     for name, rates in metrics["per_class"].items():
         lines.append(
             f"  {name:<12}{rates['sensitivity']:>8.3f}{rates['specificity']:>8.3f}"
-            f"{rates['ppv']:>8.3f}{rates['npv']:>8.3f}"
+            f"{rates['ppv']:>8.3f}{rates['npv']:>8.3f}{rates['f1']:>8.3f}"
             f"{metrics['roc_auc'].get(name, float('nan')):>8.3f}"
             f"{metrics['pr_auc'].get(name, float('nan')):>8.3f}{rates['support']:>7}"
         )
 
     lines += ["", f"  macro ROC-AUC {metrics['roc_auc_macro']:.3f}   "
-                  f"macro PR-AUC {metrics['pr_auc_macro']:.3f}"]
+                  f"macro PR-AUC {metrics['pr_auc_macro']:.3f}   "
+                  f"macro F1 {metrics['f1_macro']:.3f}"]
 
     if cis:
         lines += ["", "  Bootstrap 95% CIs (stratified):"]

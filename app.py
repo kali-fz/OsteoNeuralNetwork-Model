@@ -207,10 +207,37 @@ with st.sidebar:
     st.divider()
     st.header("Decision")
 
+    if info["calibrated"]:
+        # Name the constraint that actually bound. Reporting the sensitivity
+        # target when specificity is what was held fixed would describe the
+        # wrong policy, which is worse than reporting nothing.
+        constraint = (
+            f"holding specificity >= {info['min_specificity']:.2f}"
+            if info.get("mode") == "specificity_floor"
+            else f"holding sensitivity >= {info['target_sensitivity']:.2f}"
+        )
+        st.info(
+            f"Calibrated: T={info['temperature']:.2f}, threshold "
+            f"{info['default_threshold']:.3f}, {constraint}. "
+            f"On validation: sensitivity {info['val_sensitivity']:.2f}, "
+            f"specificity {info['val_specificity']:.2f}."
+        )
+        for warning in info.get("calibration_warnings", []):
+            st.warning(warning)
+    else:
+        st.warning(
+            "**Uncalibrated.** Probabilities are raw softmax outputs and the "
+            "threshold below is a naive 0.50, which corresponds to no clinical "
+            "policy. Run `python scripts/calibrate.py --checkpoint ...` to fit "
+            "both on the validation split."
+        )
+
     threshold = st.slider(
         "Lesion threshold",
-        min_value=0.05, max_value=0.95, value=0.50, step=0.05,
+        min_value=0.05, max_value=0.95,
+        value=float(round(info["default_threshold"] / 0.05) * 0.05), step=0.05,
         help="P(benign) + P(malignant) at or above this is called a potential lesion. "
+             "Defaults to the calibrated operating point when one has been fitted. "
              "Lower it to catch more lesions at the cost of more false alarms.",
     )
     cam_class = st.selectbox(
@@ -306,7 +333,10 @@ with left:
         help="Shown separately because a cancer called benign is followed up, while a "
              "cancer called normal sends the patient home.",
     )
-    st.caption(f"{result.elapsed_ms:.0f} ms on `{result.device}`")
+    st.caption(
+        f"{result.elapsed_ms:.0f} ms on `{result.device}`"
+        + (f" · T={result.temperature:.2f}" if result.calibrated else " · uncalibrated")
+    )
 
 with right:
     st.markdown("**Three-class breakdown**")

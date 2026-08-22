@@ -50,6 +50,7 @@ from typing import Any, BinaryIO
 import numpy as np
 import torch
 
+from .calibrate import CALIBRATION_FILENAME, Calibration
 from .config import REPO_ROOT, Config, load_config
 from .dataset import build_transforms
 from .explainability import build_cam, compute_cam
@@ -99,6 +100,9 @@ class InferenceResult:
     heatmap: np.ndarray | None = None           # (S, S) float in [0, 1]
     cam_class: str | None = None                # class the CAM was taken against
 
+    temperature: float = 1.0                    # 1.0 = uncalibrated logits
+    calibrated: bool = False                    # a fitted calibration.json was used
+
     source_meta: dict[str, Any] = field(default_factory=dict)
     elapsed_ms: float = 0.0
     device: str = "cpu"
@@ -121,6 +125,8 @@ class InferenceResult:
             "top_class": self.top_class,
             "decision_threshold": self.threshold,
             "cam_class": self.cam_class,
+            "temperature": round(self.temperature, 4),
+            "calibrated": self.calibrated,
             "elapsed_ms": round(self.elapsed_ms, 1),
             "device": self.device,
             "source": self.source_meta,
@@ -208,14 +214,25 @@ class _MaterialisedUpload:
 # ---------------------------------------------------------------------------
 # Checkpoint discovery
 # ---------------------------------------------------------------------------
+#: Filenames a training run may have written its best checkpoint under. ``best.pt``
+#: is what ``onnm.train`` writes; ``best_model.pt`` is accepted too so a run named
+#: by the other common convention is still discovered by the app.
+CHECKPOINT_NAMES: tuple[str, ...] = ("best.pt", "best_model.pt")
+
+
 def find_checkpoints(reports_dir: str | Path = "reports") -> list[Path]:
-    """List every ``best.pt`` under the reports tree, newest first."""
+    """List every best-checkpoint under the reports tree, newest first."""
     root = Path(reports_dir)
     if not root.is_absolute():
         root = REPO_ROOT / root
     if not root.is_dir():
         return []
-    return sorted(root.glob("*/best.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    found: dict[Path, float] = {}
+    for name in CHECKPOINT_NAMES:
+        for path in root.glob(f"*/{name}"):
+            found[path] = path.stat().st_mtime
+    return sorted(found, key=lambda p: found[p], reverse=True)
 
 
 def default_checkpoint(reports_dir: str | Path = "reports") -> Path | None:
@@ -272,6 +289,26 @@ class RadiographClassifier:
         self.transform = build_transforms(self.cfg, "test", keep_meta=True)
         self.cam = build_cam(self.model, self.cfg)
 
+        # calibration.json is written next to the checkpoint by
+        # scripts/calibrate.py. Absent, the model runs uncalibrated at a naive
+        # 0.50 cut -- which is the state every freshly trained model is in, and
+        # a state worth surfacing rather than papering over.
+        self.calibration = Calibration.for_checkpoint(checkpoint)
+        if self.calibration is None:
+            logger.warning(
+                "no %s beside %s: probabilities are uncalibrated and the decision "
+                "threshold defaults to 0.50, which corresponds to no clinical policy. "
+                "Run `python scripts/calibrate.py --checkpoint %s`.",
+                CALIBRATION_FILENAME, checkpoint.name, checkpoint,
+            )
+        else:
+            logger.info(
+                "calibration: T=%.3f, lesion threshold=%.3f (%.0f%% target sensitivity)",
+                self.calibration.temperature,
+                self.calibration.lesion_threshold,
+                100 * self.calibration.target_sensitivity,
+            )
+
         self.trained_epoch = state.get("epoch")
         self.checkpoint_metrics = {
             k: v for k, v in state.items() if k not in {"model", "config", "epoch"}
@@ -324,6 +361,15 @@ class RadiographClassifier:
         except Exception as exc:  # noqa: BLE001 - warmup is best-effort by definition
             logger.warning("warmup pass failed (%s); first prediction may be slow", exc)
 
+    @property
+    def default_threshold(self) -> float:
+        """The fitted decision threshold, or 0.50 when nothing has been fitted."""
+        return 0.5 if self.calibration is None else self.calibration.lesion_threshold
+
+    @property
+    def temperature(self) -> float:
+        return 1.0 if self.calibration is None else self.calibration.temperature
+
     # -- introspection -----------------------------------------------------
     def describe(self) -> dict[str, Any]:
         """Facts about the loaded model, for the app's sidebar."""
@@ -336,7 +382,17 @@ class RadiographClassifier:
             "cam_method": str(self.cfg.explain.get("method", "gradcam")),
             "cam_layer": str(self.cfg.explain.get("target_layer", "")),
             "device": str(self.device),
+            "calibrated": self.calibration is not None,
+            "temperature": self.temperature,
+            "default_threshold": self.default_threshold,
         }
+        if self.calibration is not None:
+            info["mode"] = self.calibration.mode
+            info["target_sensitivity"] = self.calibration.target_sensitivity
+            info["min_specificity"] = self.calibration.min_specificity
+            info["val_sensitivity"] = self.calibration.achieved_sensitivity
+            info["val_specificity"] = self.calibration.achieved_specificity
+            info["calibration_warnings"] = list(self.calibration.warnings)
         if self.trained_epoch is not None:
             info["trained_epochs"] = int(self.trained_epoch) + 1
         info.update(
@@ -373,7 +429,7 @@ class RadiographClassifier:
         data: bytes | bytearray | memoryview | BinaryIO | str | Path,
         filename: str | None = None,
         with_heatmap: bool = True,
-        threshold: float = 0.5,
+        threshold: float | None = None,
         cam_class: str = "auto",
     ) -> InferenceResult:
         """Classify one radiograph.
@@ -384,14 +440,18 @@ class RadiographClassifier:
                 ``data`` is bytes without a DICOM preamble.
             with_heatmap: Compute the Grad-CAM map. Roughly doubles the cost.
             threshold: Lesion probability at or above which the verdict is
-                "Potential Bone Lesion". Lower it to trade specificity for
-                sensitivity.
+                "Potential Bone Lesion". Defaults to the threshold fitted on
+                validation by ``scripts/calibrate.py``, falling back to 0.50
+                when no calibration has been fitted. Lower it to trade
+                specificity for sensitivity.
             cam_class: ``auto``, ``predicted``, or an explicit class name.
 
         Raises:
             RadiographReadError: the file could not be decoded.
             UnsupportedFormatError: the file type is not supported.
         """
+        threshold = self.default_threshold if threshold is None else float(threshold)
+
         payload = _coerce_to_bytes(data)
         if not payload:
             raise RadiographReadError("uploaded file is empty")
@@ -419,7 +479,13 @@ class RadiographClassifier:
         with self._lock:
             with torch.no_grad():
                 logits = self.model(tensor).float()
-                probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
+                # Temperature scaling is monotone, so this cannot move the
+                # argmax -- the predicted class is identical either way. What
+                # changes is the confidence number, which is the one a reader
+                # actually quotes.
+                probabilities = (
+                    torch.softmax(logits / self.temperature, dim=1)[0].cpu().numpy()
+                )
 
             heatmap = None
             cam_name = None
@@ -453,6 +519,8 @@ class RadiographClassifier:
             },
             top_class=self.class_names[int(np.argmax(probabilities))],
             threshold=float(threshold),
+            temperature=self.temperature,
+            calibrated=self.calibration is not None,
             preprocessed_image=preprocessed,
             original_image=original,
             heatmap=heatmap,
@@ -534,6 +602,7 @@ __all__ = [
     "LESION_LABEL",
     "NORMAL_LABEL",
     "SUPPORTED_SUFFIXES",
+    "CHECKPOINT_NAMES",
     "UPLOAD_TYPES",
     "InferenceResult",
     "RadiographClassifier",

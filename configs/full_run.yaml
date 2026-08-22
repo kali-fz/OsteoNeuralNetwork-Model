@@ -1,0 +1,92 @@
+# Full convergence run: 40 epochs, LR 1e-4, cosine, checkpoint on macro ROC-AUC.
+#
+#   python scripts/train.py --override configs/densenet121_3class.yaml \
+#                           --override configs/full_run.yaml
+#
+# Merged on top of configs/base.yaml (then densenet121_3class.yaml), so only the
+# deltas appear here.
+
+train:
+  epochs: 40
+  # 1e-4 rather than the 3e-4 baseline. Fine-tuning a pretrained backbone at a
+  # higher rate erases ImageNet features faster than 244 malignant training
+  # images can rebuild them; the slower rate costs epochs, which early stopping
+  # reclaims when they stop paying.
+  lr: 0.0001
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine
+  warmup_epochs: 2
+
+  # -- Checkpoint selection ------------------------------------------------
+  # Macro ROC-AUC rather than malignant_recall.
+  #
+  # The reason is specific to the goal of this run. Recall is computed at the
+  # argmax, so it moves in steps as individual images cross a decision boundary,
+  # and a model can gain recall purely by shifting its bias toward malignant --
+  # which is the false-positive failure this run exists to remove. ROC-AUC scores
+  # the *ranking* and is threshold-free, so it improves only when the model
+  # genuinely separates the classes better. That is what the threshold
+  # calibration downstream needs: a good ranking, from which a good operating
+  # point can then be chosen.
+  #
+  # Macro-averaged, so the 244-image malignant class counts as much as the
+  # 1342-image normal one.
+  #
+  # The caveat from the README still stands: ROC-AUC is optimistic on a 9% class
+  # because the large true-negative pool flatters the false-positive rate. It is
+  # used here to *select* a checkpoint, not to report one -- PR-AUC and the
+  # clinical error breakdown are what get reported.
+  #
+  # Alternatives, all valid values: pr_auc_macro (stricter on the rare class),
+  # f1_macro, malignant_recall, balanced_accuracy.
+  early_stopping_metric: roc_auc_macro
+  early_stopping_patience: 7
+
+  amp: true
+  amp_dtype: bfloat16
+  grad_clip: 1.0
+
+  # -- MIOpen off, deliberately --------------------------------------------
+  # On ROCm 7.2.1 / Windows, MIOpen cannot JIT-compile its training-mode
+  # BatchNorm kernel: the compiler cannot find the C++ header <type_traits>,
+  # which the wheels do not ship. Training crashes with
+  # `RuntimeError: miopenStatusUnknownError` partway through epoch 1, while
+  # inference keeps working because it uses the eval-mode BatchNorm path.
+  #
+  # Two ways round it, both measured on the 7900 XT at 256px batch 32:
+  #   * freeze BatchNorm, keep MIOpen        205 ms/step  (~11 min for 40 epochs)
+  #   * disable MIOpen, keep normal BatchNorm 284 ms/step (~16 min for 40 epochs)
+  #
+  # The second is chosen. Freezing BatchNorm would stop the running statistics
+  # updating from this dataset, leaving ImageNet's in place -- a real change to
+  # what gets trained, to save four minutes on the whole run.
+  miopen: false
+
+loader:
+  batch_size: 32
+  # Focal loss alpha already equalises the per-class loss mass to 33.3% each
+  # (verified on the real train split: malignant carries a 5.50x weight). Adding
+  # the sampler on top would correct the imbalance twice and push the model to
+  # over-predict malignant -- the exact failure this run is meant to fix.
+  # build_sampler refuses the combination rather than let it happen quietly.
+  balanced_sampler: false
+
+loss:
+  name: focal
+  gamma: 2.0
+  auto_alpha: true
+  # Full inverse frequency. Specificity is handled after training by the
+  # threshold, not by weakening the class weights -- tuning both at once makes
+  # neither attributable.
+  alpha_beta: 1.0
+
+calibrate:
+  # Specificity is the binding constraint for this run: an alert that fires on a
+  # third of normal films gets switched off, and a switched-off model has zero
+  # sensitivity in practice. So hold specificity at 80% and take the most
+  # sensitive threshold available underneath it.
+  mode: specificity_floor
+  min_specificity: 0.80
+  target_sensitivity: 0.95   # still reported, and warned about if unreachable
+  temperature: true

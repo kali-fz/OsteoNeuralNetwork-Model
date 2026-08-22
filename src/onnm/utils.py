@@ -109,6 +109,47 @@ def describe_device() -> dict[str, Any]:
     return info
 
 
+def configure_backend(use_miopen: bool = True) -> dict[str, Any]:
+    """Select the convolution/normalisation backend, working around a ROCm defect.
+
+    MIOpen JIT-compiles some kernels at first use. On the ROCm 7.2.1 Windows
+    wheels this fails for ``MIOpenBatchNormFwdTrainSpatialHIP`` -- the compiler
+    cannot find the C++ standard header ``type_traits``, which the wheels simply
+    do not ship (``rocm-sdk init`` expands the devel tree but supplies only
+    thrust's ``type_traits``, not libc++'s). The result:
+
+        MIOpen(HIP): Error [BuildHip] HIPRTC_ERROR_COMPILATION
+        fatal error: 'type_traits' file not found
+        RuntimeError: miopenStatusUnknownError
+
+    Only the *training-mode* BatchNorm kernel is affected. Inference uses the
+    eval-mode path and works, which is why a model can serve predictions
+    perfectly on a machine that cannot train one -- a genuinely confusing
+    failure to hit for the first time forty minutes into a run.
+
+    Setting ``use_miopen=False`` routes convolution and normalisation through
+    ATen's native implementations instead. Measured on a 7900 XT with
+    DenseNet-121 at 256px, batch 32: 284 ms/step versus 205 ms/step for the
+    MIOpen path with BatchNorm frozen. That is ~16 minutes rather than ~11 for a
+    40-epoch run -- a cheap price for keeping standard training semantics, and
+    the reason this is preferred over freezing BatchNorm to dodge the kernel.
+
+    Returns a dict describing what was selected, for logging and the run record.
+    """
+    import torch
+
+    info: dict[str, Any] = {
+        "miopen_requested": bool(use_miopen),
+        "backend": "MIOpen" if use_miopen else "ATen native",
+    }
+    if not use_miopen:
+        # On ROCm the cudnn flags are the MIOpen flags.
+        torch.backends.cudnn.enabled = False
+        torch.backends.cudnn.benchmark = False
+    info["cudnn_enabled"] = bool(torch.backends.cudnn.enabled)
+    return info
+
+
 def amp_dtype_from_str(name: str):
     """Map a config string to a torch dtype, defaulting to bf16.
 

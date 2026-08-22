@@ -107,6 +107,71 @@ def check_gpu(torch) -> bool:
     return True
 
 
+def check_training_kernels(torch) -> bool:
+    """Run one real training step of the ops a conv net actually needs.
+
+    A matmul is not evidence that training works. MIOpen JIT-compiles kernels at
+    first use, and on the ROCm 7.2.1 Windows wheels the *training-mode*
+    BatchNorm kernel fails to compile -- the C++ header <type_traits> is not
+    shipped. Inference is unaffected, because it takes the eval-mode BatchNorm
+    path. So a machine can pass every other check here, serve predictions
+    correctly, and still die with `miopenStatusUnknownError` partway into
+    epoch 1.
+
+    This check exists because that is exactly what happened: caught forty
+    minutes into a 40-epoch run rather than in the two seconds it costs here.
+    """
+    _section("Training kernels (conv + BatchNorm, both modes)")
+    from torch import nn
+
+    device = torch.device("cuda:0")
+    ok = True
+
+    def step(train_mode: bool) -> tuple[bool, str]:
+        try:
+            block = nn.Sequential(nn.Conv2d(3, 16, 3, padding=1), nn.BatchNorm2d(16)).to(device)
+            block.train(train_mode)
+            x = torch.randn(4, 3, 32, 32, device=device, requires_grad=True)
+            block(x).sum().backward()
+            torch.cuda.synchronize()
+            return True, ""
+        except Exception as exc:  # noqa: BLE001
+            return False, f"{type(exc).__name__}: {exc}"
+
+    eval_ok, eval_err = step(train_mode=False)
+    print(
+        PASS if eval_ok else FAIL,
+        "eval-mode forward/backward" + ("" if eval_ok else f": {eval_err}"),
+    )
+
+    train_ok, train_err = step(train_mode=True)
+    if train_ok:
+        print(PASS, "train-mode BatchNorm (the kernel MIOpen fails to build)")
+    else:
+        ok = False
+        print(FAIL, f"train-mode BatchNorm failed: {train_err}")
+        print("        This is the ROCm/Windows MIOpen defect. Inference will work;")
+        print("        training will not. Work around it with:")
+        print("            train.miopen: false      (in your config)")
+        print("        which routes conv and norm through ATen's native kernels --")
+        print("        about 40% slower per step, and semantically identical.")
+        print("        configs/full_run.yaml already sets it.")
+
+        try:
+            torch.backends.cudnn.enabled = False
+            retry_ok, retry_err = step(train_mode=True)
+            torch.backends.cudnn.enabled = True
+            if retry_ok:
+                print(PASS, "train-mode BatchNorm works with train.miopen: false")
+            else:
+                print(FAIL, f"still failing with MIOpen disabled: {retry_err}")
+        except Exception as exc:  # noqa: BLE001
+            print(WARN, f"could not test the workaround: {exc}")
+
+    torch.cuda.empty_cache()
+    return ok
+
+
 def check_libraries() -> bool:
     _section("Libraries")
     ok = True
@@ -156,6 +221,7 @@ def main() -> int:
     py_ok = check_python()
     torch_ok, torch = check_torch()
     gpu_ok = check_gpu(torch) if torch_ok else False
+    kernels_ok = check_training_kernels(torch) if gpu_ok else False
     libs_ok = check_libraries()
     proj_ok = check_project()
 
@@ -164,6 +230,7 @@ def main() -> int:
         ("python", py_ok),
         ("torch", torch_ok),
         ("gpu", gpu_ok),
+        ("train kernels", kernels_ok),
         ("libraries", libs_ok),
         ("project", proj_ok),
     ]:

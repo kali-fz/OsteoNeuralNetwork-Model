@@ -19,6 +19,7 @@ import torch
 from monai.data import CacheDataset, DataLoader, Dataset, list_data_collate
 from monai.transforms import (
     Compose,
+    CropForegroundd,
     DeleteItemsd,
     EnsureChannelFirstd,
     EnsureTyped,
@@ -323,23 +324,91 @@ def filter_by_split(
     return subset
 
 
-def class_weights(records: list[dict[str, Any]], num_classes: int = 3) -> torch.Tensor:
-    """Inverse-frequency class weights, normalised to mean 1.
+def class_weights(
+    records: list[dict[str, Any]], num_classes: int = 3, beta: float = 1.0
+) -> torch.Tensor:
+    """Inverse-frequency class weights, tempered by ``beta`` and normalised to mean 1.
 
     Used as the ``alpha`` term of the focal loss. Normalising to mean 1 keeps the
     loss on roughly the same scale as unweighted cross-entropy, so the learning
     rate does not have to be retuned when weighting is toggled.
+
+    ``beta`` controls how hard the correction pushes:
+
+    * ``1.0`` -- full inverse frequency. On BTXRD that weights malignant about
+      3.7x normal, which maximises sensitivity and is the right default when a
+      missed cancer is the dominant cost.
+    * ``0.5`` -- square root. The standard compromise when full weighting is
+      over-calling.
+    * ``0.0`` -- uniform. No class weighting; use this when a balanced sampler
+      is already handling the imbalance.
+
+    This is the most direct knob on the sensitivity/specificity trade-off, so it
+    is exposed rather than hard-coded: if normal controls are being called as
+    lesions, this is the first number to lower.
     """
+    if beta < 0:
+        raise ValueError(f"beta must be >= 0, got {beta}")
+
     counts = np.bincount([r["label"] for r in records], minlength=num_classes).astype(np.float64)
     counts = np.maximum(counts, 1.0)
-    weights = counts.sum() / (num_classes * counts)
+    weights = (counts.sum() / (num_classes * counts)) ** float(beta)
     weights = weights / weights.mean()
     return torch.as_tensor(weights, dtype=torch.float32)
+
+
+def sample_weights(records: list[dict[str, Any]], num_classes: int = 3) -> torch.Tensor:
+    """Per-sample draw probabilities that equalise the classes in a batch.
+
+    Each sample is weighted by ``1 / count(its class)``, so every class
+    contributes the same total mass and ``WeightedRandomSampler`` draws them in
+    equal proportion. With BTXRD's 70% split that turns a 16/13/3 batch into
+    roughly 11/11/11.
+
+    Sampling with replacement means the 240-odd malignant training images are
+    seen several times per epoch. That is the point, and it is also the risk:
+    combined with a weighted loss it double-corrects the imbalance. See
+    ``onnm.losses`` and ``loader.balanced_sampler`` in the config.
+    """
+    labels = np.asarray([r["label"] for r in records], dtype=int)
+    counts = np.bincount(labels, minlength=num_classes).astype(np.float64)
+    counts = np.maximum(counts, 1.0)
+    return torch.as_tensor(1.0 / counts[labels], dtype=torch.double)
 
 
 # ---------------------------------------------------------------------------
 # Transforms
 # ---------------------------------------------------------------------------
+def _foreground_selector(threshold: float):
+    """Build a ``select_fn`` for ``CropForegroundd`` that cannot select nothing.
+
+    The obvious ``lambda x: x > threshold`` has a failure mode that only shows up
+    on real data: a film that is entirely below the threshold -- a blank export,
+    a badly under-exposed study, a mask image -- selects an empty region, the
+    crop collapses a spatial axis to zero, and the *next* transform is the one
+    that raises. The traceback then points at ``Resized`` and says nothing about
+    the crop, on an image nobody has looked at.
+
+    So an empty selection falls back to keeping the whole frame. A blank film is
+    then merely uninformative rather than fatal, which is the correct handling:
+    ``RobustDataset`` should not have to substitute a sample over this, and an
+    evaluation run must not lose an image to it.
+    """
+
+    def select(image):
+        mask = image > threshold
+        if bool(mask.any()):
+            return mask
+        logger.warning(
+            "no pixel exceeds the %.3f foreground threshold; keeping the full frame "
+            "uncropped. The image may be blank or severely under-exposed.",
+            threshold,
+        )
+        return image >= image.min()  # all-True, and works for numpy and torch alike
+
+    return select
+
+
 def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose:
     """Assemble the MONAI transform chain for one mode.
 
@@ -349,6 +418,12 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
         keep_meta: Retain ``image_meta_dict``. Useful for the sanity notebook and
             for Grad-CAM overlays that need the pre-resize geometry; dropped in
             the training loop so it does not ride along through collation.
+
+    Note:
+        With ``data.crop_foreground`` enabled the geometry between the original
+        image and the model input is no longer the scale-and-pad that
+        ``explainability.map_box_to_model_space`` reproduces, so ground-truth
+        lesion-box scoring is disabled rather than reported wrongly.
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
@@ -371,6 +446,23 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
             keys=["image"], lower=lower, upper=upper, b_min=0.0, b_max=1.0,
             clip=True, relative=False,
         ),
+    ]
+
+    # -- optional foreground crop (deterministic, so it stays in the prefix) --
+    # Runs after intensity scaling so the threshold is in [0, 1] and means the
+    # same thing on a 12-bit DICOM and an 8-bit JPEG.
+    if bool(data.get("crop_foreground", False)):
+        stages.append(
+            CropForegroundd(
+                keys=["image"],
+                source_key="image",
+                select_fn=_foreground_selector(float(data.get("crop_threshold", 0.05))),
+                margin=int(data.get("crop_margin", 8)),
+                allow_smaller=True,
+            )
+        )
+
+    stages += [
         # Resize the LONGEST side, then pad -- preserving aspect ratio. Lesion
         # margin and periosteal reaction are morphological signs; squashing a
         # long-bone film into a square deforms exactly the cues that matter.
@@ -526,6 +618,58 @@ def build_dataset(
     return RobustDataset(data=records, transform=transform)
 
 
+def build_sampler(cfg: Config, records: list[dict[str, Any]]):
+    """Build the training sampler, refusing to double-correct the imbalance.
+
+    Returns ``None`` unless ``loader.balanced_sampler`` is set, in which case a
+    ``WeightedRandomSampler`` draws all three classes with equal probability.
+
+    The guard is the important part. A weighted loss and a balanced sampler each
+    fix the imbalance on their own; together they apply the correction twice and
+    the model learns to over-predict malignant, which shows up as normal
+    controls being flagged as lesions. That failure is invisible in the training
+    curve, so it is caught here at construction time rather than left to be
+    diagnosed from a confusion matrix days later.
+    """
+    if not bool(cfg.loader.get("balanced_sampler", False)):
+        return None
+
+    from torch.utils.data import WeightedRandomSampler
+
+    loss_is_weighted = (
+        cfg.loss.get("alpha", None) is not None
+        or (bool(cfg.loss.get("auto_alpha", True)) and str(cfg.loss.name).lower() != "ce")
+    )
+    if loss_is_weighted:
+        raise ConfigError(
+            "\n".join(
+                [
+                    "loader.balanced_sampler and a class-weighted loss are both enabled.",
+                    "Each corrects the class imbalance on its own; together they correct",
+                    "it twice and the model over-predicts malignant, which surfaces as",
+                    "normal films being called lesions. Pick one:",
+                    "  * sampler   -> set loss.auto_alpha: false (and leave loss.alpha unset)",
+                    "  * weighting -> set loader.balanced_sampler: false",
+                ]
+            )
+        )
+
+    weights = sample_weights(records, num_classes=int(cfg.model.num_classes))
+    configured = cfg.loader.get("samples_per_epoch", None)
+    num_samples = int(configured) if configured else len(records)
+
+    counts = np.bincount([r["label"] for r in records], minlength=int(cfg.model.num_classes))
+    logger.info(
+        "balanced sampler: %d samples/epoch drawn with replacement from %s "
+        "(expect ~%d per class per epoch instead of %s)",
+        num_samples,
+        dict(zip(CLASS_NAMES, counts.tolist(), strict=False)),
+        num_samples // max(int(cfg.model.num_classes), 1),
+        counts.tolist(),
+    )
+    return WeightedRandomSampler(weights, num_samples=num_samples, replacement=True)
+
+
 def build_dataloader(
     cfg: Config,
     mode: str,
@@ -542,15 +686,22 @@ def build_dataloader(
     redundant anyway. Any script that constructs a dataloader still needs an
     ``if __name__ == "__main__":`` guard.
     """
+    records = records if records is not None else build_records(cfg, split=mode)
     dataset = build_dataset(cfg, mode, records=records, keep_meta=keep_meta)
     loader_cfg = cfg.loader
     num_workers = int(loader_cfg.num_workers)
     is_train = mode == "train"
 
+    # A sampler and shuffle=True are mutually exclusive in PyTorch: the sampler
+    # already defines the draw order.
+    sampler = build_sampler(cfg, records) if is_train else None
+    use_shuffle = (is_train if shuffle is None else shuffle) and sampler is None
+
     return DataLoader(
         dataset,
         batch_size=int(loader_cfg.batch_size),
-        shuffle=is_train if shuffle is None else shuffle,
+        shuffle=use_shuffle,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=bool(loader_cfg.pin_memory) and torch.cuda.is_available(),
         persistent_workers=bool(loader_cfg.persistent_workers) and num_workers > 0,

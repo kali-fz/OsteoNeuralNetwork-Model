@@ -102,15 +102,38 @@ data:
   norm_mean: [0.485, 0.456, 0.406]
   norm_std: [0.229, 0.224, 0.225]
 
+  # -- Foreground cropping --------------------------------------------------
+  # Strips the black collimation border so the bone fills more of the frame and
+  # the model cannot key on border geometry (which correlates with the machine,
+  # which correlates with the hospital, which correlates with case mix).
+  #
+  # OFF by default, and that default is not laziness. Cropping changes the
+  # geometry between the original image and the model input, which is exactly
+  # the mapping `explainability.map_box_to_model_space` reproduces in order to
+  # score Grad-CAM against ground-truth lesion boxes. Turn this on and every
+  # pointing-game and IoU number becomes silently wrong until that mapping is
+  # extended to carry the crop offset. `evaluate_localisation` refuses to run
+  # rather than report a meaningless number, so enabling this is a deliberate
+  # trade of localisation scoring for classification robustness.
+  crop_foreground: false
+  crop_threshold: 0.05   # intensity in [0,1] below which a pixel is background
+  crop_margin: 8         # px kept around the detected bounding box
+
 augment:
   hflip_prob: 0.5        # horizontal only; a vertical flip is anatomically impossible
-  rotate_prob: 0.3
-  rotate_degrees: 10.0
+  rotate_prob: 0.5
+  rotate_degrees: 15.0
   zoom_prob: 0.3
   zoom_range: [0.9, 1.1]
-  contrast_prob: 0.3
-  gamma_range: [0.7, 1.5]
-  noise_prob: 0.2
+  # Contrast and noise are turned up from the original 0.3/0.7-1.5 and 0.2
+  # because the failure they defend against is real: BTXRD is multi-centre, and
+  # an external film with different exposure must not read as a different class.
+  # A gamma range this wide is deliberately more aggressive than looks
+  # comfortable -- it is cheap insurance against the model learning "brighter
+  # film" as a feature.
+  contrast_prob: 0.5
+  gamma_range: [0.5, 2.0]
+  noise_prob: 0.3
   noise_std: 0.01
 
 loader:
@@ -122,6 +145,23 @@ loader:
   pin_memory: true
   persistent_workers: false
   drop_last_train: true
+
+  # -- Balanced batch sampling ---------------------------------------------
+  # WeightedRandomSampler draws each class with equal probability, so a batch
+  # holds roughly 11 normal / 11 benign / 11 malignant instead of 16/13/3.
+  #
+  # This is an ALTERNATIVE to the focal loss's alpha term, not a companion to
+  # it. Using both applies the imbalance correction twice -- the rare class is
+  # oversampled into the batch AND upweighted in the gradient -- which drives
+  # the model to over-predict malignant. That is the exact false-positive
+  # failure this configuration is meant to fix, so `train.py` refuses to start
+  # with both enabled rather than letting it happen quietly.
+  #
+  # To use it: set this true and set `loss.auto_alpha: false`.
+  balanced_sampler: false
+  # Samples drawn per epoch. null = len(train split), which keeps epoch length
+  # and therefore the LR schedule unchanged.
+  samples_per_epoch: null
 
 model:
   name: densenet121
@@ -135,6 +175,49 @@ loss:
   auto_alpha: true     # inverse-frequency alpha from the TRAIN split only
   label_smoothing: 0.0
 
+  # Tempering exponent on the inverse-frequency alpha.
+  #   1.0 = full inverse frequency (malignant weighted ~3.7x normal)
+  #   0.5 = square root, the usual compromise
+  #   0.0 = uniform, i.e. no class weighting at all
+  #
+  # This is the single most direct lever on the sensitivity/specificity trade.
+  # Full inverse frequency pushes hard toward calling lesions, which is correct
+  # when the cost of a missed cancer dominates, but it is also the first thing
+  # to lower if normal controls are being over-called.
+  alpha_beta: 1.0
+  # Explicit per-class alpha, e.g. [1.0, 1.0, 2.5]. Overrides auto_alpha and
+  # alpha_beta entirely when set. Order follows labels.classes.
+  alpha: null
+
+# ---------------------------------------------------------------------------
+# Post-hoc calibration, fitted on VALIDATION after training finishes.
+#
+# Two separate things, often confused:
+#   * temperature scaling fixes the *probabilities* -- a network trained with
+#     focal loss is systematically overconfident, and dividing the logits by a
+#     single fitted scalar corrects that without moving a single argmax
+#   * threshold selection fixes the *decision* -- 0.50 is an arbitrary cut on
+#     P(lesion) that corresponds to no clinical policy at all
+#
+# Neither is a substitute for the other, and neither may be fitted on test.
+# ---------------------------------------------------------------------------
+calibrate:
+  temperature: true
+  # Which constraint binds:
+  #   sensitivity_floor -- sensitivity >= target_sensitivity, then maximise
+  #     specificity. The triage framing: a missed lesion sets a hard floor.
+  #   specificity_floor -- specificity >= min_specificity, then maximise
+  #     sensitivity. The framing for a tool that gets switched off if it cries
+  #     wolf, and a switched-off model has zero sensitivity in practice.
+  # Both are computed and reported either way; this picks which one is applied.
+  mode: sensitivity_floor
+  target_sensitivity: 0.95   # for the binary normal-vs-lesion decision
+  # Floor on specificity. If no threshold reaches target_sensitivity without
+  # dropping below this, the search reports the conflict instead of silently
+  # returning a threshold that calls everything a lesion.
+  min_specificity: 0.50
+  max_temperature: 10.0
+
 train:
   epochs: 40
   lr: 0.0003
@@ -144,6 +227,10 @@ train:
   warmup_epochs: 2
   amp: true
   amp_dtype: bfloat16   # bf16 on RDNA3 avoids GradScaler entirely and is safer than fp16
+  # Use MIOpen for convolution and normalisation. Set false if training dies with
+  # `miopenStatusUnknownError` on a BatchNorm kernel -- see onnm.utils.configure_backend.
+  # scripts/verify_env.py checks for this before a run rather than during one.
+  miopen: true
   grad_clip: 1.0
   early_stopping_metric: malignant_recall   # not loss
   early_stopping_patience: 8
