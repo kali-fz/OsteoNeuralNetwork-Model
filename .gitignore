@@ -50,3 +50,6 @@ desktop.ini
 
 # --- uv (tests are run via uv in some environments) ---------------------------
 uv.lock
+
+# Generated Cloudflare keys (cloudflare/deploy.sh writes this)
+.cloudflare-keys.txt
