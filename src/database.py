@@ -26,9 +26,13 @@ class DuplicateEmailError(DatabaseError):
 class User:
     user_id: str
     email: str
-    password_hash: str
+    # None for a federated (Google) account. Google holds those credentials and
+    # we never receive a password, so there is nothing honest to put here.
+    password_hash: str | None
     created_at: str
     tos_accepted_at: str
+    auth_provider: str = "password"
+    provider_subject: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,9 +84,64 @@ def connect(path: str | Path | None = None) -> Iterator[sqlite3.Connection]:
         _secure_permissions(db_path, 0o600)
 
 
+def _migrate_users_for_federation(connection: sqlite3.Connection) -> None:
+    """Relax ``password_hash`` to NULL-able on databases made before Google login.
+
+    SQLite cannot drop a NOT NULL constraint in place, so this needs the
+    standard table rebuild. The two new columns alone would have been an
+    ``ALTER TABLE ADD COLUMN``, but a federated account must store *no* password
+    hash rather than a sentinel, and the old table forbids that.
+
+    Runs only when the old shape is detected, so it is a no-op on a fresh
+    database and on every start after the first.
+    """
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    ).fetchone()
+    if not exists:
+        return  # fresh database; the CREATE below already has the new shape
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+    if "auth_provider" in columns:
+        return  # already migrated
+
+    # Rows that predate federation are password accounts by definition --
+    # there was no other kind -- so they migrate to auth_provider = 'password'.
+    connection.executescript(
+        """
+        CREATE TABLE users_migrated (
+            user_id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT,
+            auth_provider TEXT NOT NULL DEFAULT 'password'
+                CHECK (auth_provider IN ('password', 'google')),
+            provider_subject TEXT,
+            created_at TEXT NOT NULL,
+            tos_accepted_at TEXT NOT NULL,
+            CHECK (
+                (auth_provider = 'password'
+                     AND password_hash IS NOT NULL AND provider_subject IS NULL)
+             OR (auth_provider = 'google'
+                     AND password_hash IS NULL     AND provider_subject IS NOT NULL)
+            )
+        );
+
+        INSERT INTO users_migrated
+            (user_id, email, password_hash, auth_provider, provider_subject,
+             created_at, tos_accepted_at)
+        SELECT user_id, email, password_hash, 'password', NULL,
+               created_at, tos_accepted_at
+          FROM users;
+
+        DROP TABLE users;
+        ALTER TABLE users_migrated RENAME TO users;
+        """
+    )
+
+
 def initialize_database(path: str | Path | None = None) -> Path:
     db_path = database_path(path)
     with connect(db_path) as connection:
+        _migrate_users_for_federation(connection)
         connection.executescript(
             """
             PRAGMA journal_mode = WAL;
@@ -90,10 +149,22 @@ def initialize_database(path: str | Path | None = None) -> Path:
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
+                auth_provider TEXT NOT NULL DEFAULT 'password'
+                    CHECK (auth_provider IN ('password', 'google')),
+                provider_subject TEXT,
                 created_at TEXT NOT NULL,
-                tos_accepted_at TEXT NOT NULL
+                tos_accepted_at TEXT NOT NULL,
+                CHECK (
+                    (auth_provider = 'password'
+                         AND password_hash IS NOT NULL AND provider_subject IS NULL)
+                 OR (auth_provider = 'google'
+                         AND password_hash IS NULL     AND provider_subject IS NOT NULL)
+                )
             );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject
+                ON users(provider_subject) WHERE provider_subject IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS uploads (
                 upload_id TEXT PRIMARY KEY,
@@ -133,13 +204,16 @@ def create_user(
             connection.execute(
                 """
                 INSERT INTO users
-                    (user_id, email, password_hash, created_at, tos_accepted_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (user_id, email, password_hash, auth_provider, provider_subject,
+                     created_at, tos_accepted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.user_id,
                     user.email,
                     user.password_hash,
+                    user.auth_provider,
+                    user.provider_subject,
                     user.created_at,
                     user.tos_accepted_at,
                 ),
@@ -155,11 +229,77 @@ def get_user_by_email(email: str, path: str | Path | None = None) -> User | None
     with connect(path) as connection:
         row = connection.execute(
             """
-            SELECT user_id, email, password_hash, created_at, tos_accepted_at
+            SELECT user_id, email, password_hash, created_at, tos_accepted_at,
+                   auth_provider, provider_subject
             FROM users
             WHERE email = ?
             """,
             (email,),
+        ).fetchone()
+    return User(**dict(row)) if row else None
+
+
+def create_oauth_user(
+    email: str,
+    provider_subject: str,
+    *,
+    auth_provider: str = "google",
+    tos_accepted_at: str | None = None,
+    path: str | Path | None = None,
+) -> User:
+    """Create a federated account. No password is stored, or storable."""
+    user = User(
+        user_id=str(uuid.uuid4()),
+        email=email,
+        password_hash=None,
+        created_at=utc_now(),
+        tos_accepted_at=tos_accepted_at or utc_now(),
+        auth_provider=auth_provider,
+        provider_subject=provider_subject,
+    )
+    try:
+        with connect(path) as connection:
+            connection.execute(
+                """
+                INSERT INTO users
+                    (user_id, email, password_hash, auth_provider, provider_subject,
+                     created_at, tos_accepted_at)
+                VALUES (?, ?, NULL, ?, ?, ?, ?)
+                """,
+                (
+                    user.user_id,
+                    user.email,
+                    user.auth_provider,
+                    user.provider_subject,
+                    user.created_at,
+                    user.tos_accepted_at,
+                ),
+            )
+    except DatabaseError as exc:
+        if isinstance(exc.__cause__, sqlite3.IntegrityError):
+            raise DuplicateEmailError("An account already exists for this email.") from exc
+        raise
+    return user
+
+
+def get_user_by_subject(
+    provider_subject: str, path: str | Path | None = None
+) -> User | None:
+    """Look up a federated account by the provider's stable subject claim.
+
+    Identity is keyed on the subject rather than the email address because a
+    Google address can change hands -- a Workspace account can be reassigned
+    after it is closed -- while ``sub`` is stable for the life of the account.
+    """
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, email, password_hash, created_at, tos_accepted_at,
+                   auth_provider, provider_subject
+            FROM users
+            WHERE provider_subject = ?
+            """,
+            (provider_subject,),
         ).fetchone()
     return User(**dict(row)) if row else None
 

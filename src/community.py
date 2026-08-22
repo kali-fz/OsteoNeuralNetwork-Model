@@ -50,6 +50,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Cloudflare's edge refuses the default urllib User-Agent ("Python-urllib/3.x")
+# with HTTP 403 and a plain-text "error code: 1010" body -- a browser-signature
+# ban applied before the request ever reaches the Worker. Nothing in the Worker,
+# the token or the schema is involved, which is what makes it so misleading: the
+# API looks broken while curl and a browser both get a clean 200. Sending an
+# honest, identifiable agent string is the whole fix, and is better manners than
+# impersonating a browser would be.
+USER_AGENT = "ONNM-Streamlit/1.0 (+https://github.com/kali-fz/OsteoNeuralNetwork-Model)"
+
 DEFAULT_TIMEOUT = 15.0
 # Health checks get their own, much shorter budget. They run to decorate the UI,
 # not to do work, so a slow or unreachable API must cost a moment rather than
@@ -68,10 +77,12 @@ class User:
 
     user_id: str
     email: str
-    password_hash: str
+    password_hash: str | None
     created_at: str
     tos_accepted_at: str
     is_admin: bool = False
+    auth_provider: str = "password"
+    provider_subject: str | None = None
 
 
 class CommunityError(RuntimeError):
@@ -189,6 +200,7 @@ class CommunityClient:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = urllib.request.Request(url, data=data, method=method)
         request.add_header("authorization", f"Bearer {key}")
+        request.add_header("user-agent", USER_AGENT)
         if data is not None:
             request.add_header("content-type", "application/json")
 
@@ -200,7 +212,14 @@ class CommunityClient:
             try:
                 parsed = json.loads(body or "{}")
             except json.JSONDecodeError:
-                parsed = {"error": body[:500]}
+                # A non-JSON body means something in front of the Worker
+                # answered -- the Cloudflare edge, a proxy, a captive portal.
+                # Say which, because "error code: 1010" alone sends you
+                # debugging the Worker, where the problem is not.
+                parsed = {
+                    "error": f"the API gateway refused the request (HTTP {exc.code}): "
+                    f"{body.strip()[:200]}"
+                }
             # 4xx are expected control flow (duplicate email, rate limit) and
             # are not logged as failures; 5xx are genuine faults.
             if exc.code >= 500:
@@ -252,18 +271,62 @@ class CommunityClient:
             raise DuplicateEmailError("an account already exists for that email")
         raise CommunityError(body.get("error", f"could not create account (status {status})"))
 
-    def get_user_by_email(self, email: str) -> User | None:
-        status, body = self._request("GET", "/users/by-email", params={"email": email})
-        if status != 200:
-            return None
+    def create_oauth_user(
+        self, email: str, provider_subject: str, *, auth_provider: str = "google"
+    ) -> User:
+        """Create a federated account. Sends no password hash, and cannot.
+
+        The Worker rejects a ``password_hash`` on a federated account outright,
+        so a bug that tried to attach one fails loudly rather than creating an
+        account that could be logged into by two different routes.
+        """
+        user_id = str(uuid.uuid4())
+        status, body = self._request(
+            "POST",
+            "/users",
+            {
+                "user_id": user_id,
+                "email": email,
+                "auth_provider": auth_provider,
+                "provider_subject": provider_subject,
+            },
+        )
+        if status == 201:
+            return User(
+                user_id=user_id,
+                email=email,
+                password_hash=None,
+                created_at=body.get("created_at", ""),
+                tos_accepted_at=body.get("created_at", ""),
+                auth_provider=auth_provider,
+                provider_subject=provider_subject,
+            )
+        if status == 409:
+            raise DuplicateEmailError("an account already exists for that email")
+        raise CommunityError(body.get("error", f"could not create account (status {status})"))
+
+    def _user_from_body(self, body: dict[str, Any]) -> User:
         return User(
             user_id=body["user_id"],
             email=body["email"],
-            password_hash=body["password_hash"],
+            password_hash=body.get("password_hash"),
             created_at=body.get("created_at", ""),
             tos_accepted_at=body.get("tos_accepted_at", ""),
             is_admin=bool(body.get("is_admin", 0)),
+            auth_provider=body.get("auth_provider") or "password",
+            provider_subject=body.get("provider_subject"),
         )
+
+    def get_user_by_email(self, email: str) -> User | None:
+        status, body = self._request("GET", "/users/by-email", params={"email": email})
+        return self._user_from_body(body) if status == 200 else None
+
+    def get_user_by_subject(self, provider_subject: str) -> User | None:
+        """Look a federated account up by the provider's stable subject claim."""
+        status, body = self._request(
+            "GET", "/users/by-subject", params={"subject": provider_subject}
+        )
+        return self._user_from_body(body) if status == 200 else None
 
     # -- submissions -------------------------------------------------------
     def create_submission(

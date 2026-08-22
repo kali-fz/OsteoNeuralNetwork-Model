@@ -44,8 +44,13 @@ SCHEMA = pathlib.Path(__file__).resolve().parents[1] / "cloudflare" / "schema.sq
 def db() -> sqlite3.Connection:
     con = sqlite3.connect(":memory:")
     con.executescript(SCHEMA.read_text(encoding="utf-8"))
+    # Columns named rather than positional: this fixture exists to test the
+    # review gate, and it should not break every time an unrelated column is
+    # added to `users`.
     con.execute(
-        "INSERT INTO users VALUES ('u1','a@b.c','pbkdf2_sha256$1$aa$bb','t','t',0)"
+        """INSERT INTO users
+             (user_id, email, password_hash, created_at, tos_accepted_at, is_admin)
+           VALUES ('u1', 'a@b.c', 'pbkdf2_sha256$1$aa$bb', 't', 't', 0)"""
     )
     return con
 

@@ -2,10 +2,15 @@
 
     streamlit run app.py
 
-Runs entirely on this machine: the model, the Grad-CAM, and the server itself.
-Nothing is uploaded anywhere, no external API is called, and the whole stack is
-free and open source. Uploaded files are de-identified and retained in private local account storage
-under the research-data terms shown during account creation.
+Inference always runs where the app runs: the model and the Grad-CAM are never
+sent anywhere to be computed. The whole stack is free and open source.
+
+Two deployments, and the difference is worth knowing before reading the code.
+Run locally, nothing leaves the machine and accounts live in a SQLite file.
+Hosted, accounts live in Cloudflare D1, sign-in is delegated to Google, and a
+submission record -- plus the 256px image, but only with per-image consent --
+is written to the community database. ``src/backend.py`` picks between the two
+on configuration alone; see ``src/legal.py`` for what each one discloses.
 
 All model work lives in ``onnm.inference``. This file is presentation only, and
 should stay that way -- if a computation needs to move here to make the layout
@@ -38,6 +43,7 @@ from auth import (  # noqa: E402
     logout_session,
     register_user,
 )
+from backend import using_community  # noqa: E402
 from checkpoint_fetch import ensure_checkpoint  # noqa: E402
 from community_ui import (  # noqa: E402
     community_status,
@@ -54,6 +60,7 @@ from database import (  # noqa: E402
     update_upload_result,
 )
 from legal import COOKIE_NOTICE, MEDICAL_DISCLAIMER, PRIVACY_POLICY, TERMS_OF_SERVICE  # noqa: E402
+from oauth import oidc_configured, render_sign_in, resolve_account, sign_out  # noqa: E402
 from onnm import __version__  # noqa: E402
 from onnm.inference import (  # noqa: E402
     UPLOAD_TYPES,
@@ -219,11 +226,22 @@ def render_legal_footer() -> None:
 
 
 def render_authentication() -> None:
-    st.subheader("Secure local access")
-    st.caption(
-        "Accounts, password hashes, and scans remain on this computer. "
-        "No authentication or storage service is contacted."
-    )
+    st.subheader("Secure access")
+    # Stating where accounts actually go, rather than asserting "this computer"
+    # unconditionally: the same form writes to Cloudflare D1 when the app is
+    # hosted, and a privacy claim that is false in one deployment is worse than
+    # no claim at all.
+    if using_community():
+        st.caption(
+            "Accounts are stored in Cloudflare D1. Your password is hashed in this "
+            "app with PBKDF2-HMAC-SHA256 before it is sent; the plaintext never "
+            "leaves the browser session."
+        )
+    else:
+        st.caption(
+            "Accounts, password hashes, and scans remain on this computer. "
+            "No authentication or storage service is contacted."
+        )
     login_tab, create_tab = st.tabs(["Login", "Create Account"])
 
     with login_tab:
@@ -369,7 +387,22 @@ except DatabaseError as exc:
     render_legal_footer()
     st.stop()
 
-if not st.session_state["authenticated"]:
+# Google Sign-In when a deployment has an OAuth client configured; the password
+# forms otherwise. The fallback is not a second way in to the same deployment --
+# whichever route is configured is the only one available -- it is what lets a
+# local checkout run with no Google client of its own.
+USING_GOOGLE = oidc_configured()
+
+if USING_GOOGLE:
+    _account = resolve_account()
+    if _account is None:
+        render_sign_in()
+        render_legal_footer()
+        st.stop()
+    # Re-established on every rerun from the signed cookie Streamlit manages,
+    # so session state cannot drift from the actual identity.
+    login_session(st.session_state, _account)
+elif not st.session_state["authenticated"]:
     render_authentication()
     render_legal_footer()
     st.stop()
@@ -379,7 +412,10 @@ with st.sidebar:
     st.success(f"Logged in as: **{st.session_state['user_email']}**")
     if st.button("Logout", use_container_width=True):
         logout_session(st.session_state)
-        st.rerun()
+        if USING_GOOGLE:
+            sign_out()   # clears Streamlit's auth cookie; reruns on its own
+        else:
+            st.rerun()
     render_scan_history(st.session_state["user_id"])
 
     st.divider()

@@ -85,19 +85,56 @@ PRIVACY_POLICY = """
 **Effective date: 22 August 2026**
 
 ### Scope and roles
-This Policy covers the local ONNM application. ONNM has no hosted backend. The person
-or organization running the installation is the data controller/operator for data
-entered into it and is responsible for determining whether HIPAA, UK GDPR, EU GDPR,
-state health-privacy law, institutional review, or another regime applies. Installing
-this software does **not** itself create compliance with any such regime.
+ONNM runs in one of two configurations, and which one you are using changes where your
+data goes. **Read this section first.**
+
+- **Local installation.** Everything below that refers to local storage applies, no
+  network service is contacted, and the person or organization running the
+  installation holds all of the data.
+- **Hosted deployment** (the public app at `*.streamlit.app`). Your account and your
+  submissions leave your machine. See "Hosted deployment" below for exactly what is
+  sent and to whom.
+
+In either case the person or organization running the deployment is the data
+controller/operator and is responsible for determining whether HIPAA, UK GDPR, EU
+GDPR, state health-privacy law, institutional review, or another regime applies.
+Running this software does **not** itself create compliance with any such regime.
 
 ### Data processed
-The Service stores: your normalized email address; a salted PBKDF2 password hash
-(never your plaintext password); account and Terms-acceptance timestamps; a random
-user UUID; uploaded radiograph pixels; the original filename in private scan history;
-a random on-disk filename; upload time; model verdict; and confidence score. Streamlit
-also keeps transient session state needed to keep you logged in during the browser
-session.
+The Service stores: your normalized email address; account and Terms-acceptance
+timestamps; a random user UUID; uploaded radiograph pixels; the original filename in
+private scan history; a random on-disk filename; upload time; model verdict; and
+confidence score. Streamlit also keeps transient session state needed to keep you
+logged in during the browser session.
+
+How your identity is held depends on how you signed in:
+
+- **Password account** — a salted PBKDF2-HMAC-SHA256 hash is stored. Your plaintext
+  password is never stored or transmitted to any storage backend.
+- **Google account** — no password is stored, because none is ever received. Google
+  authenticates you and returns your email address and a stable account identifier
+  (`sub`); those two values are all that is kept. ONNM holds no Google credential,
+  no access token, and no ability to act on your Google account.
+
+### Hosted deployment
+When you use the public app rather than a local installation, three third parties are
+involved, each seeing a different slice:
+
+- **Streamlit Community Cloud** hosts the app and therefore receives every image you
+  upload, because inference runs on their server. Images are held in memory for the
+  request and are not written to their disk by ONNM.
+- **Google** performs authentication. Google learns that you signed in to this app;
+  ONNM learns your email address and account identifier. Nothing you upload is sent
+  to Google.
+- **Cloudflare (Workers and D1)** stores accounts and submission records. A
+  submission row always records the model's verdict and probabilities. The
+  **256-pixel processed image is stored only if you tick the sharing box**, which is
+  off by default and asked separately for every image. Cloudflare's platform
+  encryption applies to data at rest; ONNM adds no encryption of its own on top.
+
+Do not upload identifiable patient radiographs to the hosted app. It is an
+unvalidated research prototype, not a clinical system, and the hosting arrangements
+above have not been assessed against any health-data regime.
 
 ### Purposes and legal basis
 Data is processed to authenticate users, perform requested local inference, display
@@ -121,11 +158,18 @@ controls, secure backups, physical security, and malware protection are the Oper
 responsibility.
 
 ### Sharing and transfers
-The application contains no feature that sells scan data, sends it to advertising
-networks, or uploads it to a third-party cloud service. Data stays on the local machine
-unless a user or Operator copies it, backs it up, exposes the Streamlit server beyond
-loopback, or adds external integrations. Such actions are outside ONNM's built-in flow
-and must be separately assessed and disclosed.
+ONNM contains no feature that sells scan data or sends it to advertising networks, and
+that holds in both configurations.
+
+In a **local installation**, data stays on the local machine unless a user or Operator
+copies it, backs it up, exposes the Streamlit server beyond loopback, or adds external
+integrations.
+
+In the **hosted deployment**, data is transferred to the three providers named under
+"Hosted deployment" above, in the manner described there. Those providers operate
+internationally, so processing may occur outside your country. No other transfer
+happens through ONNM's built-in flow; anything further is outside it and must be
+separately assessed and disclosed.
 
 ### Retention and deletion
 Records remain until the Operator deletes the account, database row, image, or storage

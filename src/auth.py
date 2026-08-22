@@ -61,7 +61,13 @@ def hash_password(password: str, *, iterations: int = PBKDF2_ITERATIONS) -> str:
     return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
 
 
-def verify_password(password: str, encoded_hash: str) -> bool:
+def verify_password(password: str, encoded_hash: str | None) -> bool:
+    # A federated account stores NULL here. Rejecting a non-string outright
+    # means "this account has no password" can only ever answer False, rather
+    # than raising an AttributeError that some caller might mistake for a bug
+    # worth working around.
+    if not isinstance(encoded_hash, str):
+        return False
     try:
         algorithm, iterations_text, salt_hex, expected_hex = encoded_hash.split("$", 3)
         if algorithm != "pbkdf2_sha256":
@@ -108,11 +114,16 @@ def authenticate_user(
 
     initialize_database(database)
     user = get_user_by_email(normalized, path=database)
+    # A federated account has no password to check. Treat it exactly like an
+    # unknown account -- same dummy hash, same wasted work -- so that "this
+    # address signs in with Google" is not something an attacker can learn by
+    # timing the login form.
+    federated = user is not None and getattr(user, "auth_provider", "password") != "password"
     # Perform the same expensive operation for unknown accounts to reduce timing leakage.
-    encoded = user.password_hash if user else _DUMMY_HASH
+    encoded = user.password_hash if (user and not federated) else _DUMMY_HASH
     password_is_bounded = len(password) <= 1024
     valid = verify_password(password if password_is_bounded else "", encoded)
-    return user if user and password_is_bounded and valid else None
+    return user if user and not federated and password_is_bounded and valid else None
 
 
 def initialize_session(state: MutableMapping[str, Any]) -> None:

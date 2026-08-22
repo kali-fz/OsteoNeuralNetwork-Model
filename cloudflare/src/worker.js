@@ -41,6 +41,7 @@ const MAX_USERS = 500; // a test deployment, not a product launch
 const MAX_PAGE_SIZE = 100;
 
 const VALID_LABELS = new Set(["normal", "benign", "malignant"]);
+const AUTH_PROVIDERS = new Set(["password", "google"]);
 
 // --- Small helpers ----------------------------------------------------------
 const json = (data, status = 200) =>
@@ -121,16 +122,39 @@ async function health(db) {
 }
 
 async function createUser(db, body) {
-  const { user_id, email, password_hash, tos_accepted_at, is_admin } = body;
-  if (!user_id || !email || !password_hash) {
-    return fail(400, "user_id, email and password_hash are required");
+  const {
+    user_id,
+    email,
+    password_hash,
+    tos_accepted_at,
+    is_admin,
+    auth_provider,
+    provider_subject,
+  } = body;
+  const provider = auth_provider || "password";
+  if (!user_id || !email) return fail(400, "user_id and email are required");
+  if (!AUTH_PROVIDERS.has(provider)) {
+    return fail(400, `auth_provider must be one of ${[...AUTH_PROVIDERS].join(", ")}`);
   }
-  // The Worker must never be handed a plaintext password. This does not prove
-  // the value is a real PBKDF2 hash, but it catches the client bug where the
-  // raw password is passed by mistake, which is the failure worth catching.
-  if (!String(password_hash).startsWith("pbkdf2_sha256$")) {
-    return fail(400, "password_hash must be a pbkdf2_sha256 encoded hash, not a password");
+
+  // Each provider has its own required shape, and the wrong one is rejected
+  // rather than coerced. Accepting a password_hash on a Google account would
+  // create a federated identity that can *also* be logged into with a password
+  // — an authentication bypass, not a data-quality problem.
+  if (provider === "password") {
+    if (!password_hash) return fail(400, "password_hash is required for a password account");
+    // The Worker must never be handed a plaintext password. This does not prove
+    // the value is a real PBKDF2 hash, but it catches the client bug where the
+    // raw password is passed by mistake, which is the failure worth catching.
+    if (!String(password_hash).startsWith("pbkdf2_sha256$")) {
+      return fail(400, "password_hash must be a pbkdf2_sha256 encoded hash, not a password");
+    }
+    if (provider_subject) return fail(400, "a password account must not carry a provider_subject");
+  } else {
+    if (!provider_subject) return fail(400, `provider_subject is required for a ${provider} account`);
+    if (password_hash) return fail(400, `a ${provider} account must not carry a password_hash`);
   }
+
   const count = await db.prepare("SELECT COUNT(*) AS n FROM users").first();
   if (count.n >= MAX_USERS) return fail(507, `user cap reached (${MAX_USERS})`);
 
@@ -138,13 +162,16 @@ async function createUser(db, body) {
   try {
     await db
       .prepare(
-        `INSERT INTO users (user_id, email, password_hash, created_at, tos_accepted_at, is_admin)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (user_id, email, password_hash, auth_provider, provider_subject,
+                            created_at, tos_accepted_at, is_admin)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         user_id,
         String(email).toLowerCase(),
-        password_hash,
+        provider === "password" ? password_hash : null,
+        provider,
+        provider === "password" ? null : String(provider_subject),
         created,
         tos_accepted_at || created,
         is_admin ? 1 : 0
@@ -154,14 +181,36 @@ async function createUser(db, body) {
     if (String(err).includes("UNIQUE")) return fail(409, "an account already exists for that email");
     throw err;
   }
-  return json({ user_id, email, created_at: created }, 201);
+  return json({ user_id, email, created_at: created, auth_provider: provider }, 201);
+}
+
+/**
+ * Look an account up by Google's `sub` claim rather than by email.
+ *
+ * Email is the wrong key for a federated identity: a Google Workspace address
+ * can be reassigned to a different person after an account is closed, and a
+ * user can change the address on their own account. `sub` is stable and unique
+ * for the lifetime of the Google account, so it is what identity is keyed on.
+ */
+async function getUserBySubject(db, subject) {
+  if (!subject) return fail(400, "subject query parameter is required");
+  const row = await db
+    .prepare(
+      `SELECT user_id, email, password_hash, auth_provider, provider_subject,
+              created_at, tos_accepted_at, is_admin
+         FROM users WHERE provider_subject = ?`
+    )
+    .bind(String(subject))
+    .first();
+  return row ? json(row) : fail(404, "no such user");
 }
 
 async function getUserByEmail(db, email) {
   if (!email) return fail(400, "email query parameter is required");
   const row = await db
     .prepare(
-      `SELECT user_id, email, password_hash, created_at, tos_accepted_at, is_admin
+      `SELECT user_id, email, password_hash, auth_provider, provider_subject,
+              created_at, tos_accepted_at, is_admin
        FROM users WHERE email = ? COLLATE NOCASE`
     )
     .bind(String(email).toLowerCase())
@@ -463,6 +512,9 @@ export default {
       if (method === "POST" && path === "/users") return await createUser(db, await readJson(request));
       if (method === "GET" && path === "/users/by-email") {
         return await getUserByEmail(db, url.searchParams.get("email"));
+      }
+      if (method === "GET" && path === "/users/by-subject") {
+        return await getUserBySubject(db, url.searchParams.get("subject"));
       }
 
       if (method === "POST" && path === "/submissions") {

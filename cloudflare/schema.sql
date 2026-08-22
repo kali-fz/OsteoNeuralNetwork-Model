@@ -35,11 +35,40 @@
 CREATE TABLE IF NOT EXISTS users (
     user_id         TEXT PRIMARY KEY,
     email           TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash   TEXT NOT NULL,
+
+    -- NULL for a federated account. Google holds those credentials; we never
+    -- receive a password and must not pretend to store one. A sentinel string
+    -- here would be worse than NULL: it reads like a hash to anyone auditing
+    -- the table, and the CHECK below could not then rule out a password login.
+    password_hash   TEXT,
+
+    -- 'password' for a local account, 'google' for Google Sign-In. The pairing
+    -- with password_hash is enforced rather than assumed, because the failure
+    -- it prevents -- a federated account that can also be logged into with a
+    -- password someone set -- would be an authentication bypass, not a bug.
+    auth_provider   TEXT NOT NULL DEFAULT 'password'
+        CHECK (auth_provider IN ('password', 'google')),
+    -- Google's `sub` claim: stable for the life of the account, and unlike the
+    -- email address it never changes hands. Identity is keyed on this.
+    provider_subject TEXT,
+
     created_at      TEXT NOT NULL,
     tos_accepted_at TEXT NOT NULL,
-    is_admin        INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1))
+    is_admin        INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
+
+    CHECK (
+        (auth_provider = 'password'
+             AND password_hash IS NOT NULL AND provider_subject IS NULL)
+     OR (auth_provider = 'google'
+             AND password_hash IS NULL     AND provider_subject IS NOT NULL)
+    )
 );
+
+-- One account per Google identity. Partial, so the many NULLs on password
+-- accounts do not collide (SQLite treats NULLs as distinct in a UNIQUE index,
+-- but stating the intent keeps the index small and the meaning obvious).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject
+    ON users(provider_subject) WHERE provider_subject IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Submissions: one row per image a user ran through the model.

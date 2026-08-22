@@ -28,7 +28,7 @@ head_sampling_rate = 0.1   # free-tier friendly; full logging is not needed here
 binding = "DB"
 database_name = "onnm-community"
 # Filled in by `wrangler d1 create onnm-community` — paste the id it prints.
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "961f0440-7ff1-466e-88fe-0c2b30f3083b"
 
 # ---------------------------------------------------------------------------
 # Secrets — set these with `wrangler secret put`, never in this file.

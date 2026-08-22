@@ -27,12 +27,92 @@ ONNM_COMMUNITY_KEY = "the API_KEY from wrangler"
 ONNM_CHECKPOINT_URL = "https://<direct link to best.pt>"
 ONNM_CALIBRATION_URL = "https://<direct link to calibration.json>"
 ONNM_CHECKPOINT_RUN = "hosted"
+
+# Google Sign-In — see the next section for where these come from.
+[auth]
+redirect_uri  = "https://<your-app>.streamlit.app/oauth2callback"
+cookie_secret = "<64 random hex characters>"
+
+[auth.google]
+client_id           = "<id>.apps.googleusercontent.com"
+client_secret       = "<secret>"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 ```
+
+> **Order matters.** This is TOML: every bare key must come *above* the first
+> `[section]` header, or it silently becomes a member of that section. Putting
+> `ONNM_COMMUNITY_KEY` below `[auth]` makes it `auth.ONNM_COMMUNITY_KEY`, the
+> app reads it as unset, and accounts quietly fall back to the container's
+> throwaway SQLite instead of D1 — with no error anywhere to explain why.
 
 **Never put `ONNM_ADMIN_KEY` here.** Review and export run from your machine, so
 a leak of the app's key cannot approve its own training data.
 
 5. Deploy. First build takes several minutes (torch is a large download).
+
+## Google Sign-In
+
+The app uses Google Sign-In rather than its own password forms. ONNM never
+receives a password, so there is none to store, reset, or leak — the only things
+kept are the email address and Google's `sub` (a stable account identifier).
+
+Creating the OAuth client is the one part that cannot be scripted: it needs a
+signed-in Google account and the consent screen is a human decision.
+
+1. <https://console.cloud.google.com/> → create a project, e.g. **ONNM**.
+2. **APIs & Services → OAuth consent screen**
+   - User type **External**.
+   - App name `OsteoNeuralNetwork-Model`, your email for both support and
+     developer contact.
+   - Scopes: leave the defaults (`openid`, `email`, `profile`). Do **not** add
+     any others — anything beyond these is a "sensitive scope" and drags the
+     project into Google's verification review for no benefit here.
+   - While the app is in **Testing**, only accounts listed under **Test users**
+     can sign in, up to 100. Add your own address and each tester's. This is the
+     right mode for a research prototype: it keeps the app closed by default.
+     Pressing **Publish app** opens it to any Google account; with only the
+     three basic scopes that needs no verification, though testers will see an
+     "unverified app" interstitial they must click through.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type **Web application**.
+   - **Authorised redirect URIs** — add both, exactly:
+     - `https://<your-app>.streamlit.app/oauth2callback`
+     - `http://localhost:8501/oauth2callback` (only if you want local sign-in)
+
+     The path must be `/oauth2callback`; Streamlit serves the callback there and
+     Google refuses any redirect that is not character-for-character on the list.
+4. Copy the **client ID** and **client secret** into the secrets block above.
+5. `cookie_secret` is any 64 random hex characters — it signs the session
+   cookie, so treat it as a secret and do not reuse one from elsewhere.
+   Generate one with:
+   `python -c "import secrets; print(secrets.token_hex(32))"`
+
+Changing these secrets restarts the app; sign-in works about a minute later.
+
+### What this changes about accounts
+
+- `users.password_hash` is `NULL` for a Google account and the schema *enforces*
+  that it stays NULL, so an account can never be reachable both by password and
+  by Google. That pairing is checked in the database rather than trusted to the
+  Worker, because getting it wrong would be an authentication bypass.
+- Identity is keyed on `sub`, not the email address, so a user who changes their
+  Google address keeps the same account and the same scan history.
+- An existing password account is *not* converted by signing in with the same
+  address. Silently doing so would let anyone who can prove control of an email
+  address take over that account.
+- Uploads are unaffected: submissions still carry `user_id` and still land in
+  D1 for retraining exactly as before.
+
+### If sign-in fails
+
+- **`redirect_uri_mismatch`** — the URI in Google's console differs from
+  `[auth].redirect_uri`. They must match exactly, including `https` and no
+  trailing slash.
+- **"Access blocked: app not verified"** — the account is not on the test-user
+  list and the app is unpublished. Add the address, or publish.
+- **Sign-in works but the account does not appear in D1** — check the TOML
+  ordering warning above; `ONNM_COMMUNITY_KEY` has probably been absorbed into
+  the `[auth]` table.
 
 ## The checkpoint
 
