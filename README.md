@@ -109,9 +109,9 @@ For the full pipeline:
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/kali-fz"><img src="https://github.com/kali-fz.png?size=96" width="72" alt="kali-fz"><br><sub><b>kali-fz</b></sub></a><br><sub>Project lead</sub></td>
-    <td align="center"><a href="https://github.com/umfhero"><img src="https://github.com/umfhero.png?size=96" width="72" alt="umfhero"><br><sub><b>umfhero</b></sub></a><br><sub>Engineering</sub></td>
-    <td align="center"><a href="https://github.com/yasminxgamot"><img src="https://github.com/yasminxgamot.png?size=96" width="72" alt="yasminxgamot"><br><sub><b>yasminxgamot</b></sub></a><br><sub>Engineering</sub></td>
+    <td align="center"><a href="https://github.com/kali-fz"><img src="https://github.com/kali-fz.png?size=96" width="72" height="72" style="border-radius:50%" alt="kali-fz"><br><sub><b>kali-fz</b></sub></a><br><sub>Project lead</sub></td>
+    <td align="center"><a href="https://github.com/umfhero"><img src="https://github.com/umfhero.png?size=96" width="72" height="72" style="border-radius:50%" alt="umfhero"><br><sub><b>umfhero</b></sub></a><br><sub>Engineering</sub></td>
+    <td align="center"><a href="https://github.com/Yaso-cyber"><img src="https://github.com/Yaso-cyber.png?size=96" width="72" height="72" style="border-radius:50%" alt="Yaso-cyber"><br><sub><b>Yaso-cyber</b></sub></a><br><sub>GRC</sub></td>
   </tr>
 </table>
 
