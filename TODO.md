@@ -1,7 +1,7 @@
 # ONNM — Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-22.
+Last audited: 2026-08-22 (auth/GRC + OOD-gate audit).
 
 ---
 
@@ -11,7 +11,8 @@ Last audited: 2026-08-22.
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **189 tests**, synthetic fixtures, no dataset required to run the suite
+- [x] **212 tests** (189 pipeline + 23 auth/storage/OOD), synthetic fixtures, no
+      dataset required; the auth/storage/OOD subset also runs without torch
 - [x] Diagnosed the MIOpen training-BatchNorm defect; workaround `train.miopen: false`
 - [x] `verify_env.py` gate 1 now runs a real train-mode forward/backward, so that
       defect is caught in seconds rather than 40 minutes into a run
@@ -46,8 +47,21 @@ Last audited: 2026-08-22.
 ### App
 - [x] Streamlit UI: upload → verdict → confidence → Grad-CAM, DICOM/PNG/JPEG
 - [x] Auto-discovers newest checkpoint, auto-loads `calibration.json`
-- [x] Loopback-only bind, telemetry off, temp files deleted before render
+- [x] Loopback-only bind, telemetry off
 - [x] Medical disclaimer; calibration state and warnings surfaced in sidebar
+- [x] **Local accounts**: SQLite `data/users.db`, salted PBKDF2-HMAC-SHA256 (600k
+      iters), ToS-acceptance timestamps, login throttling, logout clears session
+- [x] **De-identified upload storage**: `data/user_uploads/{uuid}/`, UUID filenames,
+      DICOM PII-strip (private tags, PN/date fields, regenerated UIDs), standard
+      images re-encoded to metadata-free PNG; "My Past Scans" per-user history
+- [x] **GRC legal framework** (`src/legal.py`): ToS, Privacy Policy, Medical
+      Disclaimer, Cookie Notice, rendered as expandable footers + consent checkbox
+- [x] **OOD gate stage 1**: pre-inference radiograph validator (`onnm.ood`) — color,
+      dynamic-range, histogram-entropy, edge-density, size checks; hard "Invalid
+      Image" rejection in the app with per-check reasons
+- [x] **OOD gate stage 2**: predictive-entropy + max-prob uncertainty gating; lesion
+      calls below the 0.65 floor or at/above 0.90 normalized entropy render as
+      "Non-Diagnostic / Inconclusive", never as a finding
 
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**)
@@ -59,6 +73,10 @@ Last audited: 2026-08-22.
 
 ### Blocking — do these before trusting any result
 
+- [ ] **Re-run the full 212-test suite in the ROCm `.venv`.** The auth/storage/OOD
+      subset (23 tests) and ruff pass on a clean interpreter; the torch-dependent 189
+      have not been re-run since the app-layer changes landed. `predict()` defaults
+      preserve old behavior by construction, but verify, don't assume.
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` has **0/15 cells
       executed**. Nobody has ever looked at the preprocessed images. Assertions verify
       shape; only eyes verify content. An inverted or mis-windowed film produces perfectly
@@ -73,6 +91,12 @@ Last audited: 2026-08-22.
       ```
       scripts\gradcam_report.py --checkpoint reports\full-20260822-041653\best.pt
       ```
+- [ ] **Empirically tune the OOD validator on real data.** The heuristic thresholds
+      (entropy ≤ 7.5 bits, edge density ≤ 0.45, channel spread ≤ 0.08) were set on
+      synthetic phantoms. Run `onnm.ood.validate_payload` across all 3,746 BTXRD films
+      and confirm ~0% false rejection; measure rejection rates on a folder of ordinary
+      photographs. Same for the uncertainty gate: measure how many *true* lesion calls
+      the 0.65/0.90 gates withdraw on the val split before trusting the defaults.
 
 ### High — resolve the regression
 
@@ -107,6 +131,13 @@ Last audited: 2026-08-22.
 
 ### Medium — model quality
 
+- [ ] **Learned OOD detection to replace the heuristics.** Max-logit / energy scores,
+      Mahalanobis distance on penultimate features, or a binary radiograph-vs-photo
+      screen. The current validator is statistics-only and a grayscale photograph with
+      X-ray-like statistics passes stage 1 (stage 2 then has to catch it).
+- [ ] **Multi-view radiograph consensus.** BTXRD has multiple views per surrogate
+      patient; aggregating AP + lateral predictions is a cheap sensitivity gain and a
+      false-positive filter (a lesion visible in one view only is suspect).
 - [ ] **Try `data.image_size: 320` or `384`.** The only meaningful way to use the idle VRAM
       (currently 27% at batch 64), and plausibly helps on subtle lesions. Costs epoch time;
       re-verify Grad-CAM box geometry at the new size.
@@ -116,6 +147,9 @@ Last audited: 2026-08-22.
       to 0.5 is the most direct specificity lever and is currently untried.
 - [ ] Freeze early backbone blocks for the first few epochs — 244 malignant training images
       is very little to fine-tune 7M parameters on
+- [ ] **3D CT/MRI expansion** (long horizon): MONAI transforms generalise to 3D, but
+      dataset, labels, VRAM budget, and the Grad-CAM geometry all need rework. Park
+      behind a design doc; do not bolt onto the 2D pipeline.
 
 ### Medium — evaluation rigour
 
@@ -131,6 +165,10 @@ Last audited: 2026-08-22.
 
 - [ ] Pin a "production" checkpoint rather than always taking the newest — the app
       currently auto-selects by mtime, so a bad experimental run silently becomes default
+- [ ] **DICOM metadata parser enhancements**: surface anatomy/laterality/view-position
+      tags in the UI and scan history; use them to route the right per-anatomy operating
+      point once per-anatomy analysis exists
+- [ ] Per-user scan deletion in the UI (storage + DB rows currently require the Operator)
 - [ ] Batch/folder upload for reviewing a series
 - [ ] Export a per-case PDF/HTML report (verdict + overlay + disclaimer)
 - [ ] Show the threshold sweep as an interactive ROC curve in the sidebar

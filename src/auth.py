@@ -1,0 +1,128 @@
+"""Password authentication and Streamlit session helpers for ONNM."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import re
+import secrets
+from collections.abc import MutableMapping
+from pathlib import Path
+from typing import Any
+
+from database import (
+    DuplicateEmailError,
+    User,
+    create_user,
+    get_user_by_email,
+    initialize_database,
+)
+
+PBKDF2_ITERATIONS = 600_000
+SALT_BYTES = 16
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_DUMMY_SALT = bytes(SALT_BYTES)
+_DUMMY_DIGEST = hashlib.pbkdf2_hmac(
+    "sha256", b"constant-time-dummy1", _DUMMY_SALT, PBKDF2_ITERATIONS
+)
+_DUMMY_HASH = (
+    f"pbkdf2_sha256${PBKDF2_ITERATIONS}${_DUMMY_SALT.hex()}${_DUMMY_DIGEST.hex()}"
+)
+
+
+class AuthenticationError(ValueError):
+    """Authentication input or credentials are invalid."""
+
+
+def normalize_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if len(normalized) > 254 or not EMAIL_PATTERN.fullmatch(normalized):
+        raise AuthenticationError("Enter a valid email address.")
+    return normalized
+
+
+def validate_password(password: str) -> None:
+    if len(password) < 12:
+        raise AuthenticationError("Password must contain at least 12 characters.")
+    if len(password) > 1024:
+        raise AuthenticationError("Password is too long.")
+    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
+        raise AuthenticationError("Password must contain at least one letter and one number.")
+
+
+def hash_password(password: str, *, iterations: int = PBKDF2_ITERATIONS) -> str:
+    validate_password(password)
+    salt = secrets.token_bytes(SALT_BYTES)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, encoded_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt_hex, expected_hex = encoded_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_text)
+        if iterations < 100_000 or iterations > 10_000_000:
+            return False
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(expected_hex)
+    except (TypeError, ValueError):
+        return False
+
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(actual, expected)
+
+
+def register_user(
+    email: str,
+    password: str,
+    *,
+    accepted_terms: bool,
+    database: str | Path | None = None,
+) -> User:
+    if not accepted_terms:
+        raise AuthenticationError("You must accept the legal terms to create an account.")
+    normalized = normalize_email(email)
+    initialize_database(database)
+    try:
+        return create_user(normalized, hash_password(password), path=database)
+    except DuplicateEmailError as exc:
+        raise AuthenticationError(str(exc)) from exc
+
+
+def authenticate_user(
+    email: str,
+    password: str,
+    *,
+    database: str | Path | None = None,
+) -> User | None:
+    try:
+        normalized = normalize_email(email)
+    except AuthenticationError:
+        normalized = "invalid@example.invalid"
+
+    initialize_database(database)
+    user = get_user_by_email(normalized, path=database)
+    # Perform the same expensive operation for unknown accounts to reduce timing leakage.
+    encoded = user.password_hash if user else _DUMMY_HASH
+    password_is_bounded = len(password) <= 1024
+    valid = verify_password(password if password_is_bounded else "", encoded)
+    return user if user and password_is_bounded and valid else None
+
+
+def initialize_session(state: MutableMapping[str, Any]) -> None:
+    state.setdefault("authenticated", False)
+    state.setdefault("user_id", None)
+    state.setdefault("user_email", None)
+
+
+def login_session(state: MutableMapping[str, Any], user: User) -> None:
+    state["authenticated"] = True
+    state["user_id"] = user.user_id
+    state["user_email"] = user.email
+
+
+def logout_session(state: MutableMapping[str, Any]) -> None:
+    state.clear()
+    initialize_session(state)

@@ -86,14 +86,48 @@ src/onnm/
   calibrate.py       temperature scaling, threshold search, ECE
   explainability.py  Grad-CAM, box geometry, pointing game / IoU
   thermal.py         AMD ADL GPU telemetry + duty-cycle governor
-  inference.py       single-image prediction for the app
+  inference.py       single-image prediction for the app; uncertainty gating
+  ood.py             pre-inference radiograph validation + softmax entropy gate
   config.py, utils.py
+src/                 app-layer modules (not part of the onnm package):
+  auth.py            PBKDF2 password hashing, registration, session helpers
+  database.py        SQLite (data/users.db): users + per-user scan history
+  storage.py         de-identified upload storage under data/user_uploads/{uuid}/
+  legal.py           ToS, Privacy Policy, Medical Disclaimer, Cookie Notice text
+  ood_validator.py   shim -> onnm.ood (as inference.py is for onnm.inference)
 scripts/             download, verify_data, verify_env, make_splits, train,
                      calibrate, evaluate, gradcam_report, overfit_check
 configs/             base.yaml + overrides: densenet121_3class, full_run, overnight
-tests/               189 tests, synthetic fixtures, no dataset required
+tests/               212 tests, synthetic fixtures, no dataset required
 app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
 ```
+
+---
+
+## App layer — auth, storage, OOD gate
+
+The Streamlit app is gated behind local accounts. `data/users.db` (SQLite,
+gitignored under `data/`) stores emails, salted PBKDF2-HMAC-SHA256 hashes
+(600k iterations), ToS-acceptance timestamps, and per-user scan history.
+Uploads are stored de-identified under `data/user_uploads/{user_uuid}/` with
+UUID filenames: DICOM headers pass through a PII-stripping pass (private tags,
+PN/date fields, patient/institution identifiers removed, UIDs regenerated);
+standard images are re-encoded to metadata-free PNG. De-identification is
+header-level only — burned-in pixels are not scanned. Legal text lives in
+`src/legal.py` and renders in expandable footers.
+
+**OOD gate (`onnm.ood`), two stages.** The classifier is a closed-set softmax:
+any input — a hotdog photo included — is forced into normal/benign/malignant.
+Stage 1 rejects non-radiographs *before* inference on named heuristics
+(colorfulness, dynamic range, 256-bin histogram entropy ≤ 7.5 bits, strong-
+gradient fraction ≤ 0.45, minimum size); the app then shows a hard
+"Invalid Image" rejection with per-check reasons. Stage 2 computes normalized
+predictive entropy and max softmax probability on every prediction; the app
+downgrades a lesion call to **"Non-Diagnostic / Inconclusive"** when max prob
+< 0.65 or normalized entropy ≥ 0.90. Both stages are **opt-in parameters on
+`RadiographClassifier.predict`** and default off, so scripted evaluation of
+the curated dataset is unchanged. The gate can only withdraw a positive call —
+it never issues one and never moves the calibrated threshold.
 
 ---
 
@@ -125,6 +159,15 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
    recall, PR-AUC, and bootstrap CIs.
 8. **`RandAffine` subsumes `RandRotated`+`RandZoomd`** — enabling all three interpolates
    twice and blurs trabecular texture.
+9. **The OOD/uncertainty gate defaults off in `predict()`.** Scripted evaluation of the
+   curated dataset must be byte-identical with and without the app layer; only `app.py`
+   passes `uncertainty_floor` / `entropy_gate` / payload validation.
+10. **The uncertainty gate only withdraws lesion calls.** It may downgrade "Potential
+    Bone Lesion" to "Non-Diagnostic / Inconclusive"; it never flips Normal to lesion and
+    never alters the calibrated threshold, which stays fitted on validation only.
+11. **Never store a plaintext password or an identified upload.** Credentials are salted
+    PBKDF2 hashes; uploads are UUID-renamed and header-de-identified before they touch
+    disk. `data/` stays gitignored.
 
 ---
 
@@ -166,7 +209,11 @@ OHEM penalty are the suspects. `full-20260822-041653` remains the checkpoint to 
 
 **Known open issue:** false positives on complex joint anatomy (a normal pelvis flagged at
 59.6%). The durable fix is more normal controls in training, not a harsher loss — the
-sensitivity/specificity curve can only be slid along, not moved, without new data.
+sensitivity/specificity curve can only be slid along, not moved, without new data. The
+app-layer uncertainty gate now *suppresses presentation* of low-confidence lesion calls
+(max prob < 0.65 or normalized entropy ≥ 0.90 → "Non-Diagnostic / Inconclusive"), and the
+pre-inference validator rejects non-radiograph uploads outright — but neither changes the
+underlying ranking quality; they are presentation-layer containment, not the data fix.
 
 ---
 

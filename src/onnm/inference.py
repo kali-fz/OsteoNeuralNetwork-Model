@@ -62,6 +62,7 @@ from .io_radiograph import (
     read_radiograph,
 )
 from .model import build_model
+from .ood import INCONCLUSIVE_LABEL, ensure_radiograph, should_defer
 from .utils import get_device, get_logger
 
 logger = get_logger(__name__)
@@ -103,6 +104,10 @@ class InferenceResult:
     temperature: float = 1.0                    # 1.0 = uncalibrated logits
     calibrated: bool = False                    # a fitted calibration.json was used
 
+    max_probability: float = 0.0                # max of the 3-way softmax, 0-1
+    predictive_entropy: float = 0.0             # normalized softmax entropy, 0-1
+    inconclusive: bool = False                  # uncertainty gate withdrew a lesion call
+
     source_meta: dict[str, Any] = field(default_factory=dict)
     elapsed_ms: float = 0.0
     device: str = "cpu"
@@ -127,6 +132,9 @@ class InferenceResult:
             "cam_class": self.cam_class,
             "temperature": round(self.temperature, 4),
             "calibrated": self.calibrated,
+            "max_probability": round(self.max_probability, 6),
+            "predictive_entropy": round(self.predictive_entropy, 6),
+            "inconclusive": self.inconclusive,
             "elapsed_ms": round(self.elapsed_ms, 1),
             "device": self.device,
             "source": self.source_meta,
@@ -431,6 +439,9 @@ class RadiographClassifier:
         with_heatmap: bool = True,
         threshold: float | None = None,
         cam_class: str = "auto",
+        validate_input: bool = False,
+        uncertainty_floor: float | None = None,
+        entropy_gate: float | None = None,
     ) -> InferenceResult:
         """Classify one radiograph.
 
@@ -445,10 +456,25 @@ class RadiographClassifier:
                 when no calibration has been fitted. Lower it to trade
                 specificity for sensitivity.
             cam_class: ``auto``, ``predicted``, or an explicit class name.
+            validate_input: Run the :mod:`onnm.ood` radiograph heuristics
+                before inference and raise ``NonRadiographError`` on failure.
+                Off by default so scripted evaluation of the curated dataset
+                is byte-identical with and without this layer.
+            uncertainty_floor: If set, a lesion verdict whose max class
+                probability falls below this is downgraded to
+                "Non-Diagnostic / Inconclusive" instead of being shown as a
+                finding. ``None`` (default) disables the gate.
+            entropy_gate: If set, a lesion verdict whose normalized predictive
+                entropy reaches this is likewise downgraded. The two gates
+                only ever withdraw a positive call -- a Normal verdict is
+                never touched, and neither gate moves the calibrated
+                threshold.
 
         Raises:
             RadiographReadError: the file could not be decoded.
             UnsupportedFormatError: the file type is not supported.
+            onnm.ood.NonRadiographError: ``validate_input`` was set and the
+                image failed radiograph validation.
         """
         threshold = self.default_threshold if threshold is None else float(threshold)
 
@@ -459,6 +485,9 @@ class RadiographClassifier:
         if filename is None and isinstance(data, (str, Path)):
             filename = str(data)
         suffix = _suffix_for(filename, payload)
+
+        if validate_input:
+            ensure_radiograph(payload, filename)
 
         started = time.perf_counter()
         with _MaterialisedUpload(payload, suffix) as path:
@@ -506,12 +535,34 @@ class RadiographClassifier:
         lesion_probability = float(1.0 - probabilities[self.normal_index])
         is_lesion = lesion_probability >= threshold
 
+        # The uncertainty gate can only withdraw a positive call, never issue
+        # one: a Normal verdict below threshold stays Normal, and gating never
+        # moves the calibrated threshold itself.
+        defer, max_probability, entropy = should_defer(
+            probabilities,
+            uncertainty_floor=uncertainty_floor,
+            entropy_gate=entropy_gate,
+        )
+        inconclusive = bool(is_lesion and defer)
+        if inconclusive:
+            logger.info(
+                "lesion call withdrawn as inconclusive: max_prob=%.3f entropy=%.3f",
+                max_probability, entropy,
+            )
+
+        if inconclusive:
+            label = INCONCLUSIVE_LABEL
+        elif is_lesion:
+            label = LESION_LABEL
+        else:
+            label = NORMAL_LABEL
+
         source_meta = dict(meta)
         source_meta["filename"] = Path(filename).name if filename else "upload"
         source_meta.pop("filename_or_obj", None)  # a temp path helps nobody
 
         return InferenceResult(
-            label=LESION_LABEL if is_lesion else NORMAL_LABEL,
+            label=label,
             confidence=100.0 * (lesion_probability if is_lesion else 1.0 - lesion_probability),
             lesion_probability=lesion_probability,
             class_probabilities={
@@ -521,6 +572,9 @@ class RadiographClassifier:
             threshold=float(threshold),
             temperature=self.temperature,
             calibrated=self.calibration is not None,
+            max_probability=max_probability,
+            predictive_entropy=entropy,
+            inconclusive=inconclusive,
             preprocessed_image=preprocessed,
             original_image=original,
             heatmap=heatmap,
@@ -599,6 +653,7 @@ def predict_file(
 
 
 __all__ = [
+    "INCONCLUSIVE_LABEL",
     "LESION_LABEL",
     "NORMAL_LABEL",
     "SUPPORTED_SUFFIXES",

@@ -4,8 +4,8 @@
 
 Runs entirely on this machine: the model, the Grad-CAM, and the server itself.
 Nothing is uploaded anywhere, no external API is called, and the whole stack is
-free and open source. Uploaded files are held in memory and written only to a
-temporary file that is deleted before the prediction returns.
+free and open source. Uploaded files are de-identified and retained in private local account storage
+under the research-data terms shown during account creation.
 
 All model work lives in ``onnm.inference``. This file is presentation only, and
 should stay that way -- if a computation needs to move here to make the layout
@@ -14,9 +14,11 @@ work, that is a signal the inference API is missing something.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +29,22 @@ SRC = Path(__file__).resolve().parent / "src"
 if SRC.is_dir() and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from auth import (  # noqa: E402
+    AuthenticationError,
+    authenticate_user,
+    initialize_session,
+    login_session,
+    logout_session,
+    register_user,
+)
+from database import (  # noqa: E402
+    DatabaseError,
+    create_upload,
+    initialize_database,
+    list_user_uploads,
+    update_upload_result,
+)
+from legal import COOKIE_NOTICE, MEDICAL_DISCLAIMER, PRIVACY_POLICY, TERMS_OF_SERVICE  # noqa: E402
 from onnm import __version__  # noqa: E402
 from onnm.inference import (  # noqa: E402
     UPLOAD_TYPES,
@@ -36,8 +54,15 @@ from onnm.inference import (  # noqa: E402
     render_overlay,
     to_display_uint8,
 )
-from onnm.io_radiograph import RadiographReadError  # noqa: E402
+from onnm.io_radiograph import RadiographReadError, read_radiograph  # noqa: E402
+from onnm.ood import (  # noqa: E402
+    DEFAULT_CONFIDENCE_FLOOR,
+    DEFAULT_ENTROPY_GATE,
+    REJECTION_MESSAGE,
+    validate_payload,
+)
 from onnm.utils import describe_device  # noqa: E402
+from storage import StorageError, delete_upload, is_user_file, save_upload  # noqa: E402
 
 COLORMAPS = ["jet", "turbo", "inferno", "magma", "viridis", "hot"]
 
@@ -49,13 +74,10 @@ CLASS_COLORS = {
     "malignant": "#c62828",
 }
 
-DISCLAIMER = """
-**Research tool — not a medical device, and not medical advice.**
-This is a free, offline, open-source research prototype running a model on your own
-machine. It has not been clinically validated, carries no regulatory clearance
-(FDA / CE / MHRA), and its outputs are **not** a diagnosis. It must not be used to
-make, support, defer, or delay any clinical decision. Every radiograph requires
-interpretation by a qualified radiologist or treating clinician.
+DISCLAIMER_SUMMARY = """
+**Research tool — not a medical device, and not medical advice.** This unvalidated
+prototype has no FDA, CE, or MHRA clearance. Never use its output for patient-care
+decisions; every radiograph requires review by a qualified clinician.
 """
 
 
@@ -120,6 +142,142 @@ def png_bytes(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
+def render_legal_footer() -> None:
+    st.divider()
+    st.caption("Legal and privacy information")
+    with st.expander("Terms of Service"):
+        st.markdown(TERMS_OF_SERVICE)
+    with st.expander("Privacy Policy"):
+        st.markdown(PRIVACY_POLICY)
+    with st.expander("Medical Disclaimer"):
+        st.markdown(MEDICAL_DISCLAIMER)
+    with st.expander("Cookie Notice"):
+        st.markdown(COOKIE_NOTICE)
+
+
+def render_authentication() -> None:
+    st.subheader("Secure local access")
+    st.caption(
+        "Accounts, password hashes, and scans remain on this computer. "
+        "No authentication or storage service is contacted."
+    )
+    login_tab, create_tab = st.tabs(["Login", "Create Account"])
+
+    with login_tab:
+        with st.form("login_form", clear_on_submit=True):
+            email = st.text_input("Email", autocomplete="email")
+            password = st.text_input("Password", type="password", autocomplete="current-password")
+            submitted = st.form_submit_button("Login", use_container_width=True)
+
+        if submitted:
+            lock_until = float(st.session_state.get("login_lock_until", 0.0))
+            remaining = int(max(0, lock_until - time.monotonic()))
+            if remaining:
+                st.error(f"Too many failed attempts. Try again in {remaining + 1} seconds.")
+            else:
+                user = authenticate_user(email, password)
+                if user:
+                    st.session_state["login_failures"] = 0
+                    login_session(st.session_state, user)
+                    st.rerun()
+                else:
+                    failures = int(st.session_state.get("login_failures", 0)) + 1
+                    st.session_state["login_failures"] = failures
+                    if failures >= 5:
+                        st.session_state["login_lock_until"] = time.monotonic() + 30
+                        st.session_state["login_failures"] = 0
+                    st.error("Invalid email or password.")
+
+    with create_tab:
+        with st.form("registration_form", clear_on_submit=True):
+            email = st.text_input("Email", key="register_email", autocomplete="email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                key="register_password",
+                help="At least 12 characters, including a letter and a number.",
+                autocomplete="new-password",
+            )
+            confirmation = st.text_input(
+                "Confirm password",
+                type="password",
+                key="register_confirmation",
+                autocomplete="new-password",
+            )
+            accepted = st.checkbox(
+                "I agree to the Terms of Service and Privacy Policy, and acknowledge "
+                "this is an unvalidated research prototype."
+            )
+            submitted = st.form_submit_button("Create Account", use_container_width=True)
+
+        if submitted:
+            if password != confirmation:
+                st.error("Passwords do not match.")
+            else:
+                try:
+                    user = register_user(
+                        email,
+                        password,
+                        accepted_terms=accepted,
+                    )
+                except AuthenticationError as exc:
+                    st.error(str(exc))
+                else:
+                    login_session(st.session_state, user)
+                    st.success("Account created.")
+                    st.rerun()
+
+
+def render_scan_history(user_id: str) -> None:
+    with st.expander("My Past Scans"):
+        try:
+            records = list_user_uploads(user_id)
+        except DatabaseError as exc:
+            st.error(str(exc))
+            return
+        if not records:
+            st.caption("No saved scans yet.")
+            return
+
+        st.dataframe(
+            [
+                {
+                    "Uploaded": record.upload_timestamp,
+                    "Filename": record.filename,
+                    "Verdict": record.model_verdict,
+                    "Confidence": f"{record.confidence_score:.1f}%",
+                }
+                for record in records
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+        selected_record = st.selectbox(
+            "Preview a saved scan",
+            records,
+            format_func=lambda record: (
+                f"{record.upload_timestamp[:16]} · {record.filename} · {record.model_verdict}"
+            ),
+            key="history_selection",
+        )
+        if not is_user_file(user_id, selected_record.file_path):
+            st.warning("The saved image is missing or outside this account's storage.")
+            return
+        try:
+            image, _ = read_radiograph(selected_record.file_path)
+        except RadiographReadError as exc:
+            st.error(f"Could not open the saved scan: {exc}")
+            return
+        st.image(
+            to_display_uint8(image),
+            caption=(
+                f"{selected_record.model_verdict} · "
+                f"{selected_record.confidence_score:.1f}% confidence"
+            ),
+            use_container_width=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
@@ -150,10 +308,30 @@ st.caption(
     f"Explainable bone-tumour triage on plain radiographs · v{__version__} · "
     "runs locally, offline, at zero cost"
 )
-st.error(DISCLAIMER)
+st.error(DISCLAIMER_SUMMARY)
+
+initialize_session(st.session_state)
+try:
+    initialize_database()
+except DatabaseError as exc:
+    st.error(str(exc))
+    render_legal_footer()
+    st.stop()
+
+if not st.session_state["authenticated"]:
+    render_authentication()
+    render_legal_footer()
+    st.stop()
 
 # -- Sidebar ---------------------------------------------------------------
 with st.sidebar:
+    st.success(f"Logged in as: **{st.session_state['user_email']}**")
+    if st.button("Logout", use_container_width=True):
+        logout_session(st.session_state)
+        st.rerun()
+    render_scan_history(st.session_state["user_id"])
+
+    st.divider()
     st.header("Model")
 
     checkpoints = find_checkpoints()
@@ -163,6 +341,7 @@ with st.sidebar:
             "python scripts/train.py --override configs/densenet121_3class.yaml",
             language="bash",
         )
+        render_legal_footer()
         st.stop()
 
     selected = st.selectbox(
@@ -259,8 +438,8 @@ with st.sidebar:
 
     st.divider()
     st.caption(
-        "No data leaves this machine. Uploads live in memory and in one temporary "
-        "file that is deleted before the result is shown."
+        "No data leaves this machine. Uploads are de-identified and retained in "
+        "this account's private local research storage."
     )
 
 # -- Upload ----------------------------------------------------------------
@@ -276,38 +455,127 @@ if uploaded is None:
         "Upload an X-ray to begin. The model classifies the film, reports a confidence "
         "score, and renders a Grad-CAM heatmap showing which region drove the call."
     )
+    render_legal_footer()
     st.stop()
 
 payload = uploaded.getvalue()
-# Re-running inference is cheap after warmup, so the cache key stays simple and
-# the result has exactly one source of truth rather than a locally re-derived
-# verdict that could drift from the one the model actually produced.
-cache_key = (uploaded.name, len(payload), hash(payload), str(selected), threshold, cam_class)
+
+# -- OOD gate: reject non-radiographs before they reach storage or the model.
+# A closed-set softmax forces any input into one of its three classes, so an
+# unvalidated photograph would come back as a ~50% "benign" call.
+validation = validate_payload(payload, uploaded.name)
+if not validation.is_radiograph:
+    st.error(REJECTION_MESSAGE)
+    with st.expander("Why was this rejected?"):
+        for check in validation.failures:
+            st.markdown(f"- **{check.name}** — {check.detail}")
+        st.caption(
+            "These are pre-inference heuristics (channel structure, dynamic range, "
+            "intensity entropy, edge density). If a genuine radiograph is rejected, "
+            "export it as an uncropped grayscale DICOM or PNG and try again."
+        )
+    render_legal_footer()
+    st.stop()
+
+payload_digest = hashlib.sha256(payload).hexdigest()
+file_key = (st.session_state["user_id"], uploaded.name, payload_digest)
+
+if st.session_state.get("stored_file_key") != file_key:
+    try:
+        stored = save_upload(
+            payload,
+            user_id=st.session_state["user_id"],
+            original_filename=uploaded.name,
+        )
+    except StorageError as exc:
+        st.error(str(exc))
+        render_legal_footer()
+        st.stop()
+    st.session_state["stored_upload"] = stored
+    st.session_state["stored_file_key"] = file_key
+    st.session_state.pop("upload_record_id", None)
+
+stored = st.session_state["stored_upload"]
+# Re-running inference after a threshold or heatmap change updates one history
+# record instead of creating duplicate files or scan entries.
+cache_key = (file_key, str(selected), threshold, cam_class)
 
 if st.session_state.get("cache_key") != cache_key:
     try:
         with st.spinner("Running inference…"):
             st.session_state["result"] = classifier.predict(
-                payload,
-                filename=uploaded.name,
+                stored.path,
                 with_heatmap=True,
                 threshold=threshold,
                 cam_class=cam_class,
+                uncertainty_floor=DEFAULT_CONFIDENCE_FLOOR,
+                entropy_gate=DEFAULT_ENTROPY_GATE,
             )
+        result = st.session_state["result"]
+        record_id = st.session_state.get("upload_record_id")
+        if record_id:
+            update_upload_result(
+                record_id,
+                st.session_state["user_id"],
+                model_verdict=result.label,
+                confidence_score=result.confidence,
+            )
+        else:
+            record = create_upload(
+                upload_id=stored.upload_id,
+                user_id=st.session_state["user_id"],
+                filename=stored.original_filename,
+                file_path=stored.path,
+                model_verdict=result.label,
+                confidence_score=result.confidence,
+            )
+            st.session_state["upload_record_id"] = record.upload_id
         st.session_state["cache_key"] = cache_key
     except RadiographReadError as exc:
+        if not st.session_state.get("upload_record_id"):
+            delete_upload(stored.path)
+            st.session_state.pop("stored_upload", None)
+            st.session_state.pop("stored_file_key", None)
         st.error(f"Could not decode `{uploaded.name}`: {exc}")
+        render_legal_footer()
+        st.stop()
+    except (DatabaseError, StorageError) as exc:
+        if not st.session_state.get("upload_record_id"):
+            delete_upload(stored.path)
+            st.session_state.pop("stored_upload", None)
+            st.session_state.pop("stored_file_key", None)
+        st.error(str(exc))
+        render_legal_footer()
         st.stop()
     except Exception as exc:  # noqa: BLE001
+        if not st.session_state.get("upload_record_id"):
+            delete_upload(stored.path)
+            st.session_state.pop("stored_upload", None)
+            st.session_state.pop("stored_file_key", None)
         st.error("Inference failed.")
         st.exception(exc)
+        render_legal_footer()
         st.stop()
 
 result: InferenceResult = st.session_state["result"]
 
 # -- Verdict ---------------------------------------------------------------
-accent = "#c62828" if result.is_lesion else "#2e8b57"
-background = "rgba(198,40,40,0.08)" if result.is_lesion else "rgba(46,139,87,0.08)"
+if result.inconclusive:
+    accent, background = "#b26a00", "rgba(224,168,0,0.10)"
+elif result.is_lesion:
+    accent, background = "#c62828", "rgba(198,40,40,0.08)"
+else:
+    accent, background = "#2e8b57", "rgba(46,139,87,0.08)"
+
+if result.inconclusive:
+    st.warning(
+        "The model's probabilities are too uncertain to present as a finding "
+        f"(max class probability {100 * result.max_probability:.1f}% below the "
+        f"{100 * DEFAULT_CONFIDENCE_FLOOR:.0f}% floor, or normalized entropy "
+        f"{result.predictive_entropy:.2f} at/above the {DEFAULT_ENTROPY_GATE:.2f} gate). "
+        "This often indicates an out-of-domain or non-diagnostic image. "
+        "The raw probabilities are shown below; obtain a qualified read regardless."
+    )
 
 st.markdown(
     f"""
@@ -425,3 +693,4 @@ st.caption(
     "BTXRD is licensed CC BY-NC-ND 4.0 — NoDerivatives covers Grad-CAM overlays, so keep "
     "downloaded images local rather than redistributing them."
 )
+render_legal_footer()

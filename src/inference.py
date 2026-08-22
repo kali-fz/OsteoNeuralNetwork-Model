@@ -13,6 +13,7 @@ works for anyone following the original file layout. Prefer the real path.
 from __future__ import annotations
 
 from onnm.inference import (  # noqa: F401
+    INCONCLUSIVE_LABEL,
     LESION_LABEL,
     NORMAL_LABEL,
     SUPPORTED_SUFFIXES,
@@ -27,6 +28,7 @@ from onnm.inference import (  # noqa: F401
 )
 
 __all__ = [
+    "INCONCLUSIVE_LABEL",
     "LESION_LABEL",
     "NORMAL_LABEL",
     "SUPPORTED_SUFFIXES",
