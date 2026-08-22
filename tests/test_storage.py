@@ -50,3 +50,16 @@ def test_dicom_headers_are_anonymized(tmp_path, mono2_dicom) -> None:
     assert not any(element.tag.is_private for element in anonymized.iterall())
     assert anonymized.pixel_array.shape == dataset.pixel_array.shape
 
+
+
+def test_is_user_file_is_read_only(tmp_path) -> None:
+    # A pure authorization check must not create directories as a side effect:
+    # previewing scan history for a user who owns nothing should leave the
+    # storage root untouched.
+    user_id = str(uuid.uuid4())
+    probe = tmp_path / "somewhere" / "file.png"
+
+    assert not is_user_file(user_id, probe, tmp_path / "uploads")
+
+    assert not (tmp_path / "uploads").exists()
+    assert not (tmp_path / "uploads" / user_id).exists()
