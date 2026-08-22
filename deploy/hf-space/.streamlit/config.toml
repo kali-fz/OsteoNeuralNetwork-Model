@@ -1,0 +1,22 @@
+# Spaces-specific Streamlit config.
+#
+# The repo root .streamlit/config.toml binds `localhost`, which is correct and
+# deliberate for a local medical-image viewer -- it keeps uploads off the LAN.
+# That same setting makes a container unreachable, so the hosted deployment
+# needs its own file rather than an edit to the local one.
+
+[server]
+address = "0.0.0.0"
+port = 7860
+headless = true
+maxUploadSize = 20          # MB. Far below the local 400: a public endpoint
+                            # should not accept an arbitrarily large upload.
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#c62828"

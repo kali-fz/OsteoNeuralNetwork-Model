@@ -289,12 +289,30 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
         missing = required - set(controls.columns)
         if missing:
             raise ConfigError(f"{controls_path} is missing columns: {sorted(missing)}")
+        n_manifest_skipped = 0
         for _, row in controls.iterrows():
             raw_image = Path(str(row["image"])).expanduser()
             image = raw_image if raw_image.is_absolute() else (REPO_ROOT / raw_image).resolve()
-            if image.is_file() and int(row["label"]) == 0:
-                records.append({"image": str(image), "label": 0, "image_id": str(row["image_id"]),
-                                "patient_id": str(row["patient_id"]), "_split": str(row["split"])})
+            try:
+                label = int(row["label"])
+            except (TypeError, ValueError):
+                label = -1
+            # This was originally normal-only, because the first use was
+            # external normal controls. Community submissions arrive carrying a
+            # reviewer-assigned label and can legitimately be benign or
+            # malignant, so the gate is now the valid class range rather than a
+            # single class. A manifest containing only label 0 -- which is every
+            # manifest written before this change -- behaves exactly as before.
+            if not image.is_file() or not 0 <= label < len(CLASS_NAMES):
+                n_manifest_skipped += 1
+                continue
+            records.append({"image": str(image), "label": label, "image_id": str(row["image_id"]),
+                            "patient_id": str(row["patient_id"]), "_split": str(row["split"])})
+        if n_manifest_skipped:
+            logger.warning(
+                "%d manifest rows skipped: file missing, or label outside 0..%d",
+                n_manifest_skipped, len(CLASS_NAMES) - 1,
+            )
 
     if n_unmapped:
         logger.warning(

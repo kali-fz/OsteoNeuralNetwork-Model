@@ -224,6 +224,34 @@ run, then the two ablations, then copies `reports/` back to Drive. Colab wipes `
 disconnect, so that last step is not optional. Install with `--no-deps`: several project
 dependencies list torch, and pip would pull a CPU wheel over Colab's CUDA build.
 
+## Community loop (hosted)
+
+```
+HF Spaces (Streamlit app.py)  --HTTPS+key-->  Cloudflare Worker + D1
+   auth, OOD gate, inference                    users, submissions, feedback
+   opt-in share checkbox                        review queue, batches
+   "this looks wrong" button                          |
+                                                      v
+                              scripts/export_batch.py --> manifest.csv --> Colab retrain
+```
+
+- `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `wrangler.toml`, deploy README.
+- `src/community.py` — client; **fails soft** so a dead API never blocks inference.
+- `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
+  SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
+- `src/community_ui.py` — consent checkbox, feedback widget, admin review queue.
+- `scripts/export_batch.py` — approved rows to a `controls_manifest`-format CSV.
+
+**Free tier only: Workers + D1, no R2, no payment method.** Shared images are the 256px
+preprocessed PNG as base64 in D1 (~30 KB each), capped at 200 MB in the Worker. With no
+card on the account, overage cannot bill — it fails closed.
+
+**Invariant 9 — user feedback is a signal, never a label.** `user_says_wrong` and
+`user_suggested_label` are untrusted; only `admin_label`, set during human review, reaches
+training. Enforced three times: a schema trigger that aborts approval without a label, the
+review endpoint, and the export query. Redundant on purpose — every other bug here
+announces itself, this one would quietly train on a hotdog labelled "normal bone".
+
 **Colab cannot host the app.** Runtimes are ephemeral (~90 min idle, 12 h cap), have no
 persistent URL, and need the owner's browser session. Free hosting for a public demo is
 Hugging Face Spaces, which is not built yet.

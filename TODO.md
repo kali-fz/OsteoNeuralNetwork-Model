@@ -114,6 +114,21 @@ evaluation tooling, specificity-tuning enablers).
       3746 images) + `splits.json` (`content_hash db908a9afdc5d085`, asserted by the
       notebook so a Colab run cannot silently use a different partition)
 
+### Community loop & hosting
+- [x] Cloudflare Worker + D1 schema, free tier only (no R2, no payment method)
+- [x] Review gate enforced in three places; a schema trigger blocks approving an
+      unlabelled or unshared row
+- [x] Spend guards in code: 200 MB storage cap, 50 submissions/user/day, 500 accounts,
+      1.5 MB body, 600 KB image
+- [x] `src/community.py` client, fails soft so a dead API never blocks inference
+- [x] `src/backend.py` — accounts in D1 when configured, local SQLite otherwise
+- [x] Opt-in consent (default off), feedback widget, admin review queue
+- [x] `scripts/export_batch.py` -> `controls_manifest` CSV; rows pinned to train split
+- [x] `dataset.py` manifest loader widened past label 0 so reviewed benign/malignant
+      submissions can be used (label-0-only manifests behave exactly as before)
+- [x] HF Space config (`deploy/hf-space/`) — CPU torch, binds 0.0.0.0:7860
+- [x] Colab notebook cell to pull an approved batch
+
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**)
 - [x] `overnight-20260822-055132` — trained only

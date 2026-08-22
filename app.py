@@ -37,6 +37,13 @@ from auth import (  # noqa: E402
     logout_session,
     register_user,
 )
+from community_ui import (  # noqa: E402
+    community_status,
+    record_submission,
+    render_admin_review,
+    render_feedback,
+    render_share_consent,
+)
 from database import (  # noqa: E402
     DatabaseError,
     create_upload,
@@ -342,6 +349,13 @@ with st.sidebar:
     render_scan_history(st.session_state["user_id"])
 
     st.divider()
+    # Community loop status. The review queue appears only when ONNM_ADMIN_KEY
+    # is set, which it is not in the hosted Space.
+    _status = community_status()
+    if _status is not None:
+        with st.expander(f"Community · {_status.get('pending_review', 0)} awaiting review"):
+            render_admin_review()
+
     st.header("Model")
 
     checkpoints = find_checkpoints()
@@ -543,6 +557,12 @@ uploads = st.file_uploader(
          "multiple files to review a series; each gets its own verdict and report.",
 )
 
+# Consent for community sharing. Default OFF, and scoped to this upload rather
+# than remembered: a willingness to share one teaching example says nothing
+# about the next file the user opens. Absent the community API this renders
+# nothing and returns False.
+SHARE_CONSENT = render_share_consent("upload")
+
 if not uploads:
     st.info(
         "Upload an X-ray to begin — or several at once to review a series. The model "
@@ -577,6 +597,8 @@ for uploaded in uploads:
     file_key = f"{st.session_state['user_id']}:{uploaded.name}:{digest}"
 
     entry = cases.get(file_key)
+    if entry is not None:
+        entry["share_consent"] = SHARE_CONSENT
     if entry is None:
         try:
             stored = save_upload(
@@ -587,7 +609,7 @@ for uploaded in uploads:
         except StorageError as exc:
             failed.append((uploaded.name, str(exc)))
             continue
-        entry = {"stored": stored, "record_id": None}
+        entry = {"stored": stored, "record_id": None, "share_consent": SHARE_CONSENT}
         cases[file_key] = entry
 
     cache_key = (str(selected), threshold, cam_class)
@@ -624,6 +646,16 @@ for uploaded in uploads:
                 entry["record_id"] = record.upload_id
             entry["result"] = result
             entry["cache_key"] = cache_key
+            # Log to the community API. Consent was captured per file before
+            # inference ran; without it no image is sent, only the verdict.
+            if entry.get("submission_id") is None:
+                entry["submission_id"] = record_submission(
+                    st.session_state["user_id"],
+                    result,
+                    shared=entry.get("share_consent", False),
+                    preprocessed=result.preprocessed_image,
+                    checkpoint=Path(str(selected)).parent.name,
+                )
         except RadiographReadError as exc:
             if not entry["record_id"]:
                 delete_upload(stored.path)
@@ -747,6 +779,14 @@ with right:
 st.divider()
 
 # -- Imagery ---------------------------------------------------------------
+# The user can dispute the verdict. This records a flag for human review; it
+# cannot change a label or the model.
+render_feedback(
+    entry.get("submission_id"),
+    st.session_state["user_id"],
+    key=str(entry.get("record_id") or "case"),
+)
+
 st.subheader("Grad-CAM")
 
 overlay = None

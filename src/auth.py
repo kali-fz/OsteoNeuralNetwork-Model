@@ -10,7 +10,11 @@ from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
-from database import (
+# Imported from `backend`, not `database`, so accounts land in Cloudflare D1
+# when the app is hosted and in local SQLite otherwise. The interface is
+# identical either way; password hashing below is unaffected and remains the
+# single implementation.
+from backend import (
     DuplicateEmailError,
     User,
     create_user,
