@@ -28,6 +28,10 @@ env/
 # so before this block .env was fully committable. Keep these lines.
 .env
 .env.*
+# Streamlit secrets hold the Google OAuth client secret and the session
+# cookie secret. The repo is public and Streamlit creates this path by
+# convention, so an untracked-by-luck file is not good enough.
+.streamlit/secrets.toml
 !.env.example
 
 # --- Tooling ----------------------------------------------------------------

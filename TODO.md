@@ -1,11 +1,77 @@
 # ONNM — Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-22 (community feedback loop + hosting pass).
+Last audited: 2026-08-22 (Google Sign-In pass).
 
-**Current state:** 277 tests green in the ROCm `.venv`, repo-wide ruff clean, app boots
-(HTTP 200). Everything for the community loop is built and committed (`9810b7a`); none of
-it is deployed yet. The next actions are all *yours* — they need logins I do not have.
+**Current state:** 311 tests green in the ROCm `.venv`, repo-wide ruff clean. Cloudflare is
+**deployed and verified live**; Streamlit Cloud is **deployed and serving**. Google
+Sign-In is code-complete and the OAuth client exists, but **the login flow is not yet
+working end-to-end** — see the handover immediately below.
+
+---
+
+## HANDOVER — read this first
+
+The last action taken was diagnosing a live HTTP 500 on Google sign-in and pushing the
+fix. **The fix has not been confirmed working yet.** Pick up here.
+
+### What is already true
+
+- Worker live at `https://onnm-community.kali-fz.workers.dev`; D1 `onnm-community`
+  (id `961f0440-7ff1-466e-88fe-0c2b30f3083b`) migrated to schema_version 2.
+- App live at `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`.
+- D1 is **empty and clean** (`users=0, submissions=0`) — all diagnostic rows removed.
+- Streamlit secrets are correct. The TOML was parsed and all five `ONNM_*` keys verified
+  at top level, none absorbed into `[auth]`. Do not re-litigate this.
+- Google Cloud project `onn-model`, OAuth client created, redirect URI
+  `.../oauth2callback` registered, consent screen in **Testing** mode (so only listed
+  test users can sign in — check this before believing an "access blocked" error).
+
+### The two bugs found and fixed this session
+
+1. **Account creation failed with an opaque `CommunityError`.** Cloudflare's edge bans the
+   default `Python-urllib/3.x` User-Agent with a 403 and a plain-text `error code: 1010`
+   body, before the Worker is reached. Fixed by `community.USER_AGENT`. **Verified fixed
+   against live D1** (users went 0 → 1 through the real client path).
+
+2. **Google sign-in returned a bare HTTP 500 `Internal server error.`** Root cause is a
+   missing `httpx`: `authlib.integrations.starlette_client` imports it, Authlib does not
+   declare it, and Streamlit's docs only say "install Authlib". The
+   `ModuleNotFoundError` is raised in `_create_oauth_client`, which sits *outside* the
+   `/auth/login` route's `try/except`, so it escapes as an unhandled 500 rather than the
+   route's tidy 400. Reproduced locally in a clean venv: `Authlib` + `starlette` alone
+   fails with `MISSING MODULE: httpx`; adding `httpx` makes the import succeed.
+   **Fix pushed (`httpx>=0.27`, `itsdangerous>=2.1` in `requirements.txt`) but NOT yet
+   confirmed on the deployed app.**
+
+### Next action (in order)
+
+1. **Force Streamlit Cloud to reinstall dependencies.** Saving secrets only *reboots* the
+   app; it does not reinstall. The push should trigger a rebuild, but confirm it: Manage
+   app → logs → look for `httpx` in the install output. If the app did not rebuild, use
+   **Reboot app**, and if that is not enough, delete and redeploy the app.
+2. **Have the user sign in with Google** (they must — it needs their credentials).
+3. **Confirm it reached D1, do not assume.** `users` must move 0 → 1:
+   ```
+   curl -H "Authorization: Bearer $ONNM_COMMUNITY_KEY" \
+        -H "User-Agent: ONNM-Streamlit/1.0" \
+        https://onnm-community.kali-fz.workers.dev/health
+   ```
+   The User-Agent header is not optional — see bug 1.
+4. If sign-in still 500s, get the traceback from Manage app → logs. Do not guess; the
+   route deliberately hides its error from the client.
+
+### Error → cause map for the sign-in flow
+
+| Symptom | Cause |
+|---|---|
+| HTTP 500 `Internal server error.` at `/auth/login` | missing `httpx` (or Authlib) |
+| HTTP 400 `Authentication error` | failure *inside* `authorize_redirect` — provider config |
+| `redirect_uri_mismatch` | URI in Google console differs by even one character |
+| `Access blocked` / not a test user | address not on the Testing-mode allowlist |
+| `invalid_client` | client id or secret pasted wrong |
+| Password forms still showing | `[auth]` not read — app has not restarted, or TOML malformed |
+| Signs in fine but `users` stays 0 | `ONNM_COMMUNITY_KEY` absorbed into `[auth]` by TOML ordering |
 
 ---
 
@@ -15,7 +81,7 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **277 tests**, synthetic fixtures, no dataset required; the torch-free
+- [x] **311 tests**, synthetic fixtures, no dataset required; the torch-free
       auth/storage/OOD/report/metrics subset runs without torch (verified on a
       clean 3.13 interpreter). Full suite re-run in the ROCm `.venv` after the
       merge and the community work — all green.
@@ -151,6 +217,42 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
       `production` and the `reports/PRODUCTION` marker are the same path on Windows and
       macOS, so writing the marker opened a directory as a file. Default run is `hosted`.
 
+### Deployed and verified live
+- [x] **Cloudflare deployed**: D1 `onnm-community` created, schema applied, `API_KEY` /
+      `ADMIN_KEY` set, Worker deployed, `workers.dev` subdomain `kali-fz` created
+- [x] Auth boundary proved on the live API: no key → 401, wrong key → 401,
+      **app key → `/admin` → 403**, admin key → `/admin` → 200
+- [x] **Streamlit Community Cloud deployed** and serving
+- [x] **Fixed the Cloudflare edge 1010 block.** The default `Python-urllib` User-Agent is
+      banned before the Worker is reached; `curl` and browsers pass, so testing with curl
+      confirms the wrong conclusion. `community.USER_AGENT` fixes it, and a non-JSON error
+      body now names the gateway instead of surfacing a bare `error code: 1010`
+- [x] **Account creation verified against live D1** — `users` 0 → 1 through the real
+      client path, then cleaned back to 0
+
+### Google Sign-In
+- [x] `src/oauth.py` — Streamlit native OIDC; refuses an unverified Google email
+- [x] Schema + migration `0002_google_oauth.sql`: `auth_provider`, `provider_subject`,
+      nullable `password_hash`, CHECK constraint pairing them, partial unique index on
+      subject. Applied to live D1 (schema_version 2)
+- [x] `src/database.py` equivalent rebuild for local installs, guarded to run once;
+      **migration test proves existing password accounts survive it**
+- [x] Worker is provider-aware: rejects a hybrid account, a subject-less federated
+      account, and an unknown provider — all verified against the live API
+- [x] `verify_password` returns False for a non-string; `authenticate_user` treats a
+      federated account exactly like an unknown one, so the login form cannot be timed
+      to discover which addresses use Google
+- [x] Identity keyed on `sub`, not email; an existing password account is returned, never
+      silently converted
+- [x] Privacy policy corrected — it claimed "ONNM has no hosted backend" and "data stays
+      on the local machine", both false once hosted. Now names Streamlit, Google and
+      Cloudflare and states what each receives
+- [x] `.streamlit/secrets.toml` added to `.gitignore` — it was committable in a public
+      repo and would hold the Google client secret and cookie secret
+- [x] `httpx` + `itsdangerous` pinned. Authlib's Starlette integration imports httpx but
+      does not declare it, and the resulting error escapes the login route's handler as a
+      bare HTTP 500 (**fix pushed, not yet confirmed live — see handover**)
+
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**,
       val macro ROC-AUC 0.8905; this is what should be pinned as PRODUCTION)
@@ -165,9 +267,26 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
 
 ## To do
 
-### Next — deploy the loop (all need logins I do not have)
+### Next — finish the login flow
 
-- [ ] **Deploy Cloudflare.** Every command is in `cloudflare/README.md`; ~10 minutes.
+- [ ] **Confirm the `httpx` fix landed on Streamlit Cloud** and Google sign-in completes.
+      This is the one blocking item; full detail in the handover at the top of this file.
+- [ ] **Walk the loop once, before inviting anyone else.** Sign in → upload with sharing
+      ticked → flag the result wrong → review and label it in the sidebar →
+      `python scripts/export_batch.py --dry-run` → confirm the row appears with *your*
+      label, not the model's or the user's. Nothing below this line has been exercised
+      against real data yet.
+- [ ] **Decide whether to publish the OAuth consent screen.** It is in Testing mode, so
+      only listed test users can sign in (cap 100). Publishing opens it to any Google
+      account; with only `openid`/`email`/`profile` that needs no Google verification,
+      but testers see an "unverified app" interstitial either way.
+- [ ] **Rotate the credentials shared during setup.** The Cloudflare API token and the R2
+      token were both pasted into a chat transcript, and `.env.backup-1787434019` still
+      holds the old R2 token — delete it.
+
+### Done — deployment (was: "all need logins I do not have")
+
+- [x] **Deploy Cloudflare.** Every command is in `cloudflare/README.md`; ~10 minutes.
       ```
       cd cloudflare
       npx wrangler login
@@ -179,34 +298,33 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
       ```
       Do **not** add a payment method. With no card on the account Cloudflare cannot
       bill — overage fails closed instead.
-- [ ] **Deploy to Streamlit Community Cloud** — <https://share.streamlit.io>, sign in
+- [x] **Deploy to Streamlit Community Cloud** — <https://share.streamlit.io>, sign in
       with GitHub, main file `app.py`. Full instructions in
       `deploy/streamlit-cloud/README.md`. Free, 2.7 GB RAM, redeploys on push.
       **Hugging Face Spaces is no longer viable:** Gradio and Docker Spaces now require
       PRO and Streamlit is not offered at all; only Static (client-side, no Python)
       remains free. `deploy/hf-space/` has been removed.
-- [ ] **Host the 28 MB checkpoint somewhere fetchable** and set `ONNM_CHECKPOINT_URL`
+- [x] **Host the 28 MB checkpoint somewhere fetchable** and set `ONNM_CHECKPOINT_URL`
       (+ `ONNM_CALIBRATION_URL`). `reports/` is gitignored so a clone has no model;
       `src/checkpoint_fetch.py` downloads one at boot and pins it. A Hugging Face
       *model* repo is free even though compute Spaces are not, and makes the model
       independently usable; GitHub Releases also works.
-- [ ] **Point it at `full-20260822-041653`**, not the overnight regression — set
-      `ONNM_CHECKPOINT_RUN` accordingly, or write `reports/PRODUCTION` locally.
-- [ ] **Push `main`.** Commit `9810b7a` is local only.
+- [?] **Point it at `full-20260822-041653`**, not the overnight regression.
+      `ONNM_CHECKPOINT_RUN = "hosted"` and both URLs point at release `v0.1.0` — but
+      **nobody has verified which run's weights are actually in that release**. Confirm
+      it before trusting a hosted verdict: the overnight checkpoint regressed to 0.8629
+      macro ROC-AUC and would be served silently if it were the one uploaded.
+- [x] **Push `main`.**
 - [x] **`MODEL_CARD.md` performance section** — malignant recall **0.633 [0.490–0.776]**
       now leads the section, stated as "roughly one in three malignant films is missed"
       with the explicit warning that a normal verdict is weak evidence of absence. The
       rest of the card was already accurate (not-a-medical-device, CC BY-NC-ND, unscored
       Grad-CAM, known failure modes).
-- [ ] **Use the corrected app description and licence when deploying.**
+- [x] **Use the corrected app description and licence when deploying.**
       Description: `Research demo — explainable bone-lesion triage on plain radiographs.
       Not a medical device.` — **not** "detects early stages of cancer".
       Licence: `cc-by-nc-4.0`, **not** `mit`: the weights derive from BTXRD (CC BY-NC-ND
       4.0), so MIT would grant a commercial right that is not yours to give.
-- [ ] **Walk the loop once yourself, before inviting your friend.** Sign up → upload with
-      sharing ticked → flag the result wrong → review and label it in the sidebar →
-      `python scripts/export_batch.py --dry-run` → confirm the row appears with *your*
-      label, not the model's or the user's.
 
 ### Blocking — do these before trusting any result
 

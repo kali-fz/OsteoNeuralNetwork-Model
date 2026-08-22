@@ -46,7 +46,7 @@ sharing centre/age/sex/anatomy/diagnosis. Splits are grouped on it — verified 
 | I/O | pydicom 3.x, Pillow — DICOM + PNG/JPEG/BMP/TIFF |
 | Metrics | scikit-learn; bootstrap CIs hand-rolled |
 | Viz | matplotlib, seaborn, OpenCV-headless |
-| UI | Streamlit 1.62 (`app.py`), localhost-only |
+| UI | Streamlit >=1.42 (`app.py`); loopback locally, Streamlit Cloud when hosted |
 | Env | Python **3.12 exactly** (ROCm wheels are cp312-only), `.venv` |
 | GPU | AMD RX 7900 XT 20 GB, gfx1100, ROCm 7.2.1 on Windows 11 |
 
@@ -108,6 +108,7 @@ src/onnm/
   config.py, utils.py
 src/                 app-layer modules (not part of the onnm package):
   auth.py            PBKDF2 password hashing, registration, session helpers
+  oauth.py           Google Sign-In via Streamlit native OIDC; identity -> account
   database.py        SQLite (data/users.db): users + per-user scan history
   storage.py         de-identified upload storage under data/user_uploads/{uuid}/
   legal.py           ToS, Privacy Policy, Medical Disclaimer, Cookie Notice text
@@ -120,7 +121,7 @@ configs/             base.yaml + overrides: densenet121_3class, full_run,
                      overnight, specificity_tuning
   ablations/         ohem_only, augs_only -- separate the overnight regression
 notebooks/           01_data_sanity, kaggle_train, colab_train
-tests/               242 tests, synthetic fixtures, no dataset required
+tests/               311 tests, synthetic fixtures, no dataset required
 app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
 MODEL_CARD.md        intended use, training data, measured limits, failure modes
 .github/workflows/   ci.yml — ruff + torch-free fast tests + full suite on CPU torch
@@ -130,7 +131,30 @@ MODEL_CARD.md        intended use, training data, measured limits, failure modes
 
 ## App layer — auth, storage, OOD gate
 
-The Streamlit app is gated behind local accounts. `data/users.db` (SQLite,
+**Two sign-in paths, chosen by configuration, never both at once.** `oidc_configured()`
+returns true when secrets carry an `[auth]` block with a Google client; the app then shows
+only "Continue with Google" and `st.login("google")` drives Streamlit's native OIDC. With
+no such block — the normal state of a local checkout — the password forms render instead.
+The fallback is not a second door into the same deployment; it is what lets a clone run
+without a Google client of its own.
+
+**Federated accounts store no password, and the schema enforces it.** `users` carries
+`auth_provider` ('password' | 'google') and `provider_subject`, with a CHECK constraint
+pairing them: a password account needs a hash and no subject, a Google account needs a
+subject and a NULL hash. This is a database constraint rather than a Worker convention
+because the failure it prevents — one account reachable by two different proofs of
+identity — is an authentication bypass, not a data-quality problem. `verify_password`
+returns False for a non-string, and `authenticate_user` treats a federated account exactly
+like an unknown one (same dummy hash, same wasted work) so the login form cannot be timed
+to discover which addresses use Google.
+
+Identity keys on Google's `sub`, not email: a Workspace address can be reassigned after an
+account closes, so `get_or_create_oauth_user` looks up by subject first and falls back to
+email only to *return* an existing account — never to convert one. Silently upgrading a
+password account to Google would let anyone who can prove control of an address take it
+over.
+
+The Streamlit app is gated behind accounts either way. `data/users.db` (SQLite,
 gitignored under `data/`) stores emails, salted PBKDF2-HMAC-SHA256 hashes
 (600k iterations), ToS-acceptance timestamps, and per-user scan history.
 Uploads are stored de-identified under `data/user_uploads/{user_uuid}/` with
@@ -197,6 +221,14 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 11. **Never store a plaintext password or an identified upload.** Credentials are salted
     PBKDF2 hashes; uploads are UUID-renamed and header-de-identified before they touch
     disk. `data/` stays gitignored.
+12. **A federated account must never carry a password hash, and vice versa.** Enforced by
+    a CHECK constraint in both `cloudflare/schema.sql` and `src/database.py`, not by the
+    code that writes through them. Relaxing it makes one account reachable by two
+    independent proofs of identity.
+13. **Every outbound HTTP call must send an explicit User-Agent.** Cloudflare's edge bans
+    the default `Python-urllib/3.x` signature with a 403 and a plain-text
+    `error code: 1010` body, before the request reaches any Worker. See
+    `community.USER_AGENT`.
 
 ---
 
@@ -205,7 +237,7 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 ```powershell
 .venv\Scripts\python.exe scripts\verify_env.py                     # gate 1
 .venv\Scripts\python.exe scripts\verify_data.py                    # gate 2
-.venv\Scripts\python.exe -m pytest -q                              # gate 3 (189)
+.venv\Scripts\python.exe -m pytest -q                              # gate 3 (311)
 .venv\Scripts\python.exe scripts\train.py --override configs\densenet121_3class.yaml --override configs\full_run.yaml --tag full
 .venv\Scripts\python.exe scripts\calibrate.py --checkpoint reports\<run>\best.pt --sweep
 .venv\Scripts\python.exe scripts\evaluate.py --checkpoint reports\<run>\best.pt
@@ -227,15 +259,23 @@ dependencies list torch, and pip would pull a CPU wheel over Colab's CUDA build.
 ## Community loop (hosted)
 
 ```
-HF Spaces (Streamlit app.py)  --HTTPS+key-->  Cloudflare Worker + D1
-   auth, OOD gate, inference                    users, submissions, feedback
-   opt-in share checkbox                        review queue, batches
-   "this looks wrong" button                          |
-                                                      v
+Google Sign-In --OIDC--> Streamlit Cloud (app.py) --HTTPS+key--> Cloudflare Worker + D1
+                            OOD gate, inference                 users, submissions, feedback
+                            opt-in share checkbox               review queue, batches
+                            "this looks wrong" button                 |
+                                                                     v
                               scripts/export_batch.py --> manifest.csv --> Colab retrain
 ```
 
-- `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `wrangler.toml`, deploy README.
+Live endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 `onnm-community`
+(id `961f0440-7ff1-466e-88fe-0c2b30f3083b`, 5 tables, schema_version 2), app
+`https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`.
+
+- `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
+  deploy README. Migrations are applied by hand:
+  `npx wrangler d1 execute onnm-community --remote --file=./migrations/NNNN_*.sql`.
+  `0002_google_oauth.sql` rebuilds `users` (SQLite cannot relax NOT NULL in place) and
+  preserves existing rows as password accounts.
 - `src/community.py` — client; **fails soft** so a dead API never blocks inference.
 - `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
   SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
@@ -260,6 +300,23 @@ deploys from GitHub, redeploys on push. **Hugging Face Spaces is not an option:*
 and Docker Spaces now require PRO and Streamlit is not an offered SDK at all; only Static
 (client-side, no Python) is free. Netlify cannot host it either — static sites and JS
 functions only. Both would require an ONNX-in-browser rewrite.
+
+**Two hosting landmines, both already paid for — do not rediscover them.**
+
+*Cloudflare's edge bans `Python-urllib`.* A request carrying the default urllib
+User-Agent gets HTTP 403 with a plain-text `error code: 1010` body, generated at the edge
+and never reaching the Worker. Every component looks correct in isolation, and `curl` and
+a browser both get a clean 200, so the obvious next step — testing with curl — actively
+confirms the wrong conclusion. `community.USER_AGENT` fixes it; a non-JSON error body is
+now reported as coming from the gateway rather than surfaced as a bare `error code: 1010`.
+
+*Streamlit's OIDC needs `httpx`, which nothing declares.*
+`authlib.integrations.starlette_client` imports httpx, Authlib does not list it as a hard
+dependency, and Streamlit's docs say only "install Authlib". The resulting
+`ModuleNotFoundError` is raised inside `_create_oauth_client`, which sits *outside* the
+`/auth/login` route's `try/except` (that one returns a tidy 400 "Authentication error"),
+so it escapes as a bare HTTP 500 `Internal server error.` with nothing in the UI naming
+the cause. `requirements.txt` pins `httpx` and `itsdangerous` explicitly.
 
 `reports/` is gitignored, so a clone has no weights. `src/checkpoint_fetch.py` downloads
 one at boot from `ONNM_CHECKPOINT_URL` and pins it. It verifies the payload starts with

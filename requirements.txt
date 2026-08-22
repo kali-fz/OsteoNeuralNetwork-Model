@@ -34,3 +34,11 @@ altair>=5.0
 # not pulled in automatically.
 streamlit>=1.42
 Authlib>=1.3.2
+# httpx is NOT optional here despite not appearing in Streamlit's own docs.
+# authlib.integrations.starlette_client imports it, and Authlib does not declare
+# it as a hard dependency, so `pip install Authlib` alone leaves the OIDC login
+# route raising ModuleNotFoundError. That error escapes the route's try/except
+# (which only wraps authorize_redirect), so the user gets a bare HTTP 500
+# "Internal server error" with nothing in the UI to say what is wrong.
+httpx>=0.27
+itsdangerous>=2.1
