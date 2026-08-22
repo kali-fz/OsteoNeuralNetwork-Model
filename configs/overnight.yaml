@@ -1,0 +1,171 @@
+# Overnight deep run: OHEM on false positives, aggressive augmentation,
+# plateau LR, thermal governor, 90% specificity floor.
+#
+#   python scripts/train.py --override configs/densenet121_3class.yaml \
+#                           --override configs/overnight.yaml --tag overnight
+#
+# Merged on top of configs/base.yaml. Every number here was measured on this
+# machine (RX 7900 XT 20 GB, 31.8 GB system RAM, 16 logical cores), not guessed.
+
+train:
+  epochs: 150
+  lr: 0.0001
+  weight_decay: 0.0002      # up from 1e-4: the previous run reached train loss
+                            # 0.011 against val 0.350, which is memorisation
+  optimizer: adamw
+
+  # -- Plateau schedule rather than cosine ---------------------------------
+  # Cosine commits to a fixed decay across a fixed horizon. With early stopping
+  # at epoch ~30 of a nominal 150, the schedule would still be near its initial
+  # rate when the run ends -- the decay would never actually happen. Plateau
+  # reacts to what the model does instead of to the epoch counter.
+  scheduler: plateau
+  plateau:
+    metric: val_loss
+    factor: 0.5             # halve on stagnation
+    patience: 5             # must be below early_stopping_patience (15), so the
+                            # LR gets at least two chances to rescue a plateau
+                            # before the run is abandoned
+    min_lr: 0.0000001
+
+  early_stopping_metric: roc_auc_macro
+  early_stopping_patience: 15
+
+  amp: true
+  amp_dtype: bfloat16
+  grad_clip: 1.0
+
+  # ROCm 7.2.1 on Windows cannot JIT-compile MIOpen's training-mode BatchNorm
+  # kernel. See onnm.utils.configure_backend; scripts/verify_env.py checks it.
+  miopen: false
+
+# ---------------------------------------------------------------------------
+# Loader.
+#
+# Measured VRAM and throughput, DenseNet-121 at 256 px, MIOpen off:
+#
+#   batch   peak VRAM   % of 20 GB   ms/step   s/epoch
+#      32     2.84 GB         14%        336      28.2
+#      48     4.15 GB         21%        429      24.0
+#      64     5.45 GB         27%        541      22.7   <- chosen
+#      96     8.05 GB         40%        874      24.5
+#     128    10.63 GB         53%       3413      71.7   <- falls off a cliff
+#
+# Two things that matters more than the batch number:
+#
+# 1. 70-80% VRAM is not reachable here, and chasing it would hurt. Even batch
+#    128 only occupies 53%, and it is 3x slower per step than 64 -- the native
+#    ATen path (MIOpen is off) thrashes at that size. Filling VRAM is not a
+#    training objective; it is a symptom of a model or resolution large enough
+#    to need it. To genuinely use the headroom, raise data.image_size to 320 or
+#    384, which would both consume it and plausibly help on subtle lesions.
+#    That is a bigger change than an overnight run should make unattended, so
+#    it is left as a deliberate opt-in rather than done here.
+#
+# 2. Throughput is flat from 48 to 96. Batch 64 wins on epoch time by a nose,
+#    and 42 steps/epoch is already few enough that going larger would start to
+#    cost gradient updates -- which, with 2675 training images, is the scarcer
+#    resource.
+# ---------------------------------------------------------------------------
+loader:
+  batch_size: 64
+
+  # The augmentation pipeline costs ~489 ms/batch on CPU against ~541 ms/step on
+  # GPU, so with num_workers=0 the two serialise and an epoch takes ~43 s
+  # instead of ~23 s. Workers overlap them.
+  #
+  # Capped at 2 on purpose. Windows *spawns* workers, so each re-imports the
+  # module and receives its own copy of the ~2.1 GB cache. At the time of
+  # measurement this machine had 9.3 GB free, so 2 workers (+4.2 GB) leaves
+  # real headroom and 4 (+8.4 GB) would not. If the run dies overnight with a
+  # MemoryError, set this to 0 -- it costs speed, never correctness.
+  num_workers: 2
+  persistent_workers: true
+  cache_rate: 1.0
+  balanced_sampler: false   # focal alpha already equalises the classes
+
+loss:
+  name: focal
+  gamma: 2.0
+  auto_alpha: true
+  alpha_beta: 1.0
+
+  # -- Online Hard Example Mining ------------------------------------------
+  # The complaint is specifically false positives on complex joint anatomy, so
+  # the mining is specific too: normal films the model calls a lesion with
+  # confidence get their loss multiplied.
+  #
+  # penalty 4.0 is deliberately not higher. Focal loss already up-weights hard
+  # examples, so a mined sample is amplified twice; pushing this to 10 tends to
+  # make the model refuse to predict lesion at all, converting a false-positive
+  # problem into a false-negative one, which is the worse trade in this domain.
+  ohem:
+    enabled: true
+    confidence: 0.5
+    penalty: 4.0
+    max_fraction: 0.5
+    warmup_epochs: 5        # let the model learn something to be wrong about
+    normalize: true
+
+# ---------------------------------------------------------------------------
+# Augmentation.
+#
+# RandAffine replaces RandRotated and RandZoomd rather than joining them --
+# affine already covers rotation, scale, shear and translation, and stacking
+# them would interpolate the image twice, blurring the trabecular texture that
+# distinguishes a lesion from normal bone.
+# ---------------------------------------------------------------------------
+augment:
+  hflip_prob: 0.5
+  rotate_prob: 0.0          # subsumed by affine
+  zoom_prob: 0.0            # subsumed by affine
+
+  affine_prob: 0.7
+  affine_degrees: 20.0
+  affine_shear: 0.05
+  affine_translate_px: 20.0
+  affine_scale: [-0.15, 0.20]
+
+  # Occlusion. The direct answer to "stop memorising normal bone shapes": a
+  # network that must classify with a patch missing cannot rest its decision on
+  # one landmark of a normal joint.
+  dropout_prob: 0.5
+  dropout_holes: 1
+  dropout_max_holes: 6
+  dropout_hole_px: 40
+
+  # Non-linear intensity remap, harsher than gamma because it can move parts of
+  # the histogram in opposite directions. The false positives arrive on outside
+  # films, so invariance to an unseen processing pipeline is the point.
+  histogram_prob: 0.4
+  histogram_control_points: [5, 12]
+
+  contrast_prob: 0.5
+  gamma_range: [0.5, 2.0]
+  noise_prob: 0.3
+  noise_std: 0.015
+
+# ---------------------------------------------------------------------------
+# Thermal governor.
+#
+# high_c applies to the *hotspot* (junction) sensor, which is the only die
+# temperature this card reports through ADL. It runs 10-20 C above the "GPU
+# temperature" Adrenalin shows, so 75 here is stricter than 75 there -- the
+# safe direction for an unattended run. Idle on this machine is ~51 C hotspot.
+# ---------------------------------------------------------------------------
+thermal:
+  enabled: true
+  high_c: 75.0
+  resume_c: 70.0
+  memory_limit_c: 95.0      # GDDR6 idles near 68 C and is rated far higher, so
+                            # it gets its own ceiling instead of tripping the
+                            # die limit permanently
+  check_every_steps: 10     # ~5 s at 541 ms/step
+  poll_seconds: 3.0
+  max_pause_seconds: 600.0
+
+calibrate:
+  mode: specificity_floor
+  min_specificity: 0.90     # up from 0.80
+  target_sensitivity: 0.95  # still reported; the gap is warned about
+  temperature: true

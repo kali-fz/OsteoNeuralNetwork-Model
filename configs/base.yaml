@@ -22,6 +22,7 @@ paths:
   splits_file: data/interim/splits.json
   cache_dir: data/cache
   reports_dir: reports
+  controls_manifest: configs/controls_manifest.csv
 
 # ---------------------------------------------------------------------------
 # Labels.
@@ -136,6 +137,25 @@ augment:
   noise_prob: 0.3
   noise_std: 0.01
 
+  # -- aggressive block, all off (prob 0) unless a profile enables it -------
+  # configs/overnight.yaml turns these on. RandAffine subsumes rotate+zoom, so
+  # enabling affine_prob without zeroing rotate_prob and zoom_prob composes two
+  # warps and interpolates twice, blurring the trabecular texture a bone model
+  # depends on.
+  affine_prob: 0.0
+  affine_degrees: 20.0
+  affine_shear: 0.05
+  affine_translate_px: 16.0
+  affine_scale: [-0.15, 0.15]
+
+  dropout_prob: 0.0        # RandCoarseDropout: simulated occlusion
+  dropout_holes: 1
+  dropout_max_holes: 5
+  dropout_hole_px: 32
+
+  histogram_prob: 0.0      # RandHistogramShift: non-linear intensity remap
+  histogram_control_points: [5, 10]
+
 loader:
   batch_size: 32
   # Windows spawns (not forks) workers, so each one duplicates the cache and
@@ -189,6 +209,26 @@ loss:
   # alpha_beta entirely when set. Order follows labels.classes.
   alpha: null
 
+  # -- Online Hard Example Mining ------------------------------------------
+  # Magnifies the loss on normal films the model calls a lesion with
+  # confidence -- the false positives, specifically, rather than "high loss"
+  # in general. A badly-missed cancer also has high loss, and classic OHEM
+  # would chase both; this only chases the one being complained about.
+  #
+  # Composes with focal loss but is not independent of it: focal already
+  # up-weights hard examples symmetrically, so a sample can be amplified
+  # twice. If training destabilises, lower loss.gamma before raising penalty.
+  ohem:
+    enabled: false
+    confidence: 0.5      # P(lesion) at or above which a normal counts as hard
+    penalty: 4.0         # loss multiplier on those samples (1.0 disables)
+    max_fraction: 0.5    # ceiling on how much of a batch may be amplified
+    warmup_epochs: 3     # mining before the model can be meaningfully wrong
+                         # just re-weights the whole normal class, which alpha
+                         # already does, and does more clearly
+    normalize: true      # keep the batch's mean weight at 1 so the LR schedule
+                         # and the plateau detector keep meaning the same thing
+
 # ---------------------------------------------------------------------------
 # Post-hoc calibration, fitted on VALIDATION after training finishes.
 #
@@ -239,6 +279,32 @@ eval:
   bootstrap_n: 2000     # ~51 malignant test images -> point estimates need CIs
   bootstrap_alpha: 0.05
   target_sensitivity: 0.90   # operating point chosen on val, reported on test
+
+# ---------------------------------------------------------------------------
+# Thermal governor for unattended runs.
+#
+# Reads the GPU through atiadlxx.dll (the Adrenalin driver's own library) and
+# pauses the training loop while the die is too hot, resuming once it cools.
+# It cannot change clocks or power limits -- it reduces the duty cycle, which is
+# the only lever a user-space process actually has.
+#
+# high_c applies to the *hotspot* (junction) sensor, which runs 10-20 C above
+# the "GPU temperature" Adrenalin displays. A 75 C hotspot limit is therefore
+# stricter than a 75 C edge limit, not looser.
+#
+# Memory has its own, much higher ceiling: GDDR6 idles near 68 C and is rated
+# to ~95-105 C, so folding it into the same limit would throttle permanently.
+# ---------------------------------------------------------------------------
+thermal:
+  enabled: true
+  high_c: 75.0            # pause above this die hotspot temperature
+  resume_c: 70.0          # resume below this; the gap prevents oscillation
+  memory_limit_c: 95.0
+  check_every_steps: 20   # an ADL query costs ~1 ms; die temp does not move
+                          # meaningfully between two 200 ms steps
+  poll_seconds: 2.0
+  max_pause_seconds: 300.0  # after this, resume anyway and log an error rather
+                            # than silently stalling the run all night
 
 explain:
   method: gradcam       # gradcam | gradcampp

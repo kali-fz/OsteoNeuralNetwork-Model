@@ -53,9 +53,14 @@ def _grouped_holdout(
 
 
 def make_splits(records: list[dict], cfg, seed: int) -> dict:
-    ids = np.array([r["image_id"] for r in records])
-    y = np.array([r["label"] for r in records])
-    groups = np.array([r["patient_id"] for r in records])
+    # External controls have already been assigned to train/val by their
+    # provenance-aware ingester; splitting them again would silently violate
+    # that assignment. Only BTXRD records participate in this split operation.
+    split_records = [r for r in records if "_split" not in r]
+    controls = [r for r in records if "_split" in r]
+    ids = np.array([r["image_id"] for r in split_records])
+    y = np.array([r["label"] for r in split_records])
+    groups = np.array([r["patient_id"] for r in split_records])
 
     grouped = len(set(groups)) < len(ids)
     if grouped:
@@ -100,6 +105,11 @@ def make_splits(records: list[dict], cfg, seed: int) -> dict:
         "seed": seed,
         "fractions": {"train": float(cfg.split.train), "val": val_frac, "test": test_frac},
     }
+    for control in controls:
+        target = str(control["_split"])
+        if target in {"train", "val", "test"}:
+            splits[target].append(control["image_id"])
+            splits[target].sort()
 
     payload = json.dumps(
         {k: splits[k] for k in ("train", "val", "test")}, sort_keys=True

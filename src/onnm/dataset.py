@@ -25,8 +25,11 @@ from monai.transforms import (
     EnsureTyped,
     NormalizeIntensityd,
     RandAdjustContrastd,
+    RandAffined,
+    RandCoarseDropoutd,
     RandFlipd,
     RandGaussianNoised,
+    RandHistogramShiftd,
     RandRotated,
     RandZoomd,
     RepeatChanneld,
@@ -36,7 +39,7 @@ from monai.transforms import (
 )
 
 from . import CLASS_NAMES
-from .config import Config, ConfigError
+from .config import REPO_ROOT, Config, ConfigError
 from .io_radiograph import LoadRadiographd, RadiographReadError
 from .utils import get_logger, load_json
 
@@ -277,6 +280,22 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
             }
         )
 
+    # External controls carry their own verified label, provenance and split.
+    # They are optional so the original BTXRD-only workflow remains unchanged.
+    controls_path = cfg.resolve_path("paths.controls_manifest")
+    if controls_path.is_file():
+        controls = pd.read_csv(controls_path)
+        required = {"image", "image_id", "label", "patient_id", "split"}
+        missing = required - set(controls.columns)
+        if missing:
+            raise ConfigError(f"{controls_path} is missing columns: {sorted(missing)}")
+        for _, row in controls.iterrows():
+            raw_image = Path(str(row["image"])).expanduser()
+            image = raw_image if raw_image.is_absolute() else (REPO_ROOT / raw_image).resolve()
+            if image.is_file() and int(row["label"]) == 0:
+                records.append({"image": str(image), "label": 0, "image_id": str(row["image_id"]),
+                                "patient_id": str(row["patient_id"]), "_split": str(row["split"])})
+
     if n_unmapped:
         logger.warning(
             "%d rows are flagged tumor=1 but neither benign nor malignant, and were "
@@ -318,7 +337,7 @@ def filter_by_split(
         )
     splits = load_json(splits_path)
     wanted = set(splits[split])
-    subset = [r for r in records if r["image_id"] in wanted]
+    subset = [r for r in records if r.get("_split") == split or r["image_id"] in wanted]
     if not subset:
         raise RuntimeError(f"split {split!r} matched 0 records -- splits.json is stale")
     return subset
@@ -507,6 +526,68 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
                 std=float(aug.noise_std),
             ),
         ]
+
+        # -- aggressive block, all off by default (prob 0) ------------------
+        # Enabled by configs/overnight.yaml. Each targets a specific way the
+        # model can cheat rather than learn anatomy.
+
+        # One affine instead of separate rotate/zoom. RandAffine subsumes
+        # rotation, scale, shear and translation, so enabling it *alongside*
+        # RandRotated and RandZoomd would compose two independent warps and
+        # interpolate twice -- blurring fine trabecular texture, which is
+        # exactly the signal a bone-lesion model needs. Set rotate_prob and
+        # zoom_prob to 0 when this is on; configs/overnight.yaml does.
+        if float(aug.get("affine_prob", 0.0)) > 0:
+            stages.append(
+                RandAffined(
+                    keys=["image"],
+                    prob=float(aug.affine_prob),
+                    rotate_range=(float(np.deg2rad(float(aug.get("affine_degrees", 20.0)))),),
+                    shear_range=(float(aug.get("affine_shear", 0.05)),),
+                    translate_range=(float(aug.get("affine_translate_px", 16.0)),) * 2,
+                    scale_range=(tuple(float(v) for v in aug.get("affine_scale", [-0.15, 0.15])),),
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    cache_grid=False,
+                )
+            )
+
+        # Occlusion. Stands in for overlapping soft tissue, hardware, lead
+        # aprons and burned-in markers -- and, more to the point, stops the
+        # network resting on any single region of a normal film. A model that
+        # has to classify with a patch missing cannot key on one landmark.
+        if float(aug.get("dropout_prob", 0.0)) > 0:
+            hole = int(aug.get("dropout_hole_px", 32))
+            stages.append(
+                RandCoarseDropoutd(
+                    keys=["image"],
+                    holes=int(aug.get("dropout_holes", 1)),
+                    max_holes=int(aug.get("dropout_max_holes", 5)),
+                    spatial_size=(hole // 2, hole // 2),
+                    max_spatial_size=(hole, hole),
+                    dropout_holes=True,
+                    # 0 reads as an unexposed patch, which is a thing that
+                    # genuinely appears on film; random fill would invent a
+                    # texture the model would then learn to recognise.
+                    fill_value=0.0,
+                    prob=float(aug.dropout_prob),
+                )
+            )
+
+        # Non-linear intensity remap: harsher than gamma, because it can move
+        # parts of the histogram in opposite directions. BTXRD is multi-centre
+        # and the false positives here arrive on outside films, so invariance
+        # to a processing pipeline the model has never seen is the whole point.
+        if float(aug.get("histogram_prob", 0.0)) > 0:
+            stages.append(
+                RandHistogramShiftd(
+                    keys=["image"],
+                    num_control_points=tuple(
+                        int(v) for v in aug.get("histogram_control_points", [5, 10])
+                    ),
+                    prob=float(aug.histogram_prob),
+                )
+            )
 
     # -- deterministic tail ------------------------------------------------
     stages += [

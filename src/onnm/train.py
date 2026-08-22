@@ -26,6 +26,7 @@ from .dataset import build_dataloader, build_records, class_weights
 from .losses import build_loss
 from .metrics import compute_metrics, format_report
 from .model import build_model, model_summary
+from .thermal import build_governor
 from .utils import (
     amp_dtype_from_str,
     configure_backend,
@@ -59,7 +60,30 @@ def build_scheduler(optimizer: torch.optim.Optimizer, cfg, steps_per_epoch: int)
     into a randomly initialised head can wreck the pretrained features before
     they have contributed anything.
     """
-    if str(cfg.train.scheduler).lower() != "cosine":
+    name = str(cfg.train.scheduler).lower()
+
+    if name in ("plateau", "reduce_on_plateau", "reducelronplateau"):
+        # Stepped once per epoch on a monitored metric, not per batch. Useful
+        # for a long run where the right schedule is not known in advance:
+        # cosine commits to a fixed decay over a fixed horizon, so with early
+        # stopping it may never reach its low-LR phase at all.
+        plateau = cfg.train.get("plateau", None)
+
+        def setting(key, default):
+            return default if plateau is None else plateau.get(key, default)
+
+        monitored = str(setting("metric", "val_loss"))
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            # "min" for a loss, "max" for anything where higher is better.
+            mode="min" if monitored.endswith("loss") else "max",
+            factor=float(setting("factor", 0.5)),
+            patience=int(setting("patience", 5)),
+            threshold=float(setting("threshold", 1e-4)),
+            min_lr=float(setting("min_lr", 1e-7)),
+        )
+
+    if name != "cosine":
         return None
 
     epochs = int(cfg.train.epochs)
@@ -84,8 +108,14 @@ def run_epoch(
     scheduler: Any = None,
     amp_dtype: torch.dtype | None = None,
     grad_clip: float = 0.0,
+    governor: Any = None,
 ) -> dict[str, Any]:
-    """Run one pass. Training when ``optimizer`` is given, evaluation otherwise."""
+    """Run one pass. Training when ``optimizer`` is given, evaluation otherwise.
+
+    ``governor`` is an optional :class:`onnm.thermal.ThermalGovernor`, polled
+    once per step. It blocks the loop while the GPU is over temperature, so the
+    only thing this function needs to do is call it.
+    """
     is_train = optimizer is not None
     model.train(is_train)
 
@@ -110,8 +140,15 @@ def run_epoch(
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
-                if scheduler is not None:
+                # ReduceLROnPlateau is driven per epoch from a metric, so it is
+                # stepped by the caller. Stepping it here would advance its
+                # patience counter once per batch and collapse the LR.
+                if scheduler is not None and not isinstance(
+                    scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+                ):
                     scheduler.step()
+                if governor is not None:
+                    governor.step()
 
         batch_size = labels.size(0)
         total_loss += float(loss.detach()) * batch_size
@@ -180,11 +217,21 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
     best_epoch = -1
     history: list[dict[str, Any]] = []
 
+    governor = build_governor(cfg)
+    is_plateau = isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
     for epoch in range(int(cfg.train.epochs)):
         started = time.time()
+        # OHEM stays inert until its warmup elapses, and resets its counters
+        # each epoch so the log shows what it mined in *this* epoch.
+        if hasattr(criterion, "set_epoch"):
+            criterion.set_epoch(epoch)
+
         train_metrics = run_epoch(
             model, train_loader, criterion, device, optimizer, scheduler,
-            amp_dtype, float(cfg.train.grad_clip),
+            amp_dtype, float(cfg.train.grad_clip), governor=governor,
         )
         val_metrics = run_epoch(model, val_loader, criterion, device, amp_dtype=amp_dtype)
 
@@ -192,18 +239,39 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
         if not np.isfinite(score):
             score = -float("inf")
 
+        if is_plateau:
+            plateau_cfg = cfg.train.get("plateau", None)
+            key = "val_loss" if plateau_cfg is None else str(
+                plateau_cfg.get("metric", "val_loss")
+            )
+            observed = (
+                val_metrics["loss"] if key == "val_loss"
+                else float(val_metrics.get(key.removeprefix("val_"), val_metrics["loss"]))
+            )
+            before = optimizer.param_groups[0]["lr"]
+            scheduler.step(observed)
+            after = optimizer.param_groups[0]["lr"]
+            if after < before:
+                logger.info("ReduceLROnPlateau: lr %.2e -> %.2e", before, after)
+
         malignant = val_metrics["per_class"]["malignant"]
         logger.info(
             "epoch %3d/%d | %5.1fs | loss %.4f/%.4f | ROC %.3f | PR(mal) %.3f | "
-            "sens(mal) %.3f | spec(mal) %.3f | bal-acc %.3f | F1 %.3f%s",
+            "sens(mal) %.3f | spec(mal) %.3f | bal-acc %.3f | F1 %.3f%s%s",
             epoch + 1, int(cfg.train.epochs), time.time() - started,
             train_metrics["loss"], val_metrics["loss"],
             val_metrics["roc_auc_macro"],
             val_metrics["pr_auc"].get("malignant", float("nan")),
             malignant["sensitivity"], malignant["specificity"],
             val_metrics["balanced_accuracy"], val_metrics["f1_macro"],
+            (
+                f" | OHEM {criterion.n_mined}/{criterion.n_normal}"
+                if getattr(criterion, "active", False) else ""
+            ),
             "  <- best" if score > best_score else "",
         )
+        if governor is not None and epoch % 5 == 0:
+            logger.info("  GPU: %s", governor.snapshot())
 
         # Per-class specificity is recorded for normal as well as malignant:
         # "normal specificity" is the rate at which lesion films are correctly
@@ -255,7 +323,26 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
 
     save_json(history, output_dir / "history.json")
     logger.info("best %s = %.4f at epoch %d", monitor, best_score, best_epoch + 1)
-    return {"best_score": best_score, "best_epoch": best_epoch + 1, "history": history}
+
+    result: dict[str, Any] = {
+        "best_score": best_score,
+        "best_epoch": best_epoch + 1,
+        "history": history,
+    }
+    if device.type == "cuda":
+        peak_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
+        total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        result["peak_vram_gb"] = round(peak_gb, 2)
+        result["vram_utilisation"] = round(peak_gb / total_gb, 3)
+        logger.info(
+            "peak VRAM: %.2f GB of %.1f GB (%.0f%%)", peak_gb, total_gb,
+            100 * peak_gb / total_gb,
+        )
+    if governor is not None:
+        result["thermal"] = governor.stats.as_dict()
+        logger.info("thermal: %s", result["thermal"])
+        governor.close()
+    return result
 
 
 def overfit_batch(

@@ -101,7 +101,27 @@ wheels, but two prerequisites are strict:
 If either prerequisite fails, skip this and use the Kaggle fallback — the same code runs
 unchanged with `--profile kaggle`.
 
-### 3. Data
+### 3. Verified normal controls
+
+Controls are ingested locally with `scripts/fetch_controls.py`. The command accepts a
+directory of MURA files and keeps only studies whose path contains `_negative`, or a
+CSV with these required columns: `image`, `normal`, `anatomy`, `source`, and `license`.
+The CSV is the provenance boundary: website text, an unlabeled image, or an inferred
+diagnosis is never promoted to the normal class. Supported anatomy values are `pelvis`,
+`hip`, `femur`, `knee`, `long_bone`, and `other`.
+
+```powershell
+.venv\Scripts\python.exe scripts\fetch_controls.py --source-dir D:\datasets\mura
+.venv\Scripts\python.exe scripts\fetch_controls.py --input-manifest controls_source.csv
+```
+
+The script validates and converts images to grayscale PNG, removes only constant outer
+padding, deduplicates by SHA-256, and writes `data/train/normal/`, `data/val/normal/`,
+and `configs/controls_manifest.csv`. Radiopaedia and MedPix pages are not bulk-scraped:
+their public case pages do not provide a stable, machine-verifiable normal-label and
+licence contract. Add such cases through the explicit CSV only after human verification.
+
+### 4. Data
 
 ```powershell
 .venv\Scripts\python.exe scripts\download_btxrd.py
