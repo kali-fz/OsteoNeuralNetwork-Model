@@ -1,8 +1,11 @@
 # ONNM — Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-22 (backlog execution pass: housekeeping, app delivery,
-evaluation tooling, specificity-tuning enablers).
+Last audited: 2026-08-22 (community feedback loop + hosting pass).
+
+**Current state:** 269 tests green in the ROCm `.venv`, repo-wide ruff clean, app boots
+(HTTP 200). Everything for the community loop is built and committed (`9810b7a`); none of
+it is deployed yet. The next actions are all *yours* — they need logins I do not have.
 
 ---
 
@@ -12,9 +15,10 @@ evaluation tooling, specificity-tuning enablers).
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **242 tests**, synthetic fixtures, no dataset required; the 48-test
+- [x] **269 tests**, synthetic fixtures, no dataset required; the torch-free
       auth/storage/OOD/report/metrics subset runs without torch (verified on a
-      clean 3.13 interpreter)
+      clean 3.13 interpreter). Full suite re-run in the ROCm `.venv` after the
+      merge and the community work — all green.
 - [x] CI workflow (`.github/workflows/ci.yml`): ruff lint, torch-free fast tests,
       full suite on CPU torch — gates 1–2 stay local-only (GPU/dataset)
 - [x] `streamlit` in both requirements files; `rocm-sdk init` step documented in
@@ -128,21 +132,66 @@ evaluation tooling, specificity-tuning enablers).
       submissions can be used (label-0-only manifests behave exactly as before)
 - [x] HF Space config (`deploy/hf-space/`) — CPU torch, binds 0.0.0.0:7860
 - [x] Colab notebook cell to pull an approved batch
+- [x] Opt-in consent wired into `app.py` (default off, scoped per upload, not remembered)
+- [x] Feedback widget under the verdict; writes only untrusted columns
+- [x] Admin review queue in the sidebar, gated on `ONNM_ADMIN_KEY` — approving requires
+      choosing a label, there is deliberately no "approve as-is" button
+- [x] `auth.py` now imports from `backend`, so hosted accounts survive a Space restart
+      while PBKDF2 hashing stays the single tested implementation
+- [x] Invariant proved against the real schema: approving without a label, approving an
+      unshared row, and `admin_label='hotdog'` are all rejected by the database; a row
+      the user called `benign` and the reviewer called `normal` exports as `normal`
+- [x] Verified end-to-end locally: app serves HTTP 200 with the community client disabled
+      (degraded mode), i.e. a dead API cannot block inference
 
 ### Runs
-- [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**)
-- [x] `overnight-20260822-055132` — trained only
+- [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**,
+      val macro ROC-AUC 0.8905; this is what should be pinned as PRODUCTION)
+- [x] `overnight-20260822-055132` — trained only; **regressed** to 0.8629
+- [ ] `abl-ohem` / `abl-augs` — **running on Colab now.** No `reports/` directory has
+      appeared in `MyDrive/OSTEONEURALNETWORK/` yet, so the notebook's final
+      save-back cell has not run. Colab wipes `/content` on disconnect, so if the
+      session drops before that cell the results are gone — run it before closing
+      the tab.
 
 ---
 
 ## To do
 
+### Next — deploy the loop (all need logins I do not have)
+
+- [ ] **Deploy Cloudflare.** Every command is in `cloudflare/README.md`; ~10 minutes.
+      ```
+      cd cloudflare
+      npx wrangler login
+      npx wrangler d1 create onnm-community      # paste the id into wrangler.toml
+      npx wrangler d1 execute onnm-community --remote --file=./schema.sql
+      npx wrangler secret put API_KEY            # app key
+      npx wrangler secret put ADMIN_KEY          # your key, kept off the Space
+      npx wrangler deploy
+      ```
+      Do **not** add a payment method. With no card on the account Cloudflare cannot
+      bill — overage fails closed instead.
+- [ ] **Create the Hugging Face Space** (Streamlit SDK). Push the repo with the contents
+      of `deploy/hf-space/` at the root. Set `ONNM_COMMUNITY_URL` (variable) and
+      `ONNM_COMMUNITY_KEY` (secret). **Never set `ONNM_ADMIN_KEY` there** — that
+      separation is what stops a leaked app key approving its own training data.
+- [ ] **Get a checkpoint to the Space.** `*.pt` is gitignored and `best.pt` is 28 MB, so
+      the Space currently has no model. Two options, decision below.
+- [ ] **Pin the production checkpoint** — write `reports/PRODUCTION` naming
+      `full-20260822-041653`, not the overnight regression. The app auto-selects by mtime
+      otherwise, so the *worse* run would become the public default.
+- [ ] **Push `main`.** Commit `9810b7a` is local only.
+- [ ] **Correct `MODEL_CARD.md` before anyone signs up.** It is public and reads as a
+      performance claim. It must state malignant recall **0.633 [0.490–0.776]** — roughly
+      one in three cancers missed — and that Grad-CAM localisation has never been scored.
+- [ ] **Walk the loop once yourself, before inviting your friend.** Sign up → upload with
+      sharing ticked → flag the result wrong → review and label it in the sidebar →
+      `python scripts/export_batch.py --dry-run` → confirm the row appears with *your*
+      label, not the model's or the user's.
+
 ### Blocking — do these before trusting any result
 
-- [ ] **Re-run the full 242-test suite in the ROCm `.venv`.** The torch-free subset
-      (48 tests) and ruff pass on a clean interpreter; the torch-dependent rest
-      have not been re-run since the app-layer changes landed. `predict()` defaults
-      preserve old behavior by construction, but verify, don't assume.
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` has **0/15 cells
       executed**. Nobody has ever looked at the preprocessed images. Assertions verify
       shape; only eyes verify content. An inverted or mis-windowed film produces perfectly
@@ -245,6 +294,18 @@ evaluation tooling, specificity-tuning enablers).
 ---
 
 ## Decisions still owed by a human
+
+- **How the Space gets its 28 MB checkpoint.** Either `git lfs track "*.pt"` and commit it
+  into the Space repo (simplest, one place), or push it to a Hugging Face *model* repo and
+  have the Space fetch it with `huggingface_hub` (makes the model independently usable,
+  which is closer to "a model people can use", but adds a dependency and a second repo).
+- **Whether community data should ever reach val/test.** Currently pinned to `train` by
+  `export_batch.py`. That keeps every score comparable to the numbers in `overview.md`;
+  the cost is that community images never measure generalisation. Changing this would
+  invalidate cross-run comparisons, so it should be a deliberate decision, not a drift.
+- **Who counts as a reviewer.** `is_admin` exists in the schema but the review UI keys off
+  `ONNM_ADMIN_KEY` instead. Fine for one maintainer; needs revisiting if Yasmine or anyone
+  else reviews.
 
 - **Operating point.** 80% specificity → 78.3% sensitivity; 90% → 67.0%. The gap is ~6
   missed cancers per 49. Which constraint binds is a clinical policy call, not a modelling
