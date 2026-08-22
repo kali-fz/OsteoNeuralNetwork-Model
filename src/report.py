@@ -24,31 +24,60 @@ _CLASS_COLORS = {
     "malignant": "#c62828",
 }
 
+# Git-Design, mirrored from theme.py. The tokens are duplicated rather than
+# imported because this module is deliberately torch-free *and* Streamlit-free:
+# importing theme.py here would pull Streamlit into the report path and break
+# that. The two lists are short and change together.
 _STYLE = """
-  body { font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-         color: #1c1c1c; margin: 0; background: #f5f5f5; }
-  .page { max-width: 900px; margin: 0 auto; background: #fff; padding: 32px 40px; }
-  h1 { font-size: 1.35rem; margin: 0 0 2px; }
-  h2 { font-size: 1.05rem; margin: 26px 0 8px; border-bottom: 1px solid #e2e2e2;
-       padding-bottom: 4px; }
-  .meta { color: #666; font-size: 0.82rem; margin-bottom: 18px; }
-  .verdict { border-left: 6px solid var(--accent); background: var(--bg);
-             padding: 14px 18px; border-radius: 4px; margin: 18px 0; }
-  .verdict h2 { border: none; margin: 0; font-size: 1.25rem; color: var(--accent); }
-  .verdict p { margin: 4px 0 0; color: #444; }
+  :root {
+    --gd-bg:#e9edec; --gd-inset:#f2f5f3; --gd-white:#fff; --gd-ink:#000;
+    --gd-muted:#58635b; --gd-line:#b6bfb8; --gd-line-soft:#d2d9d4; --gd-green:#08872b;
+    --gd-sans:"Mona Sans","Avenir Next","Segoe UI",Arial,sans-serif;
+    --gd-mono:"Mona Sans Mono","SFMono-Regular",Consolas,monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: var(--gd-sans); color: var(--gd-ink); margin: 0;
+         background: var(--gd-bg); font-size: 16px; line-height: 1.5; }
+  .page { max-width: 900px; margin: 0 auto; background: var(--gd-white);
+          padding: 40px 48px; border-inline: 1px solid var(--gd-line-soft); }
+  h1 { font-size: 2.25rem; font-weight: 425; letter-spacing: -.03em;
+       line-height: 1.05; margin: 0 0 14px; }
+  h2 { font-size: 1.25rem; font-weight: 460; letter-spacing: -.01em;
+       margin: 34px 0 10px; border-bottom: 1px solid var(--gd-line);
+       padding-bottom: 8px; }
+  .meta { font-family: var(--gd-mono); font-size: 0.82rem; font-weight: 500;
+          color: var(--gd-muted); margin: 0 0 22px; padding-bottom: 16px;
+          border-bottom: 1px solid var(--gd-line); }
+  .signal { display: inline-block; width: 10px; height: 10px;
+            background: var(--gd-green); vertical-align: middle; margin-left: 4px; }
+  .verdict { border: 1px solid var(--gd-line); border-left: 8px solid var(--accent);
+             background: var(--gd-white); padding: 20px 24px; border-radius: 0;
+             margin: 22px 0; }
+  .verdict h2 { border: none; margin: 0; padding: 0; font-size: 1.75rem;
+                font-weight: 425; letter-spacing: -.02em; color: var(--accent); }
+  .verdict p { margin: 8px 0 0; font-family: var(--gd-mono); font-size: 0.82rem;
+               font-weight: 500; color: var(--gd-muted); }
   table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
-  td, th { text-align: left; padding: 6px 10px; border-bottom: 1px solid #ececec; }
-  .bar { height: 10px; border-radius: 5px; display: inline-block; vertical-align: middle; }
+  td, th { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--gd-line-soft); }
+  th { font-family: var(--gd-mono); font-size: 0.78rem; font-weight: 500;
+       letter-spacing: .04em; text-transform: uppercase; color: var(--gd-muted); }
+  .bar { height: 10px; border-radius: 0; display: inline-block; vertical-align: middle; }
   .images { display: flex; gap: 16px; flex-wrap: wrap; }
   .images figure { margin: 0; flex: 1 1 260px; }
-  .images img { width: 100%; border: 1px solid #ddd; border-radius: 4px; }
-  .images figcaption { font-size: 0.78rem; color: #666; margin-top: 4px; }
-  .disclaimer { background: #fdf3f3; border: 1px solid #e5b8b8; border-radius: 4px;
-                padding: 14px 18px; font-size: 0.82rem; white-space: pre-wrap; }
-  .footnote { color: #888; font-size: 0.75rem; margin-top: 22px; }
+  .images img { width: 100%; border: 1px solid var(--gd-line); border-radius: 0; }
+  .images figcaption { font-family: var(--gd-mono); font-size: 0.75rem;
+                       color: var(--gd-muted); margin-top: 6px; }
+  code { font-family: var(--gd-mono); background: var(--gd-inset);
+         border: 1px solid var(--gd-line-soft); padding: 1px 5px; font-size: 90%; }
+  .disclaimer { background: var(--gd-inset); border: 1px solid var(--gd-line);
+                border-left: 6px solid #c62828; border-radius: 0;
+                padding: 16px 20px; font-size: 0.82rem; white-space: pre-wrap; }
+  .footnote { font-family: var(--gd-mono); color: var(--gd-muted);
+              font-size: 0.72rem; margin-top: 26px; padding-top: 14px;
+              border-top: 1px solid var(--gd-line-soft); }
   @media print {
-    body { background: #fff; }
-    .page { max-width: none; padding: 0; }
+    body { background: var(--gd-white); }
+    .page { max-width: none; padding: 0; border-inline: 0; }
     .images figure { page-break-inside: avoid; }
   }
 """
@@ -101,11 +130,11 @@ def build_html_report(
     stamp = (generated_at or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M UTC")
 
     if inconclusive:
-        accent, background = "#b26a00", "rgba(224,168,0,0.10)"
+        accent = "#b26a00"
     elif verdict.lower().startswith("normal"):
-        accent, background = "#2e8b57", "rgba(46,139,87,0.08)"
+        accent = "#2e8b57"
     else:
-        accent, background = "#c62828", "rgba(198,40,40,0.08)"
+        accent = "#c62828"
 
     calibration_note = (
         f"temperature-scaled (T={temperature:.2f}), threshold {threshold:.3f} "
@@ -155,10 +184,10 @@ def build_html_report(
     file: <strong>{html.escape(filename)}</strong> ·
     generated {stamp} ·
     checkpoint <code>{html.escape(checkpoint_name)}</code> ·
-    onnm v{html.escape(app_version)}
+    onnm v{html.escape(app_version)}<span class="signal"></span>
   </div>
 
-  <div class="verdict" style="--accent:{accent}; --bg:{background};">
+  <div class="verdict" style="--accent:{accent};">
     <h2>{html.escape(verdict)}</h2>
     <p>{confidence_pct:.1f}% confidence · decided at a {threshold:.2f} lesion threshold</p>
   </div>

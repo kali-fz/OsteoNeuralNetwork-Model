@@ -66,6 +66,17 @@ from onnm.ood import (  # noqa: E402
 from onnm.utils import describe_device  # noqa: E402
 from report import build_html_report  # noqa: E402
 from storage import StorageError, delete_upload, is_user_file, save_upload  # noqa: E402
+from theme import (  # noqa: E402
+    INK,
+    LINE,
+    LINE_SOFT,
+    MONO,
+    MUTED,
+    WHITE,
+    inject_theme,
+    masthead,
+    verdict_card,
+)
 
 COLORMAPS = ["jet", "turbo", "inferno", "magma", "viridis", "hot"]
 
@@ -113,26 +124,34 @@ def probability_chart(probabilities: dict[str, float]):
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    sns.set_theme(style="whitegrid", rc={"axes.edgecolor": "#d0d0d0"})
+    # Chart chrome follows the Git-Design canvas -- transparent figure, hairline
+    # rules, monospaced ticks. The bar colours stay clinical: they encode
+    # malignancy, so they are not the design system's to recolour.
+    sns.set_theme(style="whitegrid", rc={"axes.edgecolor": LINE})
     names = list(probabilities)
     values = [100.0 * probabilities[n] for n in names]
     colors = [CLASS_COLORS.get(n, "#4c72b0") for n in names]
 
     fig, ax = plt.subplots(figsize=(6, 1.9), dpi=140)
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor(WHITE)
     bars = ax.barh(names[::-1], values[::-1], color=colors[::-1], height=0.62)
     ax.set_xlim(0, 100)
-    ax.set_xlabel("probability (%)", fontsize=9)
-    ax.tick_params(labelsize=9)
+    ax.set_xlabel("probability (%)", fontsize=9, color=MUTED)
+    ax.tick_params(labelsize=9, colors=INK)
     ax.grid(axis="y", visible=False)
+    ax.grid(axis="x", color=LINE_SOFT, linewidth=0.8)
 
     for bar, value in zip(bars, values[::-1], strict=True):
         ax.text(
             min(value + 1.5, 92), bar.get_y() + bar.get_height() / 2,
             f"{value:.1f}%", va="center", fontsize=9, fontweight="bold",
+            color=INK,
         )
 
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
+    ax.spines["bottom"].set_color(LINE)
     fig.tight_layout()
     return fig
 
@@ -286,30 +305,18 @@ def render_scan_history(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="ONNM — Bone Lesion Triage",
-    page_icon="🦴",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-      .block-container { padding-top: 2.2rem; max-width: 1400px; }
-      .verdict {
-        border-radius: 12px; padding: 1.1rem 1.4rem; margin-bottom: 0.6rem;
-        border-left: 8px solid var(--accent); background: var(--bg);
-      }
-      .verdict h2 { margin: 0; font-size: 1.55rem; color: var(--accent); }
-      .verdict p  { margin: 0.25rem 0 0; font-size: 0.92rem; opacity: 0.85; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# All presentation rules live in theme.py so the app and the exported case
+# report stay one visual system. Must follow set_page_config.
+inject_theme()
 
-st.title("🦴 OsteoNeuralNetwork-Model")
-st.caption(
-    f"Explainable bone-tumour triage on plain radiographs · v{__version__} · "
-    "runs locally, offline, at zero cost"
+masthead(
+    "OsteoNeuralNetwork-Model",
+    eyebrow="Explainable bone-tumour triage on plain radiographs",
+    meta=[f"v{__version__}", "Local", "Offline", "Zero cost"],
 )
 st.error(DISCLAIMER_SUMMARY)
 
@@ -466,7 +473,8 @@ with st.sidebar:
                 frame["fpr"] = 1.0 - frame["specificity"]
                 roc = (
                     alt.Chart(frame)
-                    .mark_line(point=True, interpolate="step-after")
+                    .mark_line(point=True, interpolate="step-after",
+                               color=INK, strokeWidth=1.5)
                     .encode(
                         x=alt.X("fpr:Q", title="1 − specificity",
                                 scale=alt.Scale(domain=[0, 1])),
@@ -488,7 +496,15 @@ with st.sidebar:
                     .mark_point(size=140, color="#c62828", filled=True)
                     .encode(x="fpr:Q", y="sensitivity:Q")
                 )
-                st.altair_chart(roc + marker, use_container_width=True)
+                # Match the page: transparent ground, hairline rules, mono ticks.
+                chart = (roc + marker).configure_view(
+                    strokeWidth=1, stroke=LINE
+                ).configure_axis(
+                    gridColor=LINE_SOFT, domainColor=LINE,
+                    tickColor=LINE, labelColor=MUTED,
+                    titleColor=INK, labelFont=MONO, titleFontWeight=500,
+                ).configure(background="transparent")
+                st.altair_chart(chart, use_container_width=True)
                 st.caption(
                     "Fitted on the validation split. The red point is the slider's "
                     "current operating point; hover the curve for the threshold behind "
@@ -675,12 +691,14 @@ else:
 result: InferenceResult = entry["result"]
 
 # -- Verdict ---------------------------------------------------------------
+# The card is white on a hairline rule now, so only the accent is needed: the
+# tinted fill it used to carry is not part of the Git-Design panel geometry.
 if result.inconclusive:
-    accent, background = "#b26a00", "rgba(224,168,0,0.10)"
+    accent = "#b26a00"
 elif result.is_lesion:
-    accent, background = "#c62828", "rgba(198,40,40,0.08)"
+    accent = "#c62828"
 else:
-    accent, background = "#2e8b57", "rgba(46,139,87,0.08)"
+    accent = "#2e8b57"
 
 if result.inconclusive:
     st.warning(
@@ -692,15 +710,11 @@ if result.inconclusive:
         "The raw probabilities are shown below; obtain a qualified read regardless."
     )
 
-st.markdown(
-    f"""
-    <div class="verdict" style="--accent:{accent}; --bg:{background};">
-      <h2>{result.label}</h2>
-      <p>{result.confidence:.1f}% confidence · decided at a {result.threshold:.2f}
-         lesion threshold</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+verdict_card(
+    result.label,
+    f"{result.confidence:.1f}% confidence · decided at a "
+    f"{result.threshold:.2f} lesion threshold",
+    accent,
 )
 
 left, right = st.columns([1, 1.25], gap="large")
@@ -805,7 +819,7 @@ with export_a:
         cam_class=result.cam_class,
     )
     st.download_button(
-        "Report (HTML → print to PDF)", report_html,
+        "Report (HTML, print to PDF)", report_html,
         file_name=f"{stem}_onnm_report.html", mime="text/html",
         use_container_width=True,
         help="Self-contained case report: verdict, probabilities, Grad-CAM overlay, "
