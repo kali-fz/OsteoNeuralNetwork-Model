@@ -28,7 +28,6 @@
 | Interface | Streamlit `>=1.42` | [Hosted demo](https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app) |
 | Persistence | Cloudflare Worker + D1 | Live count is intentionally read from the protected D1 health tag, not hard-coded here |
 
-> The current local Wrangler credentials point at a different Cloudflare account, so the protected live user counter could not be safely read while preparing this README. The deployment itself remains D1-backed; no user number has been guessed or fabricated.
 
 ## What this project is
 
@@ -114,8 +113,6 @@ For the full pipeline:
     <td align="center"><a href="https://github.com/Yaso-cyber"><img src="https://github.com/Yaso-cyber.png?size=96" width="72" height="72" style="border-radius:50%" alt="Yaso-cyber"><br><sub><b>Yaso-cyber</b></sub></a><br><sub>GRC</sub></td>
   </tr>
 </table>
-
-Only human repository contributors are listed here. AI tools are not contributors or co-authors.
 
 ## References
 
