@@ -1,0 +1,26 @@
+# Baseline experiment: ImageNet-pretrained DenseNet-121, 3-class triage.
+#
+#   python scripts/train.py --override configs/densenet121_3class.yaml
+#
+# Merged on top of configs/base.yaml, so only the deltas appear here.
+
+model:
+  name: densenet121
+  pretrained: true
+  dropout: 0.2
+
+loss:
+  name: focal
+  gamma: 2.0
+  auto_alpha: true
+
+train:
+  epochs: 40
+  lr: 0.0003          # conservative: fine-tuning pretrained features, not training them
+  weight_decay: 0.0001
+  warmup_epochs: 2
+  early_stopping_metric: malignant_recall
+  early_stopping_patience: 8
+
+loader:
+  batch_size: 32      # ~6 GB VRAM at 256px; the 7900 XT has 20 GB of headroom

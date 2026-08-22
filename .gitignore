@@ -1,0 +1,41 @@
+# --- Data (never commit: BTXRD is CC BY-NC-ND 4.0, ~840 MB) -----------------
+data/
+!data/.gitkeep
+
+# --- Run outputs ------------------------------------------------------------
+reports/
+runs/
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- Tooling ----------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Notebooks --------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- IDE / OS ---------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+desktop.ini

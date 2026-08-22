@@ -1,0 +1,23 @@
+# Local GPU stack: AMD Radeon RX 7900 XT (gfx1100) on Windows 11.
+#
+# PREREQUISITES -- verify both before installing:
+#   1. AMD graphics driver >= 26.2.2  (Adrenalin -> Settings -> System -> Software)
+#   2. Python 3.12 exactly. These wheels are cp312-only; 3.11 or 3.13 will not resolve.
+#
+# Install order matters -- the ROCm SDK must land before torch.
+#
+#   python -m pip install -r requirements-rocm.txt
+#   python -m pip install -e ".[dev]"
+#
+# Then gate on: python scripts/verify_env.py
+
+# --- Step 1: ROCm 7.2.1 runtime -------------------------------------------
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
+
+# --- Step 2: PyTorch built against ROCm 7.2.1 -----------------------------
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl

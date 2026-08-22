@@ -1,0 +1,27 @@
+# Fallback GPU stack: Kaggle Notebooks (T4 x2 / P100) or Google Colab.
+#
+# Both platforms ship a working CUDA torch already, so DO NOT reinstall it --
+# doing so routinely breaks the preinstalled CUDA libraries. Install only the
+# project layer:
+#
+#   !pip install -q monai==1.5.2 pydicom
+#   !pip install -q -e /kaggle/working/OsteoNeuralNetwork-Model
+#
+# This file exists so a non-Kaggle CUDA box can reproduce the same environment.
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.9.1
+torchvision==0.24.1
+
+monai==1.5.2
+pydicom>=2.4
+numpy>=1.26
+pandas>=2.1
+pillow>=10.0
+opencv-python-headless>=4.9
+scikit-image>=0.22
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+pyyaml>=6.0
+tqdm>=4.66

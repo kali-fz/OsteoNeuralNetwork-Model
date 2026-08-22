@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onnm"
+version = "0.1.0"
+description = "OsteoNeuralNetwork-Model: explainable detection of primary bone tumors on plain radiographs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# NOTE: torch / torchvision are deliberately NOT listed here. They must be
+# installed first from a platform-specific index -- see requirements-rocm.txt
+# (local AMD Windows) or requirements-cuda.txt (Kaggle / Colab). Listing them
+# here would let pip silently pull a CPU-only build over the ROCm one.
+dependencies = [
+    "monai==1.5.2",
+    "pydicom>=2.4",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "openpyxl>=3.1",          # BTXRD ships dataset.xlsx, not a CSV
+    "pillow>=10.0",
+    "opencv-python-headless>=4.9",
+    "scikit-image>=0.22",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.5"]
+vit = ["timm>=1.0"]
+# Local web UI (`streamlit run app.py`). Apache-2.0, runs a server on localhost
+# only; kept optional so the training stack does not drag in a web framework.
+app = ["streamlit>=1.40"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    # MONAI 1.5.2 warns against torch 2.9.x; expected and benign.
+    "ignore::UserWarning:monai.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

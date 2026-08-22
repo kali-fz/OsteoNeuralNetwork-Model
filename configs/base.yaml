@@ -1,0 +1,174 @@
+# ONNM base configuration.
+#
+# Override any key with a second YAML file:
+#   python scripts/train.py --config configs/base.yaml --override configs/densenet121_3class.yaml
+# Or apply a named profile from the `profiles:` block below:
+#   python scripts/train.py --profile kaggle
+#
+# Every column name here was read off the real BTXRD release by
+# `scripts/verify_data.py --dump-schema`, not assumed. Two surprises worth
+# knowing about if you diff this against the paper:
+#   * the metadata table ships as dataset.xlsx (Excel), not dataset.csv
+#   * the diagnosis is stored as one-hot indicator columns, not one label column
+
+seed: 1337
+
+paths:
+  data_root: data/raw/BTXRD
+  images_dirname: images
+  annotations_dirname: Annotations      # capitalised in the release
+  table_name: dataset.xlsx              # Excel, not CSV
+  table_sheet: 0
+  splits_file: data/interim/splits.json
+  cache_dir: data/cache
+  reports_dir: reports
+
+# ---------------------------------------------------------------------------
+# Labels.
+#
+# BTXRD has no categorical diagnosis column. It has indicator columns, and the
+# three that define this task nest exactly:
+#   tumor=0                -> normal      (1879)
+#   tumor=1, benign=1      -> benign      (1525)
+#   tumor=1, malignant=1   -> malignant   ( 342)
+# Those counts reproduce the published distribution exactly, so the derivation
+# is verified rather than inferred. `verify_data.py` re-checks it on every run.
+# ---------------------------------------------------------------------------
+labels:
+  classes: [normal, benign, malignant]
+  id_column: image_id                   # values look like "IMG000001.jpeg"
+  tumor_column: tumor
+  # Checked in order; the first column holding 1 assigns the class. Malignant is
+  # first so that a row flagged both ways is treated as the more serious call --
+  # under-calling a cancer is the costlier error.
+  class_columns:
+    - column: malignant
+      class: malignant
+    - column: benign
+      class: benign
+  # Recorded for stratified reporting; not used to assign the coarse class.
+  # Note the release has no separate Ewing sarcoma or chondrosarcoma column --
+  # both are folded into "other mt".
+  subtype_columns:
+    benign:
+      - osteochondroma
+      - multiple osteochondromas
+      - simple bone cyst
+      - giant cell tumor
+      - osteofibroma
+      - synovial osteochondroma
+      - other bt
+    malignant:
+      - osteosarcoma
+      - other mt
+
+# Column groups reused by the splitter and by reporting.
+columns:
+  anatomy:
+    [hand, ulna, radius, humerus, foot, tibia, fibula, femur, hip bone,
+     ankle-joint, knee-joint, hip-joint, wrist-joint, elbow-joint,
+     shoulder-joint, upper limb, lower limb, pelvis]
+  view: [frontal, lateral, oblique]
+  demographic: [center, age, gender]
+
+# ---------------------------------------------------------------------------
+# Split strategy.
+#
+# BTXRD ships no patient identifier, but the images are clearly not independent:
+# 2826 of 3746 sit in runs of consecutive ids that share centre, age, sex,
+# anatomy and diagnosis while differing in view -- multiple projections of one
+# patient. Splitting per image would scatter those siblings across train and
+# test, and the resulting score would measure memorisation.
+#
+# `surrogate_patient` reconstructs the grouping from that structure. It is a
+# heuristic: it can merge two genuinely distinct patients who happen to be
+# adjacent and identical on every recorded field. That direction of error is the
+# safe one -- it only removes training data, never inflates the test score.
+# ---------------------------------------------------------------------------
+split:
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  group_strategy: surrogate_patient     # surrogate_patient | image
+  require_consecutive_ids: true
+  stratify: true
+
+data:
+  image_size: 256
+  # 3 channels so ImageNet-pretrained backbones can be used. With only 342
+  # malignant cases, transfer learning is not optional.
+  in_channels: 3
+  intensity_percentiles: [1.0, 99.0]
+  norm_mean: [0.485, 0.456, 0.406]
+  norm_std: [0.229, 0.224, 0.225]
+
+augment:
+  hflip_prob: 0.5        # horizontal only; a vertical flip is anatomically impossible
+  rotate_prob: 0.3
+  rotate_degrees: 10.0
+  zoom_prob: 0.3
+  zoom_range: [0.9, 1.1]
+  contrast_prob: 0.3
+  gamma_range: [0.7, 1.5]
+  noise_prob: 0.2
+  noise_std: 0.01
+
+loader:
+  batch_size: 32
+  # Windows spawns (not forks) workers, so each one duplicates the cache and
+  # can exhaust RAM. With cache_rate=1.0 the workers have nothing to do anyway.
+  num_workers: 0
+  cache_rate: 1.0
+  pin_memory: true
+  persistent_workers: false
+  drop_last_train: true
+
+model:
+  name: densenet121
+  pretrained: true
+  num_classes: 3
+  dropout: 0.2
+
+loss:
+  name: focal          # focal | weighted_ce | ce
+  gamma: 2.0
+  auto_alpha: true     # inverse-frequency alpha from the TRAIN split only
+  label_smoothing: 0.0
+
+train:
+  epochs: 40
+  lr: 0.0003
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine
+  warmup_epochs: 2
+  amp: true
+  amp_dtype: bfloat16   # bf16 on RDNA3 avoids GradScaler entirely and is safer than fp16
+  grad_clip: 1.0
+  early_stopping_metric: malignant_recall   # not loss
+  early_stopping_patience: 8
+
+eval:
+  bootstrap_n: 2000     # ~51 malignant test images -> point estimates need CIs
+  bootstrap_alpha: 0.05
+  target_sensitivity: 0.90   # operating point chosen on val, reported on test
+
+explain:
+  method: gradcam       # gradcam | gradcampp
+  target_layer: features.denseblock4
+  cam_threshold: 0.5
+
+profiles:
+  kaggle:
+    loader:
+      num_workers: 2
+      cache_rate: 0.0     # real fork semantics, but less RAM
+      persistent_workers: true
+    paths:
+      data_root: /kaggle/input/btxrd/BTXRD
+  smoke:
+    loader:
+      batch_size: 8
+      cache_rate: 0.0
+    train:
+      epochs: 1

@@ -1,0 +1,24 @@
+# Defaults for `streamlit run app.py`, so the zero-argument launch is the safe one.
+
+[server]
+# Streamlit binds 0.0.0.0 out of the box and prints a "Network URL" and an
+# "External URL" -- on a LAN, and behind a forwarding router, that makes an
+# uploaded radiograph reachable by other machines. This app handles medical
+# images and is specified to run locally, so it binds loopback only.
+address = "localhost"
+port = 8501
+headless = true          # do not auto-open a browser; the terminal prints the URL
+maxUploadSize = 400      # MB. Uncompressed 16-bit DICOM gets large.
+fileWatcherType = "auto"
+
+[browser]
+# Usage stats are an outbound network call. "Runs entirely offline" has to mean
+# it, and a radiograph viewer is the wrong place to make an exception.
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#c62828"
+
+[runner]
+fastReruns = true
