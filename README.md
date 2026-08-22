@@ -28,6 +28,15 @@
 | Interface | Streamlit `>=1.42` | [Hosted demo](https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app) |
 | Persistence | Cloudflare Worker + D1 | Live count is intentionally read from the protected D1 health tag, not hard-coded here |
 
+## Contributors
+
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/kali-fz"><img src="https://github.com/kali-fz.png?size=96" width="72" height="72" style="border-radius:50%" alt="kali-fz"><br><sub><b>kali-fz</b></sub></a><br><sub>Project lead</sub></td>
+    <td align="center"><a href="https://github.com/umfhero"><img src="https://github.com/umfhero.png?size=96" width="72" height="72" style="border-radius:50%" alt="umfhero"><br><sub><b>umfhero</b></sub></a><br><sub>AI Assistant</sub></td>
+    <td align="center"><a href="https://github.com/Yaso-cyber"><img src="https://github.com/Yaso-cyber.png?size=96" width="72" height="72" style="border-radius:50%" alt="Yaso-cyber"><br><sub><b>Yaso-cyber</b></sub></a><br><sub>GRC</sub></td>
+  </tr>
+</table>
 
 ## What this project is
 
@@ -103,16 +112,6 @@ For the full pipeline:
 .venv\Scripts\python.exe scripts\calibrate.py --checkpoint reports\full-<timestamp>\best.pt --sweep
 .venv\Scripts\python.exe scripts\evaluate.py --checkpoint reports\full-<timestamp>\best.pt
 ```
-
-## Contributors
-
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/kali-fz"><img src="https://github.com/kali-fz.png?size=96" width="72" height="72" style="border-radius:50%" alt="kali-fz"><br><sub><b>kali-fz</b></sub></a><br><sub>Project lead</sub></td>
-    <td align="center"><a href="https://github.com/umfhero"><img src="https://github.com/umfhero.png?size=96" width="72" height="72" style="border-radius:50%" alt="umfhero"><br><sub><b>umfhero</b></sub></a><br><sub>AI Assistant</sub></td>
-    <td align="center"><a href="https://github.com/Yaso-cyber"><img src="https://github.com/Yaso-cyber.png?size=96" width="72" height="72" style="border-radius:50%" alt="Yaso-cyber"><br><sub><b>Yaso-cyber</b></sub></a><br><sub>GRC</sub></td>
-  </tr>
-</table>
 
 ## References
 
