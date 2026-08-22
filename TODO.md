@@ -12,7 +12,7 @@ evaluation tooling, specificity-tuning enablers).
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **230 tests**, synthetic fixtures, no dataset required; the 48-test
+- [x] **242 tests**, synthetic fixtures, no dataset required; the 48-test
       auth/storage/OOD/report/metrics subset runs without torch (verified on a
       clean 3.13 interpreter)
 - [x] CI workflow (`.github/workflows/ci.yml`): ruff lint, torch-free fast tests,
@@ -21,6 +21,8 @@ evaluation tooling, specificity-tuning enablers).
       `requirements-rocm.txt` with its failure symptom
 - [x] Notebook lint clean (`E501`/`B905`/`I001` fixed; `E402` per-file-ignored — the
       `sys.path` bootstrap must precede imports); `ruff check .` is 0 errors repo-wide
+- [x] `.env` added to `.gitignore` — it was fully committable before, and holds
+      API keys and backend credentials
 - [x] Diagnosed the MIOpen training-BatchNorm defect; workaround `train.miopen: false`
 - [x] `verify_env.py` gate 1 now runs a real train-mode forward/backward, so that
       defect is caught in seconds rather than 40 minutes into a run
@@ -94,6 +96,24 @@ evaluation tooling, specificity-tuning enablers).
 - [x] **`configs/specificity_tuning.yaml`**: 320px + `alpha_beta 0.5` + 3-epoch freeze
       profile, ready to run on the GPU box
 
+### Portability & Colab
+- [x] `configure_backend` no longer disables cuDNN on CUDA. `train.miopen: false` is a
+      ROCm-only workaround, but it sets the *same* torch flag on both backends, so every
+      Colab run reusing `full_run.yaml` or `overnight.yaml` would have trained with cuDNN
+      off — silently, and at several times the cost
+- [x] bf16 capability check + `GradScaler`. Colab's free T4 (sm_75) has no bf16 at all, and
+      the loop had no scaler because bf16 never needs one. `resolve_amp_dtype` falls back to
+      fp16 loudly; the scaler is enabled only for fp16, so the local bf16 path is unchanged
+- [x] Effective AMP dtype recorded in the run result — a run that claims bf16 when fp16
+      happened is not comparable to one that means it
+- [x] `colab` profile (no `paths:` block — `verify_data.py` and `make_splits.py` take no
+      `--profile`, so moving `data_root` there would desynchronise training from its gates)
+- [x] `configs/ablations/ohem_only.yaml` and `augs_only.yaml` — one variable each
+- [x] `notebooks/colab_train.ipynb`
+- [x] Dataset staged to Drive: `BTXRD.zip` (0.84 GB, 5614 entries, CRC-verified,
+      3746 images) + `splits.json` (`content_hash db908a9afdc5d085`, asserted by the
+      notebook so a Colab run cannot silently use a different partition)
+
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**)
 - [x] `overnight-20260822-055132` — trained only
@@ -104,7 +124,7 @@ evaluation tooling, specificity-tuning enablers).
 
 ### Blocking — do these before trusting any result
 
-- [ ] **Re-run the full 230-test suite in the ROCm `.venv`.** The torch-free subset
+- [ ] **Re-run the full 242-test suite in the ROCm `.venv`.** The torch-free subset
       (48 tests) and ruff pass on a clean interpreter; the torch-dependent rest
       have not been re-run since the app-layer changes landed. `predict()` defaults
       preserve old behavior by construction, but verify, don't assume.
@@ -134,9 +154,10 @@ evaluation tooling, specificity-tuning enablers).
 - [ ] **Calibrate + evaluate the overnight checkpoint.** It has no `calibration.json` and
       no `metrics_test.json`, so the comparison against `full` is val-ROC-only.
 - [ ] **Ablate the overnight regression** (0.863 vs 0.891 macro ROC-AUC). Two suspects,
-      confounded because they were changed together. Run them separately:
-      - aggressive augmentation alone (OHEM off)
-      - OHEM alone (augmentation at `full_run` strength)
+      confounded because they were changed together. **Configs and notebook are ready** —
+      run `notebooks/colab_train.ipynb` cells 9 and 10:
+      - `configs/ablations/augs_only.yaml` — aggressive augmentation alone (OHEM off)
+      - `configs/ablations/ohem_only.yaml` — OHEM alone (augmentation at `full_run` strength)
       ROC-AUC is threshold-independent, so this is a genuine loss of ranking quality — it
       cannot be recovered by tuning the threshold.
 - [ ] **Consider lowering OHEM penalty or raising `warmup_epochs`.** Malignant recall fell

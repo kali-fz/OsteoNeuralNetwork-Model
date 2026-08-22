@@ -319,6 +319,37 @@ profiles:
       persistent_workers: true
     paths:
       data_root: /kaggle/input/btxrd/BTXRD
+  # Google Colab free tier. Three of these settings are load-bearing rather than
+  # preferences, and each corrects something that would otherwise fail quietly:
+  #
+  #   train.miopen: true    -- full_run.yaml and overnight.yaml both set this
+  #     false to dodge a ROCm-Windows defect. configure_backend now ignores the
+  #     flag on CUDA builds, but stating it here keeps the intent legible in the
+  #     run record rather than relying on that rescue.
+  #   train.amp_dtype       -- the free tier is a T4 (Turing, sm_75) with no
+  #     bf16 at all. resolve_amp_dtype detects this and falls back anyway; being
+  #     explicit means the config and the run agree. On an L4/A100 runtime,
+  #     delete this line to get bf16 back.
+  #   loader.cache_rate: 0  -- the free runtime has ~12.7 GB RAM. Caching 2675
+  #     decoded images alongside two forked workers does not fit.
+  #
+  # Deliberately no `paths:` block. verify_data.py and make_splits.py take no
+  # --profile flag, so a profile that moved data_root would apply to training
+  # but not to the gates that check the data -- they would silently look
+  # somewhere else. The notebook symlinks the dataset into the default location
+  # instead, which keeps every script working unmodified.
+  colab:
+    loader:
+      num_workers: 2
+      cache_rate: 0.0
+      persistent_workers: true
+    train:
+      miopen: true
+      amp_dtype: float16
+    thermal:
+      enabled: false        # AMD ADL only, and Google manages cooling regardless.
+                            # The governor already no-ops without the DLL; this
+                            # just keeps the log honest.
   smoke:
     loader:
       batch_size: 8

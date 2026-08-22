@@ -1,0 +1,43 @@
+# Ablation A: OHEM alone, augmentation back at full_run strength.
+#
+#   --override configs/densenet121_3class.yaml
+#   --override configs/overnight.yaml
+#   --override configs/ablations/ohem_only.yaml
+#   --profile colab --tag abl-ohem
+#
+# WHY THIS EXISTS
+# ---------------
+# The overnight run scored 0.8629 macro ROC-AUC against the full run's 0.8905.
+# ROC-AUC is threshold-independent, so that is a genuine loss of ranking
+# quality, not a bias shift that a threshold could recover. Two things changed
+# between those runs at the same time -- aggressive augmentation and OHEM -- so
+# neither can be blamed. This pair of files separates them.
+#
+# Read alongside configs/ablations/augs_only.yaml. Between them, exactly one
+# variable differs from `overnight`, which is the whole point.
+
+# Restore full_run's augmentation. overnight.yaml zeroed rotate and zoom because
+# RandAffine subsumes them (invariant 8: stacking all three interpolates twice
+# and blurs the trabecular texture the model reads). Turning affine back off
+# therefore means turning rotate and zoom back ON -- otherwise this run would
+# have almost no geometric augmentation at all, which is a third condition
+# rather than the one being tested.
+augment:
+  rotate_prob: 0.5
+  rotate_degrees: 15.0
+  zoom_prob: 0.3
+  zoom_range: [0.9, 1.1]
+
+  affine_prob: 0.0
+  dropout_prob: 0.0
+  histogram_prob: 0.0
+
+  # Unchanged from base/full_run, restated so the effective setting is visible
+  # here rather than three files away.
+  hflip_prob: 0.5
+  contrast_prob: 0.5
+  gamma_range: [0.5, 2.0]
+  noise_prob: 0.3
+  noise_std: 0.01
+
+# OHEM stays exactly as overnight.yaml set it -- this is the variable under test.

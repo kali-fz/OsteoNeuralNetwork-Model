@@ -71,15 +71,23 @@ def _safe_original_filename(filename: str) -> str:
     return sanitized or "radiograph"
 
 
-def _validated_user_directory(user_id: str, root: str | Path | None = None) -> Path:
+def _expected_user_directory(user_id: str, root: str | Path | None = None) -> Path:
+    """Validate ``user_id`` and return the directory it would own, touching nothing.
+
+    Read-only counterpart of :func:`_validated_user_directory` for authorization
+    checks: no mkdir, no chmod.
+    """
     try:
         canonical_id = str(uuid.UUID(user_id))
     except (ValueError, TypeError) as exc:
         raise StorageError("Invalid account identifier.") from exc
+    return Path(root or DEFAULT_UPLOAD_ROOT).resolve() / canonical_id
 
-    upload_root = Path(root or DEFAULT_UPLOAD_ROOT).resolve()
+
+def _validated_user_directory(user_id: str, root: str | Path | None = None) -> Path:
+    user_directory = _expected_user_directory(user_id, root)
+    upload_root = user_directory.parent
     upload_root.mkdir(parents=True, exist_ok=True)
-    user_directory = upload_root / canonical_id
     user_directory.mkdir(mode=0o700, parents=False, exist_ok=True)
     _secure_permissions(upload_root, 0o700)
     _secure_permissions(user_directory, 0o700)
@@ -196,8 +204,10 @@ def delete_upload(path: str | Path) -> None:
 
 
 def is_user_file(user_id: str, path: str | Path, root: str | Path | None = None) -> bool:
+    # Pure authorization predicate: must not create or chmod anything, so it
+    # computes the expected directory instead of materialising it.
     try:
-        user_directory = _validated_user_directory(user_id, root).resolve()
+        user_directory = _expected_user_directory(user_id, root)
         Path(path).resolve().relative_to(user_directory)
         return Path(path).is_file()
     except (OSError, ValueError, StorageError):
