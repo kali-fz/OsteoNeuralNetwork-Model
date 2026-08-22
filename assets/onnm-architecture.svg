@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960" role="img" aria-labelledby="title desc">
+  <title id="title">ONNM system architecture</title>
+  <desc id="desc">Architecture map showing a user uploading a radiograph to the Streamlit application, the application calling the local ONNM inference engine, and an optional consented community path through a Cloudflare Worker into D1 for human review.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2f7"/></linearGradient>
+    <linearGradient id="host" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e0f2fe"/><stop offset="1" stop-color="#f0fdfa"/></linearGradient>
+    <linearGradient id="model" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f5f3ff"/><stop offset="1" stop-color="#faf5ff"/></linearGradient>
+    <linearGradient id="data" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ecfdf5"/><stop offset="1" stop-color="#f7fee7"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#64748b" flood-opacity=".18"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#475569"/></marker>
+    <marker id="optionalArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#7c3aed"/></marker>
+    <style>
+      .ink{fill:#172033}.muted{fill:#64748b}.heading{font:700 31px system-ui,-apple-system,Segoe UI,sans-serif}.subheading{font:600 22px system-ui,-apple-system,Segoe UI,sans-serif}.body{font:500 19px system-ui,-apple-system,Segoe UI,sans-serif}.small{font:500 16px system-ui,-apple-system,Segoe UI,sans-serif}.micro{font:700 14px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.12em}.line{fill:none;stroke:#475569;stroke-width:3;marker-end:url(#arrow)}.optional{fill:none;stroke:#7c3aed;stroke-width:3;stroke-dasharray:10 10;marker-end:url(#optionalArrow)}.box{stroke-width:2.5}.pill{font:600 15px system-ui,-apple-system,Segoe UI,sans-serif}.icon{stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+  </defs>
+
+  <rect width="1600" height="960" rx="26" fill="url(#canvas)"/>
+  <text x="70" y="72" class="micro muted">OSTEONEURALNETWORK-MODEL / ARCHITECTURE</text>
+  <text x="70" y="120" class="heading ink">A research loop, not a black box</text>
+  <text x="70" y="153" class="body muted">Inference runs with the app. Only an explicit opt-in opens the community review path.</text>
+
+  <!-- Hosted application boundary -->
+  <g filter="url(#shadow)">
+    <rect x="500" y="205" width="680" height="285" rx="28" fill="url(#host)" stroke="#0f766e" class="box"/>
+    <text x="540" y="250" class="micro" fill="#0f766e">HOSTED APPLICATION</text>
+    <text x="540" y="294" class="heading ink">Streamlit research interface</text>
+    <text x="540" y="327" class="body muted">Google OIDC · upload validation · legal consent · result presentation</text>
+    <rect x="540" y="363" width="275" height="83" rx="16" fill="#fff" stroke="#38bdf8" stroke-width="2"/>
+    <text x="565" y="397" class="subheading ink">Upload + validate</text><text x="565" y="425" class="small muted">DICOM / PNG / JPEG / TIFF</text>
+    <rect x="845" y="363" width="295" height="83" rx="16" fill="#fff" stroke="#14b8a6" stroke-width="2"/>
+    <text x="870" y="397" class="subheading ink">Verdict + explanation</text><text x="870" y="425" class="small muted">probabilities · Grad-CAM</text>
+  </g>
+
+  <!-- User -->
+  <g filter="url(#shadow)">
+    <rect x="1300" y="222" width="230" height="250" rx="24" fill="#fff" stroke="#94a3b8" class="box"/>
+    <circle cx="1415" cy="287" r="38" fill="#e2e8f0" stroke="#64748b" stroke-width="3"/>
+    <path d="M1354 405c12-52 110-52 122 0" fill="#e2e8f0" stroke="#64748b" stroke-width="3"/>
+    <text x="1415" y="448" text-anchor="middle" class="subheading ink">User</text>
+    <text x="1415" y="505" text-anchor="middle" class="small muted">uploads a radiograph</text>
+  </g>
+
+  <!-- Local inference engine -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="210" width="310" height="355" rx="26" fill="url(#model)" stroke="#7c3aed" class="box"/>
+    <text x="108" y="252" class="micro" fill="#7c3aed">LOCAL INFERENCE</text>
+    <text x="108" y="300" class="heading ink">ONNM</text>
+    <text x="108" y="333" class="body muted">Explainable model engine</text>
+    <path d="M115 410c25-37 62-37 87 0v65c-25 37-62 37-87 0z" fill="none" stroke="#7c3aed" stroke-width="4"/>
+    <path d="M147 389v102M115 430H88M202 430h28M115 460H88M202 460h28" class="icon" stroke="#7c3aed"/>
+    <circle cx="82" cy="430" r="6" fill="#7c3aed"/><circle cx="236" cy="430" r="6" fill="#7c3aed"/><circle cx="82" cy="460" r="6" fill="#7c3aed"/><circle cx="236" cy="460" r="6" fill="#7c3aed"/>
+    <text x="108" y="528" class="small muted">DenseNet-121 · 3 classes</text>
+    <text x="108" y="553" class="small muted">OOD gate · calibrated output</text>
+  </g>
+
+  <!-- Persistent community layer -->
+  <g filter="url(#shadow)">
+    <rect x="500" y="650" width="680" height="190" rx="26" fill="url(#data)" stroke="#15803d" class="box"/>
+    <text x="540" y="695" class="micro" fill="#15803d">OPTIONAL COMMUNITY LOOP</text>
+    <text x="540" y="738" class="heading ink">Cloudflare Worker + D1</text>
+    <text x="540" y="771" class="body muted">authenticated API · consented image · review queue</text>
+    <rect x="540" y="795" width="190" height="38" rx="19" fill="#dcfce7"/><text x="635" y="820" text-anchor="middle" class="pill" fill="#166534">de-identified</text>
+    <rect x="750" y="795" width="175" height="38" rx="19" fill="#ede9fe"/><text x="837" y="820" text-anchor="middle" class="pill" fill="#6d28d9">human labelled</text>
+    <rect x="945" y="795" width="195" height="38" rx="19" fill="#fef3c7"/><text x="1042" y="820" text-anchor="middle" class="pill" fill="#92400e">training candidate</text>
+  </g>
+
+  <!-- Clear, non-crossing connectors -->
+  <path class="line" d="M1300 340H1180"/>
+  <text x="1240" y="302" text-anchor="middle" class="small muted">radiograph</text>
+  <text x="1240" y="322" text-anchor="middle" class="small muted">upload</text>
+
+  <path class="line" d="M380 385H500"/>
+  <text x="440" y="360" text-anchor="middle" class="small muted">model input</text>
+
+  <path class="line" d="M500 455H380"/>
+  <text x="440" y="483" text-anchor="middle" class="small muted">prediction</text>
+  <text x="440" y="503" text-anchor="middle" class="small muted">+ heatmap</text>
+
+  <path class="line" d="M1180 425H1240V425H1300"/>
+  <text x="1240" y="465" text-anchor="middle" class="small muted">display result</text>
+
+  <path class="optional" d="M920 490V570H840V650"/>
+  <text x="955" y="570" class="small" fill="#6d28d9">only after consent</text>
+
+  <path class="optional" d="M500 735H440V565H380"/>
+  <text x="430" y="610" text-anchor="middle" class="small" fill="#6d28d9">review feedback</text>
+
+  <!-- Legend -->
+  <g>
+    <rect x="70" y="665" width="310" height="175" rx="22" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="108" y="710" class="micro muted">READING THE MAP</text>
+    <path d="M108 745h72" class="line"/><text x="198" y="751" class="small muted">request / result</text>
+    <path d="M108 783h72" class="optional"/><text x="198" y="789" class="small muted">optional feedback</text>
+    <rect x="108" y="810" width="16" height="16" rx="4" fill="#dcfce7" stroke="#15803d"/><text x="140" y="824" class="small muted">persistent storage</text>
+  </g>
+
+  <text x="70" y="920" class="small muted">Research prototype · not a medical device · every radiograph requires qualified clinical review</text>
+</svg>
