@@ -3,7 +3,7 @@
 Companion to `overview.md`. Checked items are verified done, not assumed.
 Last audited: 2026-08-22 (community feedback loop + hosting pass).
 
-**Current state:** 269 tests green in the ROCm `.venv`, repo-wide ruff clean, app boots
+**Current state:** 277 tests green in the ROCm `.venv`, repo-wide ruff clean, app boots
 (HTTP 200). Everything for the community loop is built and committed (`9810b7a`); none of
 it is deployed yet. The next actions are all *yours* — they need logins I do not have.
 
@@ -15,7 +15,7 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
 - [x] Python 3.12 `.venv`, ROCm 7.2.1 stack on RX 7900 XT (`torch 2.9.1+rocm7.2.1`)
 - [x] Package layout `src/onnm/`, editable install, ruff + pytest config
 - [x] YAML config system with deep-merge overrides and named profiles
-- [x] **269 tests**, synthetic fixtures, no dataset required; the torch-free
+- [x] **277 tests**, synthetic fixtures, no dataset required; the torch-free
       auth/storage/OOD/report/metrics subset runs without torch (verified on a
       clean 3.13 interpreter). Full suite re-run in the ROCm `.venv` after the
       merge and the community work — all green.
@@ -143,6 +143,13 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
       the user called `benign` and the reviewer called `normal` exports as `normal`
 - [x] Verified end-to-end locally: app serves HTTP 200 with the community client disabled
       (degraded mode), i.e. a dead API cannot block inference
+- [x] `requirements.txt` at repo root (CPU torch) — Streamlit Community Cloud reads only
+      that path; installing it locally would replace the ROCm build, so it says so
+- [x] `src/checkpoint_fetch.py` — boot-time checkpoint download, verifies torch zip magic
+      so a CDN 404 returning an HTML page is refused rather than written to `best.pt`
+- [x] Fixed a case-collision bug found by its own test: a run directory named
+      `production` and the `reports/PRODUCTION` marker are the same path on Windows and
+      macOS, so writing the marker opened a directory as a file. Default run is `hosted`.
 
 ### Runs
 - [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**,
@@ -172,19 +179,30 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
       ```
       Do **not** add a payment method. With no card on the account Cloudflare cannot
       bill — overage fails closed instead.
-- [ ] **Create the Hugging Face Space** (Streamlit SDK). Push the repo with the contents
-      of `deploy/hf-space/` at the root. Set `ONNM_COMMUNITY_URL` (variable) and
-      `ONNM_COMMUNITY_KEY` (secret). **Never set `ONNM_ADMIN_KEY` there** — that
-      separation is what stops a leaked app key approving its own training data.
-- [ ] **Get a checkpoint to the Space.** `*.pt` is gitignored and `best.pt` is 28 MB, so
-      the Space currently has no model. Two options, decision below.
-- [ ] **Pin the production checkpoint** — write `reports/PRODUCTION` naming
-      `full-20260822-041653`, not the overnight regression. The app auto-selects by mtime
-      otherwise, so the *worse* run would become the public default.
+- [ ] **Deploy to Streamlit Community Cloud** — <https://share.streamlit.io>, sign in
+      with GitHub, main file `app.py`. Full instructions in
+      `deploy/streamlit-cloud/README.md`. Free, 2.7 GB RAM, redeploys on push.
+      **Hugging Face Spaces is no longer viable:** Gradio and Docker Spaces now require
+      PRO and Streamlit is not offered at all; only Static (client-side, no Python)
+      remains free. `deploy/hf-space/` has been removed.
+- [ ] **Host the 28 MB checkpoint somewhere fetchable** and set `ONNM_CHECKPOINT_URL`
+      (+ `ONNM_CALIBRATION_URL`). `reports/` is gitignored so a clone has no model;
+      `src/checkpoint_fetch.py` downloads one at boot and pins it. A Hugging Face
+      *model* repo is free even though compute Spaces are not, and makes the model
+      independently usable; GitHub Releases also works.
+- [ ] **Point it at `full-20260822-041653`**, not the overnight regression — set
+      `ONNM_CHECKPOINT_RUN` accordingly, or write `reports/PRODUCTION` locally.
 - [ ] **Push `main`.** Commit `9810b7a` is local only.
-- [ ] **Correct `MODEL_CARD.md` before anyone signs up.** It is public and reads as a
-      performance claim. It must state malignant recall **0.633 [0.490–0.776]** — roughly
-      one in three cancers missed — and that Grad-CAM localisation has never been scored.
+- [x] **`MODEL_CARD.md` performance section** — malignant recall **0.633 [0.490–0.776]**
+      now leads the section, stated as "roughly one in three malignant films is missed"
+      with the explicit warning that a normal verdict is weak evidence of absence. The
+      rest of the card was already accurate (not-a-medical-device, CC BY-NC-ND, unscored
+      Grad-CAM, known failure modes).
+- [ ] **Use the corrected app description and licence when deploying.**
+      Description: `Research demo — explainable bone-lesion triage on plain radiographs.
+      Not a medical device.` — **not** "detects early stages of cancer".
+      Licence: `cc-by-nc-4.0`, **not** `mit`: the weights derive from BTXRD (CC BY-NC-ND
+      4.0), so MIT would grant a commercial right that is not yours to give.
 - [ ] **Walk the loop once yourself, before inviting your friend.** Sign up → upload with
       sharing ticked → flag the result wrong → review and label it in the sidebar →
       `python scripts/export_batch.py --dry-run` → confirm the row appears with *your*
@@ -295,10 +313,11 @@ it is deployed yet. The next actions are all *yours* — they need logins I do n
 
 ## Decisions still owed by a human
 
-- **How the Space gets its 28 MB checkpoint.** Either `git lfs track "*.pt"` and commit it
-  into the Space repo (simplest, one place), or push it to a Hugging Face *model* repo and
-  have the Space fetch it with `huggingface_hub` (makes the model independently usable,
-  which is closer to "a model people can use", but adds a dependency and a second repo).
+- **Where the 28 MB checkpoint is hosted.** `src/checkpoint_fetch.py` takes any direct
+  URL, so this is now a hosting choice rather than a code one: a Hugging Face model repo
+  (free, and makes the model independently usable — closest to "a model people can use"),
+  or a GitHub Release asset (no second account). Avoid Git LFS: every Community Cloud
+  rebuild would spend the 1 GB/month LFS bandwidth quota.
 - **Whether community data should ever reach val/test.** Currently pinned to `train` by
   `export_batch.py`. That keeps every score comparable to the numbers in `overview.md`;
   the cost is that community images never measure generalisation. Changing this would

@@ -50,6 +50,11 @@ clinician regardless of the model's output.
 Test-split results for `full-20260822-041653`, threshold fitted on validation
 only:
 
+- **Malignant recall (test): 0.633, 95% CI [0.490-0.776].** Roughly **one in
+  three malignant films is missed**. This is the number that matters most for
+  anyone reading a result, so it is stated first: a "normal" verdict from this
+  model is weak evidence of absence, and must never be used to decide against
+  seeking care.
 - **Macro ROC-AUC (test): 0.893**
 - Validation operating points (specificity-floor mode):
   - holding specificity ≥ 80% → sensitivity ≈ 78%

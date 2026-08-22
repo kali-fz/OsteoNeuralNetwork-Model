@@ -1,0 +1,32 @@
+# Root requirements — used by Streamlit Community Cloud, which installs from
+# `requirements.txt` at the repository root and nowhere else.
+#
+# CPU torch on purpose. Community Cloud has no GPU, and the CUDA wheels are
+# ~2.5 GB, which would blow the build long before it ran. Inference on CPU at
+# 256px is a second or two per image, which is fine for a demo.
+#
+# For LOCAL development do NOT install this file:
+#   AMD/ROCm  -> requirements-rocm.txt   (the 7900 XT stack)
+#   NVIDIA    -> requirements-cuda.txt   (or let Colab/Kaggle supply torch)
+# Installing this one over a ROCm environment would replace the ROCm build with
+# a CPU one and silently disable the GPU.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.9.1
+torchvision==0.24.1
+
+monai==1.5.2
+pydicom>=2.4
+numpy>=1.26
+pandas>=2.1
+openpyxl>=3.1
+pillow>=10.0
+opencv-python-headless>=4.9
+scikit-image>=0.22
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+pyyaml>=6.0
+tqdm>=4.66
+altair>=5.0
+streamlit>=1.40

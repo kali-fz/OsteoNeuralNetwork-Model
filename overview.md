@@ -253,8 +253,20 @@ review endpoint, and the export query. Redundant on purpose — every other bug 
 announces itself, this one would quietly train on a hotdog labelled "normal bone".
 
 **Colab cannot host the app.** Runtimes are ephemeral (~90 min idle, 12 h cap), have no
-persistent URL, and need the owner's browser session. Free hosting for a public demo is
-Hugging Face Spaces, which is not built yet.
+persistent URL, and need the owner's browser session.
+
+**Hosting is Streamlit Community Cloud** (`deploy/streamlit-cloud/`) — free, 2.7 GB RAM,
+deploys from GitHub, redeploys on push. **Hugging Face Spaces is not an option:** Gradio
+and Docker Spaces now require PRO and Streamlit is not an offered SDK at all; only Static
+(client-side, no Python) is free. Netlify cannot host it either — static sites and JS
+functions only. Both would require an ONNX-in-browser rewrite.
+
+`reports/` is gitignored, so a clone has no weights. `src/checkpoint_fetch.py` downloads
+one at boot from `ONNM_CHECKPOINT_URL` and pins it. It verifies the payload starts with
+torch's zip magic, because a CDN 404 typically returns HTTP 200 with an HTML page, which
+would otherwise land in `best.pt` and fail much later inside `torch.load`. The default run
+name is `hosted`, not `production` — that would collide with the `reports/PRODUCTION`
+marker on case-insensitive filesystems.
 
 ---
 

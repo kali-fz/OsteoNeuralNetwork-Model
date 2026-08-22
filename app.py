@@ -37,6 +37,7 @@ from auth import (  # noqa: E402
     logout_session,
     register_user,
 )
+from checkpoint_fetch import ensure_checkpoint  # noqa: E402
 from community_ui import (  # noqa: E402
     community_status,
     record_submission,
@@ -355,6 +356,10 @@ with st.sidebar:
     if _status is not None:
         with st.expander(f"Community · {_status.get('pending_review', 0)} awaiting review"):
             render_admin_review()
+
+    # A clone has no weights (reports/ is gitignored), so a hosted deployment
+    # fetches one from ONNM_CHECKPOINT_URL on first boot. No-op locally.
+    ensure_checkpoint()
 
     st.header("Model")
 
