@@ -1,19 +1,20 @@
 # ONNM — Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-22 (Google Sign-In pass).
+Last audited: 2026-08-22 (Google Sign-In hosted chooser check).
 
 **Current state:** 311 tests green in the ROCm `.venv`, repo-wide ruff clean. Cloudflare is
 **deployed and verified live**; Streamlit Cloud is **deployed and serving**. Google
-Sign-In is code-complete and the OAuth client exists, but **the login flow is not yet
-working end-to-end** — see the handover immediately below.
+Sign-In is code-complete and the hosted app now reaches Google's account chooser; **the
+remaining end-to-end check is selecting an approved account and confirming the D1 row**.
 
 ---
 
 ## HANDOVER — read this first
 
-The last action taken was diagnosing a live HTTP 500 on Google sign-in and pushing the
-fix. **The fix has not been confirmed working yet.** Pick up here.
+The last action taken was checking the hosted app after the HTTP 500 fix. The app now
+reaches Google's account chooser, so the missing-`httpx` failure is cleared. Pick up at
+account selection and D1 persistence.
 
 ### What is already true
 
@@ -46,11 +47,12 @@ fix. **The fix has not been confirmed working yet.** Pick up here.
 
 ### Next action (in order)
 
-1. **Force Streamlit Cloud to reinstall dependencies.** Saving secrets only *reboots* the
-   app; it does not reinstall. The push should trigger a rebuild, but confirm it: Manage
-   app → logs → look for `httpx` in the install output. If the app did not rebuild, use
-   **Reboot app**, and if that is not enough, delete and redeploy the app.
-2. **Have the user sign in with Google** (they must — it needs their credentials).
+1. **Dependency fix confirmed live.** The hosted app reaches Google's account chooser,
+   which proves the former missing-`httpx` 500 is no longer occurring. If this regresses
+   after a future dependency change, use Manage app → logs to confirm the install; saving
+   secrets alone only reboots and does not reinstall dependencies.
+2. **Have the user select an approved Google test account and complete sign-in** (they
+   must — it needs their credentials).
 3. **Confirm it reached D1, do not assume.** `users` must move 0 → 1:
    ```
    curl -H "Authorization: Bearer $ONNM_COMMUNITY_KEY" \
