@@ -54,6 +54,27 @@ printf '  account read      %s
   d1 database       %s
 '   "$ACCOUNT_CODE" "$WORKERS_CODE" "$D1_CODE"
 
+# Cloudflare has two kinds of API token and they live on DIFFERENT dashboard
+# pages. Editing the wrong one looks exactly like a change that did not apply,
+# so work out which kind this is and print the page it is actually on.
+USER_TOKEN=$(curl -s -o /dev/null -w "%{http_code}"   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"   https://api.cloudflare.com/client/v4/user/tokens/verify)
+ACCOUNT_TOKEN=$(curl -s -o /dev/null -w "%{http_code}"   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify")
+
+if [ "$ACCOUNT_TOKEN" = "200" ]; then
+  TOKEN_KIND="account-owned"
+  TOKEN_PAGE="https://dash.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/api-tokens"
+  TOKEN_ID=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify"     | grep -oE '"id":"[0-9a-f]+"' | head -1 | cut -d'"' -f4)
+elif [ "$USER_TOKEN" = "200" ]; then
+  TOKEN_KIND="user-owned"
+  TOKEN_PAGE="https://dash.cloudflare.com/profile/api-tokens"
+  TOKEN_ID=""
+else
+  TOKEN_KIND="unrecognised"
+  TOKEN_PAGE="https://dash.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/api-tokens"
+  TOKEN_ID=""
+fi
+echo "  token kind        $TOKEN_KIND${TOKEN_ID:+  (id $TOKEN_ID)}"
+
 MISSING=""
 [ "$WORKERS_CODE" = "200" ] || MISSING="$MISSING
        Account | Workers Scripts | Edit"
@@ -61,15 +82,17 @@ MISSING=""
        Account | D1              | Edit"
 
 if [ -n "$MISSING" ]; then
-  fail "the token is valid but under-scoped. Missing:$MISSING
+  fail "the token is valid and active, but under-scoped. Missing:$MISSING
 
-Fix it at https://dash.cloudflare.com/profile/api-tokens
+This is an ${TOKEN_KIND} token, so edit it HERE:
+  ${TOKEN_PAGE}${TOKEN_ID:+
+  (match the token whose id starts $TOKEN_ID)}
+
+Account-owned and user-owned tokens are listed on DIFFERENT pages. Editing one
+on the wrong page changes a different token and looks like nothing happened.
+
   -> open the token -> Edit -> add the permission(s) above -> Continue -> Save
-  (Editing permissions keeps the SAME token value, so $ENV_FILE needs no change.)
-
-If you would rather start clean: Create Token -> 'Edit Cloudflare Workers'
-template, then ADD 'Account | D1 | Edit', which that template omits. A new
-token has a NEW value, so paste it into $ENV_FILE."
+  (Editing permissions keeps the SAME value, so $ENV_FILE needs no change.)"
 fi
 echo "permissions OK"
 
