@@ -39,3 +39,6 @@ htmlcov/
 .idea/
 Thumbs.db
 desktop.ini
+
+# --- uv (tests are run via uv in some environments) ---------------------------
+uv.lock
