@@ -271,8 +271,9 @@ account selection and D1 persistence.
 
 ### Next — finish the login flow
 
-- [ ] **Confirm the `httpx` fix landed on Streamlit Cloud** and Google sign-in completes.
-      This is the one blocking item; full detail in the handover at the top of this file.
+- [x] **Confirm the `httpx` fix landed on Streamlit Cloud.** The hosted app reaches
+      Google's account chooser; selecting an approved account and confirming D1
+      persistence is still pending.
 - [ ] **Walk the loop once, before inviting anyone else.** Sign in → upload with sharing
       ticked → flag the result wrong → review and label it in the sidebar →
       `python scripts/export_batch.py --dry-run` → confirm the row appears with *your*
