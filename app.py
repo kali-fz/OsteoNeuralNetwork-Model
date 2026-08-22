@@ -43,7 +43,7 @@ from auth import (  # noqa: E402
     logout_session,
     register_user,
 )
-from backend import using_community  # noqa: E402
+from backend import initialize_database, using_community  # noqa: E402
 from checkpoint_fetch import ensure_checkpoint  # noqa: E402
 from community_ui import (  # noqa: E402
     community_status,
@@ -52,10 +52,10 @@ from community_ui import (  # noqa: E402
     render_feedback,
     render_share_consent,
 )
+from community import get_client  # noqa: E402
 from database import (  # noqa: E402
     DatabaseError,
     create_upload,
-    initialize_database,
     list_user_uploads,
     update_upload_result,
 )
@@ -311,6 +311,33 @@ def render_authentication() -> None:
 
 def render_scan_history(user_id: str) -> None:
     with st.expander("My Past Scans"):
+        if using_community():
+            # Hosted runs keep account and submission state in D1. The local
+            # SQLite `uploads` table cannot reference a federated user because
+            # that user exists only in D1, and the hosted filesystem is
+            # ephemeral anyway.
+            submissions = get_client().list_user_submissions(user_id)
+            if not submissions:
+                st.caption("No saved scans yet.")
+                return
+            st.dataframe(
+                [
+                    {
+                        "Uploaded": item.get("created_at", ""),
+                        "Verdict": item.get("model_label", ""),
+                        "Lesion probability": (
+                            f"{100 * float(item.get('lesion_probability', 0)):.1f}%"
+                        ),
+                        "Shared": "Yes" if item.get("shared") else "No",
+                        "Review": item.get("review_status", "pending"),
+                    }
+                    for item in submissions
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+            return
+
         try:
             records = list_user_uploads(user_id)
         except DatabaseError as exc:
@@ -706,7 +733,7 @@ for uploaded in uploads:
                 )
             # Re-running inference after a threshold or heatmap change updates
             # one history record instead of duplicating files or scan entries.
-            if entry["record_id"]:
+            if entry["record_id"] and not using_community():
                 update_upload_result(
                     entry["record_id"],
                     st.session_state["user_id"],
@@ -714,15 +741,23 @@ for uploaded in uploads:
                     confidence_score=result.confidence,
                 )
             else:
-                record = create_upload(
-                    upload_id=stored.upload_id,
-                    user_id=st.session_state["user_id"],
-                    filename=stored.original_filename,
-                    file_path=stored.path,
-                    model_verdict=result.label,
-                    confidence_score=result.confidence,
-                )
-                entry["record_id"] = record.upload_id
+                if using_community():
+                    # D1's submission row is the hosted history record. Do not
+                    # insert into local SQLite: the Google account is not in
+                    # that database and would fail its uploads FK constraint.
+                    # Keep the UUID only for stable per-file Streamlit widget
+                    # keys; it is not a local history row.
+                    entry["record_id"] = stored.upload_id
+                else:
+                    record = create_upload(
+                        upload_id=stored.upload_id,
+                        user_id=st.session_state["user_id"],
+                        filename=stored.original_filename,
+                        file_path=stored.path,
+                        model_verdict=result.label,
+                        confidence_score=result.confidence,
+                    )
+                    entry["record_id"] = record.upload_id
             # Remember what the history row already says, so the re-cut below
             # only writes when the verdict genuinely moves.
             entry["recorded_verdict"] = result.label
@@ -771,7 +806,11 @@ for uploaded in uploads:
         # when the verdict actually changed -- otherwise dragging the slider
         # would write a database row per pixel of travel.
         shown = entry["result"]
-        if entry.get("record_id") and entry.get("recorded_verdict") != shown.label:
+        if (
+            entry.get("record_id")
+            and not using_community()
+            and entry.get("recorded_verdict") != shown.label
+        ):
             with contextlib.suppress(DatabaseError):
                 update_upload_result(
                     entry["record_id"],
