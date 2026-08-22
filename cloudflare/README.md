@@ -53,10 +53,10 @@ npx wrangler secret put API_KEY        # paste the first
 npx wrangler secret put ADMIN_KEY      # paste the second
 ```
 
-Two keys, deliberately. `API_KEY` goes into the public-facing Hugging Face
-Space and can only write ordinary rows. `ADMIN_KEY` unlocks `/admin/*` — the
+Two keys, deliberately. `API_KEY` goes into the public-facing Streamlit
+Community Cloud app and can only write ordinary rows. `ADMIN_KEY` unlocks `/admin/*` — the
 review queue, approvals and export — and lives only on your machine. If the
-Space's secret ever leaked, the leaker still could not approve their own
+app's secret ever leaked, the leaker still could not approve their own
 training data.
 
 ### Deploy
@@ -76,14 +76,14 @@ curl -H "Authorization: Bearer $API_KEY" https://onnm-community.<subdomain>.work
 
 ## Configure the clients
 
-**Hugging Face Space** → Settings → Variables and secrets:
+**Streamlit Community Cloud** → your app → Settings → Secrets (TOML):
 
-| name | value | kind |
-|---|---|---|
-| `ONNM_COMMUNITY_URL` | the workers.dev URL | variable |
-| `ONNM_COMMUNITY_KEY` | `API_KEY` | **secret** |
+```toml
+ONNM_COMMUNITY_URL = "https://onnm-community.<subdomain>.workers.dev"
+ONNM_COMMUNITY_KEY = "the API_KEY generated above"
+```
 
-Do **not** put `ADMIN_KEY` in the Space.
+Do **not** put `ADMIN_KEY` there.
 
 **Your machine**, for review and export:
 
