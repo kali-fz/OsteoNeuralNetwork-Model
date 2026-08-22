@@ -6,7 +6,7 @@
 # Reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from ../.env (which is
 # gitignored). Idempotent: safe to re-run. It will
 #
-#   1. verify the token before touching anything
+#   1. probe the token's real permissions before touching anything
 #   2. create the D1 database, or reuse CLOUDFLARE_D1_DATABASE_ID if set
 #   3. write the id into wrangler.toml
 #   4. apply schema.sql
@@ -34,23 +34,44 @@ set -a; . "$ENV_FILE" >/dev/null 2>&1; set +a
 [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || fail "CLOUDFLARE_ACCOUNT_ID is not set in $ENV_FILE"
 export CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
 
-log "Verifying the API token"
-VERIFY=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  https://api.cloudflare.com/client/v4/user/tokens/verify)
-if ! echo "$VERIFY" | grep -q '"success":true'; then
-  echo "$VERIFY"
-  fail "the API token is not valid.
+# Probe the two capabilities this script actually needs, rather than calling
+# /user/tokens/verify. That endpoint returns 401 for newer `cfa`-prefixed
+# tokens even when they work perfectly, so gating on it would reject a
+# correctly-scoped token and send you hunting for the wrong problem.
+log "Checking token permissions"
+probe() {
+  curl -s -o /dev/null -w "%{http_code}"     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/$1"
+}
 
-Create one at https://dash.cloudflare.com/profile/api-tokens
-  -> Create Token -> 'Edit Cloudflare Workers' template
-  -> confirm the permissions include BOTH:
-       Account | Workers Scripts | Edit
-       Account | D1             | Edit
-  -> paste it into $ENV_FILE as CLOUDFLARE_API_TOKEN=\"...\"
+ACCOUNT_CODE=$(curl -s -o /dev/null -w "%{http_code}"   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID")
+[ "$ACCOUNT_CODE" = "200" ] || fail "the token cannot read account $CLOUDFLARE_ACCOUNT_ID (HTTP $ACCOUNT_CODE).
+Either the token is wrong, or it belongs to a different Cloudflare account."
 
-A Cloudflare API token is normally 40 characters."
+WORKERS_CODE=$(probe "workers/scripts")
+D1_CODE=$(probe "d1/database")
+printf '  account read      %s
+  workers scripts   %s
+  d1 database       %s
+'   "$ACCOUNT_CODE" "$WORKERS_CODE" "$D1_CODE"
+
+MISSING=""
+[ "$WORKERS_CODE" = "200" ] || MISSING="$MISSING
+       Account | Workers Scripts | Edit"
+[ "$D1_CODE" = "200" ] || MISSING="$MISSING
+       Account | D1              | Edit"
+
+if [ -n "$MISSING" ]; then
+  fail "the token is valid but under-scoped. Missing:$MISSING
+
+Fix it at https://dash.cloudflare.com/profile/api-tokens
+  -> open the token -> Edit -> add the permission(s) above -> Continue -> Save
+  (Editing permissions keeps the SAME token value, so $ENV_FILE needs no change.)
+
+If you would rather start clean: Create Token -> 'Edit Cloudflare Workers'
+template, then ADD 'Account | D1 | Edit', which that template omits. A new
+token has a NEW value, so paste it into $ENV_FILE."
 fi
-echo "token OK"
+echo "permissions OK"
 
 # --- 2. database ----------------------------------------------------------
 DB_NAME="onnm-community"
