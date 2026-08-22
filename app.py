@@ -14,6 +14,7 @@ work, that is a signal the inference API is missing something.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -164,6 +165,38 @@ def probability_chart(probabilities: dict[str, float]):
     return fig
 
 
+MAX_PREVIEW_PX = 1024
+
+
+def preview_uint8(array: np.ndarray, max_edge: int = MAX_PREVIEW_PX) -> np.ndarray:
+    """Downscale for display only. The original is kept for the report export.
+
+    `use_container_width=True` scales in the browser, so a 2010x1490 film is
+    still ~2.9 MB of PNG on the wire to render a column a few hundred pixels
+    wide. Capping the long edge here cuts that by an order of magnitude with no
+    visible difference at the size it is actually shown.
+
+    Display only: `png_bytes(to_display_uint8(result.original_image))` still
+    feeds the HTML report from the full-resolution array, because that is meant
+    to be zoomed into.
+
+    Deliberately uncached: the resize is a few milliseconds, while
+    ``st.cache_data`` would hash the multi-megabyte input array on every rerun
+    to look it up. Streamlit's media manager already dedupes identical output
+    by content hash, so a re-render of an unchanged image costs no upload.
+    """
+    from PIL import Image
+
+    display = to_display_uint8(array)
+    height, width = display.shape[:2]
+    longest = max(height, width)
+    if longest <= max_edge:
+        return display
+    scale = max_edge / longest
+    size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+    return np.asarray(Image.fromarray(display).resize(size, Image.LANCZOS))
+
+
 def png_bytes(array: np.ndarray) -> bytes:
     from PIL import Image
 
@@ -299,7 +332,7 @@ def render_scan_history(user_id: str) -> None:
             st.error(f"Could not open the saved scan: {exc}")
             return
         st.image(
-            to_display_uint8(image),
+            preview_uint8(image),
             caption=(
                 f"{selected_record.model_verdict} · "
                 f"{selected_record.confidence_score:.1f}% confidence"
@@ -617,7 +650,12 @@ for uploaded in uploads:
         entry = {"stored": stored, "record_id": None, "share_consent": SHARE_CONSENT}
         cases[file_key] = entry
 
-    cache_key = (str(selected), threshold, cam_class)
+    # `threshold` is deliberately NOT part of this key. It is a cut on an
+    # already-computed probability and cannot change what the network produced,
+    # so re-running a forward pass plus a Grad-CAM backward pass to move it would
+    # spend ~490 ms on CPU recomputing bit-identical probabilities and a
+    # bit-identical heatmap. The verdict is re-derived below instead.
+    cache_key = (str(selected), cam_class)
     if entry.get("cache_key") != cache_key:
         stored = entry["stored"]
         try:
@@ -649,7 +687,10 @@ for uploaded in uploads:
                     confidence_score=result.confidence,
                 )
                 entry["record_id"] = record.upload_id
-            entry["result"] = result
+            # Remember what the history row already says, so the re-cut below
+            # only writes when the verdict genuinely moves.
+            entry["recorded_verdict"] = result.label
+            entry["result_base"] = result
             entry["cache_key"] = cache_key
             # Log to the community API. Consent was captured per file before
             # inference ran; without it no image is sent, only the verdict.
@@ -679,6 +720,30 @@ for uploaded in uploads:
                 cases.pop(file_key, None)
             failed.append((uploaded.name, f"inference failed: {exc}"))
             continue
+
+    # Cheap: re-cut the cached model output at the current threshold. This is
+    # arithmetic on stored probabilities -- no tensor work -- and is verified
+    # against a real re-prediction in tests/test_threshold_reuse.py.
+    base_result = entry.get("result_base")
+    if base_result is not None:
+        entry["result"] = base_result.with_threshold(
+            threshold,
+            uncertainty_floor=DEFAULT_CONFIDENCE_FLOOR,
+            entropy_gate=DEFAULT_ENTROPY_GATE,
+        )
+        # Keep the scan-history row in step with what is on screen, but only
+        # when the verdict actually changed -- otherwise dragging the slider
+        # would write a database row per pixel of travel.
+        shown = entry["result"]
+        if entry.get("record_id") and entry.get("recorded_verdict") != shown.label:
+            with contextlib.suppress(DatabaseError):
+                update_upload_result(
+                    entry["record_id"],
+                    st.session_state["user_id"],
+                    model_verdict=shown.label,
+                    confidence_score=shown.confidence,
+                )
+            entry["recorded_verdict"] = shown.label
 
     ready.append((uploaded.name, entry))
 
@@ -814,7 +879,7 @@ else:
     col_a, col_b, col_c = st.columns(3, gap="medium")
     with col_a:
         st.image(
-            to_display_uint8(result.original_image),
+            preview_uint8(result.original_image),
             caption=f"As uploaded — {result.original_image.shape[1]}×"
                     f"{result.original_image.shape[0]}",
             use_container_width=True,

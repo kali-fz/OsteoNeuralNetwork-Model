@@ -43,7 +43,7 @@ import os
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -111,6 +111,57 @@ class InferenceResult:
     source_meta: dict[str, Any] = field(default_factory=dict)
     elapsed_ms: float = 0.0
     device: str = "cpu"
+
+    def with_threshold(
+        self,
+        threshold: float,
+        *,
+        uncertainty_floor: float | None = None,
+        entropy_gate: float | None = None,
+    ) -> InferenceResult:
+        """Re-derive the verdict at a different threshold, without the model.
+
+        A threshold is a cut on an already-computed probability: it cannot
+        change what the network produced. Re-running a forward and a Grad-CAM
+        backward pass to move it costs roughly half a second on CPU and returns
+        bit-identical probabilities and a bit-identical heatmap.
+
+        So the decision is recomputed here instead, from values this result
+        already carries. The uncertainty gate is re-evaluated rather than
+        reused, because ``inconclusive`` is ``is_lesion and defer`` -- a False
+        does not tell you which half was False, and ``should_defer`` is a pure
+        function of the probabilities, so recomputing it is exact and free.
+
+        The returned result is a copy; the original is left untouched, so a
+        cached model output can be re-cut at many thresholds.
+        """
+        ordered = np.array(
+            [self.class_probabilities[name] for name in self.class_probabilities],
+            dtype=np.float64,
+        )
+        defer, max_probability, entropy = should_defer(
+            ordered, uncertainty_floor=uncertainty_floor, entropy_gate=entropy_gate
+        )
+
+        is_lesion = self.lesion_probability >= threshold
+        inconclusive = bool(is_lesion and defer)
+        if inconclusive:
+            label = INCONCLUSIVE_LABEL
+        elif is_lesion:
+            label = LESION_LABEL
+        else:
+            label = NORMAL_LABEL
+
+        return replace(
+            self,
+            label=label,
+            confidence=100.0
+            * (self.lesion_probability if is_lesion else 1.0 - self.lesion_probability),
+            threshold=float(threshold),
+            max_probability=max_probability,
+            predictive_entropy=entropy,
+            inconclusive=inconclusive,
+        )
 
     @property
     def is_lesion(self) -> bool:

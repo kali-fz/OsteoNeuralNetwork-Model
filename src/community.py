@@ -51,6 +51,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 15.0
+# Health checks get their own, much shorter budget. They run to decorate the UI,
+# not to do work, so a slow or unreachable API must cost a moment rather than
+# stall the page. The long timeout stays for calls that carry real payloads.
+HEALTH_TIMEOUT = 3.0
 # Mirrors MAX_IMAGE_B64_BYTES in cloudflare/src/worker.js. Checked here too so
 # an oversized image is rejected before it is uploaded rather than after.
 MAX_IMAGE_B64_BYTES = 600_000
@@ -211,7 +215,12 @@ class CommunityClient:
 
     # -- health ------------------------------------------------------------
     def health(self) -> dict[str, Any] | None:
-        status, body = self._request("GET", "/health")
+        """Liveness and capacity. Uses the short timeout -- see HEALTH_TIMEOUT."""
+        previous, self.timeout = self.timeout, min(self.timeout, HEALTH_TIMEOUT)
+        try:
+            status, body = self._request("GET", "/health")
+        finally:
+            self.timeout = previous
         return body if status == 200 else None
 
     # -- accounts (mirrors database.py) ------------------------------------

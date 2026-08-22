@@ -14,6 +14,8 @@ anything without stating a class -- the database refuses.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import streamlit as st
 
 from community import VALID_LABELS, decode_shared_image, encode_image_for_sharing, get_client
@@ -25,8 +27,25 @@ SHARE_HELP = (
 )
 
 
+@st.cache_data(ttl=timedelta(days=1), show_spinner=False)
 def community_status() -> dict | None:
-    """Health of the community API, or None when disabled/unreachable."""
+    """Health of the community API, or None when disabled/unreachable.
+
+    Cached for a day. Streamlit re-executes the whole script on every widget
+    interaction, so without this an HTTP round-trip to Cloudflare would sit in
+    front of every slider drag and checkbox tick -- the API would be blamed for
+    making the app feel slow when it is only being asked far too often.
+
+    A day is right because the values are decorative: submission counts and the
+    storage gauge inform, they do not gate anything. The one number that must be
+    current -- whether a write succeeded -- comes back from the write itself.
+
+    Note the distinction from the *timeout*: this is how often to ask
+    (a day), not how long to wait for an answer (HEALTH_TIMEOUT, 3 seconds).
+    A long timeout would mean an unreachable API hangs the page.
+
+    Call ``community_status.clear()`` to force a refresh.
+    """
     client = get_client()
     return client.health() if client.enabled else None
 
