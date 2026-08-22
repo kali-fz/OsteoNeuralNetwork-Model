@@ -142,10 +142,26 @@ def configure_backend(use_miopen: bool = True) -> dict[str, Any]:
         "miopen_requested": bool(use_miopen),
         "backend": "MIOpen" if use_miopen else "ATen native",
     }
-    if not use_miopen:
+    is_rocm = getattr(torch.version, "hip", None) is not None
+    info["is_rocm"] = is_rocm
+
+    if not use_miopen and is_rocm:
         # On ROCm the cudnn flags are the MIOpen flags.
         torch.backends.cudnn.enabled = False
         torch.backends.cudnn.benchmark = False
+    elif not use_miopen:
+        # The flag exists solely to dodge the ROCm-Windows defect described
+        # above, which cannot occur on an NVIDIA build. Honouring it there would
+        # disable cuDNN and cost several times the throughput -- silently, and
+        # on precisely the runs most likely to be reproduced elsewhere, since
+        # configs/full_run.yaml and configs/overnight.yaml both set miopen:
+        # false. So it is ignored rather than obeyed, and said out loud.
+        info["backend"] = "cuDNN"
+        info["miopen_ignored"] = True
+        get_logger(__name__).info(
+            "train.miopen=false is a ROCm-only workaround and does not apply to this "
+            "CUDA build; cuDNN stays enabled"
+        )
     info["cudnn_enabled"] = bool(torch.backends.cudnn.enabled)
     return info
 

@@ -71,6 +71,21 @@ Machine has 31.8 GB RAM; `num_workers: 2` is the measured safe ceiling.
 10.6 GB (53%) but 6× slower per step. Filling VRAM is not a training objective; raising
 `data.image_size` is the only meaningful way to use the headroom.
 
+**`train.miopen: false` is ROCm-only and must not be honoured on CUDA.** It exists purely
+for the defect above, but the flag it sets (`torch.backends.cudnn.enabled`) is the *same*
+flag on both backends — so obeying it on NVIDIA disables cuDNN and costs several times the
+throughput, for a bug that cannot occur there. `configure_backend` now gates the disable on
+`torch.version.hip` and logs when it ignores the flag. This matters because `full_run.yaml`
+and `overnight.yaml` both set `miopen: false`, and those are exactly the configs a Colab run
+reuses in order to stay comparable.
+
+**bf16 is not universal.** The project trains in bf16 locally because it shares fp32's
+exponent range and so needs no `GradScaler`. Turing cards — including Colab's free **T4
+(sm_75)** — have no bf16 at all. `resolve_amp_dtype` checks `torch.cuda.is_bf16_supported()`
+and falls back to fp16 with a scaler, loudly. The scaler is enabled *only* for fp16, so the
+local bf16 path is unchanged. Effective dtype is recorded in the run result, because a run
+that says bf16 when fp16 happened is not comparable to one that means it.
+
 ---
 
 ## Layout
@@ -91,7 +106,9 @@ src/onnm/
 scripts/             download, verify_data, verify_env, make_splits, train,
                      calibrate, evaluate, gradcam_report, overfit_check
 configs/             base.yaml + overrides: densenet121_3class, full_run, overnight
-tests/               189 tests, synthetic fixtures, no dataset required
+  ablations/         ohem_only, augs_only -- separate the overnight regression
+notebooks/           01_data_sanity, kaggle_train, colab_train
+tests/               201 tests, synthetic fixtures, no dataset required
 app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
 ```
 
@@ -101,6 +118,11 @@ app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telem
 
 YAML, deep-merged. `base.yaml` → `--override a.yaml` → `--override b.yaml` → `--profile x`.
 Lists replace wholesale; dicts merge. Access via attribute or `cfg.lookup("a.b.c")`.
+
+Profiles: `kaggle`, `colab`, `smoke`. **`colab` deliberately sets no `paths:`** —
+`verify_data.py` and `make_splits.py` accept no `--profile`, so a profile that moved
+`data_root` would apply to training but not to the gates that check the data. The notebook
+symlinks the dataset into the default location instead.
 
 Checkpoints **embed the config they were trained with**. `inference.py` reads that, not the
 YAML on disk, so editing a config cannot desynchronise the app from a trained model.
@@ -142,6 +164,19 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 
 `calibrate.py` writes `calibration.json` beside the checkpoint; the app and `evaluate.py`
 read it automatically. It exits non-zero when the operating point is unusable.
+
+**Colab** (`notebooks/colab_train.ipynb`) — a second free GPU for the ablation backlog.
+Everything is staged through Drive at `MyDrive/OSTEONEURALNETWORK/`: `onnm-code.zip`,
+`BTXRD.zip`, `splits.json`. It unpacks to `/content` (local SSD — unzipping onto Drive is
+pathologically slow for 3.7 k small files), symlinks the data into `data/raw/BTXRD`, copies
+the local `splits.json` so results stay comparable, runs gates 1/2/3/6, then a 2-epoch smoke
+run, then the two ablations, then copies `reports/` back to Drive. Colab wipes `/content` on
+disconnect, so that last step is not optional. Install with `--no-deps`: several project
+dependencies list torch, and pip would pull a CPU wheel over Colab's CUDA build.
+
+**Colab cannot host the app.** Runtimes are ephemeral (~90 min idle, 12 h cap), have no
+persistent URL, and need the owner's browser session. Free hosting for a public demo is
+Hugging Face Spaces, which is not built yet.
 
 ---
 

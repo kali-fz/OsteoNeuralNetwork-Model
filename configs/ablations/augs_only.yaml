@@ -1,0 +1,14 @@
+# Ablation B: aggressive augmentation alone, OHEM off.
+#
+#   --override configs/densenet121_3class.yaml
+#   --override configs/overnight.yaml
+#   --override configs/ablations/augs_only.yaml
+#   --profile colab --tag abl-augs
+#
+# The counterpart to configs/ablations/ohem_only.yaml -- see that file for why
+# the pair exists. Augmentation is left exactly as overnight.yaml configured it;
+# only the mining term is removed.
+
+loss:
+  ohem:
+    enabled: false
