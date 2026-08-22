@@ -45,6 +45,7 @@ from auth import (  # noqa: E402
 )
 from backend import initialize_database, using_community  # noqa: E402
 from checkpoint_fetch import ensure_checkpoint  # noqa: E402
+from community import get_client  # noqa: E402
 from community_ui import (  # noqa: E402
     community_status,
     record_submission,
@@ -52,7 +53,6 @@ from community_ui import (  # noqa: E402
     render_feedback,
     render_share_consent,
 )
-from community import get_client  # noqa: E402
 from database import (  # noqa: E402
     DatabaseError,
     create_upload,
