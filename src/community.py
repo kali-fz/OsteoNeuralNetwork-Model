@@ -409,7 +409,7 @@ class CommunityClient:
 
     # -- globe ---------------------------------------------------------------
     def globe(self) -> dict[str, Any] | None:
-        """Aggregated, k-anonymised country counts for the landing-page globe.
+        """Aggregated country counts for the landing-page globe.
 
         Returns country codes and integers only -- never a user, a submission,
         a timestamp or a coordinate. See the ``/globe`` handler in

@@ -52,7 +52,10 @@ const MAX_PAGE_SIZE = 100;
 // small-area health statistics, and the cost of being wrong here is not
 // symmetric -- an under-populated globe is a cosmetic problem, a re-identified
 // patient is not.
-const K_ANONYMITY_MIN = 5;
+// Product decision: show a country as soon as one account is recorded there.
+// The endpoint remains country-level only, but a one-account country is no
+// longer anonymous. Keep the response field name for client compatibility.
+const K_ANONYMITY_MIN = 1;
 
 // The three clinical classes the lesion classifier predicts.
 const VALID_LABELS = new Set(["normal", "benign", "malignant"]);
@@ -260,7 +263,7 @@ async function health(db) {
 }
 
 /**
- * Aggregated, k-anonymised country counts for the landing-page globe.
+ * Aggregated country counts for the landing-page globe.
  *
  * WHAT THIS DELIBERATELY DOES NOT RETURN
  * --------------------------------------
@@ -284,12 +287,12 @@ async function health(db) {
  *                   contributed anything yet, and consistency with the review
  *                   gate matters more than a busier-looking map.
  *
- * SUPPRESSION
- * -----------
- * Any country under K_ANONYMITY_MIN is removed and its people are added to
- * `elsewhere`, an integer attached to no country. The totals are reported
- * separately and are NOT suppressed: "412 users in 23 countries" discloses
- * nothing, and it is the number the landing page actually wants to show.
+ * DISPLAY THRESHOLD
+ * -----------------
+ * The configured minimum is one account, so every known country is plotted.
+ * `elsewhere` remains part of the stable API contract in case the threshold is
+ * raised again. Coordinates are still fixed country centroids; no precise
+ * location or identifying account field is selected by this endpoint.
  */
 async function globe(db) {
   const { results: signupRows } = await db

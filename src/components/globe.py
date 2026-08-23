@@ -13,10 +13,9 @@ Renders a D3-geo canvas globe embedded via streamlit.components.v1.html with:
   - Visibility and IntersectionObserver pausing (zero CPU in background)
   - devicePixelRatio capped at 2
 
-Assets are downloaded once to src/components/assets/ from pinned CDN URLs and
-read from disk on every subsequent render.  The component never makes a network
-request during rendering; the download only ever happens once per server process
-when the asset file is absent.
+Optional detailed map assets can be installed into src/components/assets/ from
+pinned CDN URLs. Rendering never downloads them: when they are absent the same
+country markers are drawn on a dependency-free canvas globe immediately.
 
 Privacy contract (section 3B of REDESIGN_BRIEF.md):
   - Markers carry only {lat, lng, label, count, layer}: no user id, no email,
@@ -29,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.request
 from pathlib import Path
 
@@ -100,16 +100,22 @@ def _ensure_assets() -> bool:
 
 
 def _load_static_assets() -> tuple[str, str, str] | None:
-    """Load JS + world JSON once per server startup into memory.
+    """Load vendored JS + world JSON once per server startup into memory.
 
     Returns (d3_script, topojson_script, world_json) or None when unavailable.
+    This function deliberately does not download anything. A landing-page
+    decoration must not add network requests or a possible 90-second delay to
+    an app rerun. ``_ensure_assets`` remains available as an explicit setup
+    helper, while production renders use the dependency-free fallback below
+    when the optional files have not been vendored.
     When running inside Streamlit, uses cache_resource so the ~200 KB read
     happens once regardless of how many visitors request the landing page.
     When running in a test environment without Streamlit, falls back to a plain
     call (assets are loaded on every test invocation, which is acceptable).
     """
     def _load():
-        if not _ensure_assets():
+        paths = [ASSETS_DIR / name for name in _ASSETS]
+        if not all(path.is_file() for path in paths):
             return None
         try:
             d3 = (ASSETS_DIR / "d3-geo.min.js").read_text(encoding="utf-8")
@@ -127,6 +133,219 @@ def _load_static_assets() -> tuple[str, str, str] | None:
         return _load()
 
 
+def _normalise_markers(markers: list[dict]) -> list[dict]:
+    """Return the small, privacy-safe marker contract accepted by the canvas.
+
+    The community payload is already aggregated, but keeping this boundary
+    strict prevents a future backend field (or malformed value) from being
+    copied into browser-readable HTML by accident.
+    """
+    clean: list[dict] = []
+    for marker in markers or []:
+        if not isinstance(marker, dict):
+            continue
+        try:
+            lat = float(marker.get("lat"))
+            lng = float(marker.get("lng"))
+            count = int(marker.get("count"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        layer = str(marker.get("layer") or "")
+        if (
+            not math.isfinite(lat)
+            or not math.isfinite(lng)
+            or not -90 <= lat <= 90
+            or not -180 <= lng <= 180
+            or count <= 0
+            or layer not in {"signup", "contributor"}
+        ):
+            continue
+        clean.append(
+            {
+                "lat": round(lat, 3),
+                "lng": round(lng, 3),
+                "label": str(marker.get("label") or "Country")[:80],
+                "count": count,
+                "layer": layer,
+            }
+        )
+    return clean
+
+
+def _json_for_script(value: object) -> str:
+    """Encode JSON without permitting an embedded ``</script>`` boundary."""
+    return (
+        json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+def _build_fallback_html(
+    markers_json: str,
+    auto_rotate: bool,
+    height: int,
+) -> str:
+    """Build a self-contained canvas globe with no CDN or map dependency."""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {{ box-sizing:border-box; margin:0; padding:0; }}
+  html,body {{ width:100%; height:{height}px; overflow:hidden; background:transparent; }}
+  #wrap {{ position:relative; width:100%; height:{height}px; display:flex;
+           flex-direction:column; align-items:center; justify-content:center; }}
+  canvas {{ display:block; max-width:100%; cursor:grab; touch-action:none; outline:none; }}
+  canvas:active {{ cursor:grabbing; }}
+  #tip {{ position:absolute; display:none; pointer-events:none; z-index:2;
+          padding:6px 10px; border-radius:6px; color:#f8f5ee;
+          background:rgba(30,38,31,.92); font:600 12px/1.3 Inter,Segoe UI,sans-serif;
+          box-shadow:0 5px 18px rgba(22,31,25,.2); white-space:nowrap; }}
+  #legend {{ display:flex; gap:16px; margin-top:8px; color:#6b6457;
+             font:500 11px/1.3 Inter,Segoe UI,sans-serif; }}
+  .item {{ display:flex; align-items:center; gap:6px; }}
+  .dot {{ width:9px; height:9px; border-radius:50%; }}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="globe" tabindex="0" role="img"
+    aria-label="Globe showing privacy-protected country-level community locations"></canvas>
+  <div id="tip"></div>
+  <div id="legend">
+    <span class="item"><i class="dot" style="background:#e8a850"></i>Registered users</span>
+    <span class="item"><i class="dot" style="background:#2e6b47"></i>Approved contributors</span>
+  </div>
+</div>
+<script>
+(() => {{
+  'use strict';
+  const markers = {markers_json};
+  const canvas = document.getElementById('globe');
+  const wrap = document.getElementById('wrap');
+  const tip = document.getElementById('tip');
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const shouldRotate = {str(auto_rotate).lower()} && !reduceMotion;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  let size=0, radius=0, cx=0, cy=0, yaw=-15, pitch=-12;
+  let dragging=false, lastX=0, lastY=0, visible=true, lastFrame=0;
+  let projected=[];
+
+  function resize() {{
+    size = Math.max(180, Math.min(wrap.clientWidth, {height} - 38));
+    radius = size * .47; cx = size / 2; cy = size / 2;
+    canvas.style.width=size+'px'; canvas.style.height=size+'px';
+    canvas.width=Math.round(size*dpr); canvas.height=Math.round(size*dpr);
+    draw();
+  }}
+  function point(lat, lng) {{
+    const phi=lat*Math.PI/180, lam=(lng+yaw)*Math.PI/180;
+    const pp=pitch*Math.PI/180;
+    const x=Math.cos(phi)*Math.sin(lam);
+    const y0=Math.sin(phi), z0=Math.cos(phi)*Math.cos(lam);
+    const y=y0*Math.cos(pp)-z0*Math.sin(pp);
+    const z=y0*Math.sin(pp)+z0*Math.cos(pp);
+    return {{x:cx+radius*x, y:cy-radius*y, z}};
+  }}
+  function grid(ctx) {{
+    ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.clip();
+    ctx.strokeStyle='rgba(255,255,255,.27)'; ctx.lineWidth=.75;
+    for (let lat=-60; lat<=60; lat+=30) {{
+      ctx.beginPath(); let open=false;
+      for (let lng=-180; lng<=180; lng+=3) {{
+        const p=point(lat,lng);
+        if (p.z>=0) {{ open ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y); open=true; }}
+        else open=false;
+      }} ctx.stroke();
+    }}
+    for (let lng=-150; lng<=180; lng+=30) {{
+      ctx.beginPath(); let open=false;
+      for (let lat=-90; lat<=90; lat+=3) {{
+        const p=point(lat,lng);
+        if (p.z>=0) {{ open ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y); open=true; }}
+        else open=false;
+      }} ctx.stroke();
+    }}
+    ctx.restore();
+  }}
+  function draw() {{
+    if (!size) return;
+    const ctx=canvas.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,size,size);
+    const ocean=ctx.createRadialGradient(cx-radius*.32,cy-radius*.38,0,cx,cy,radius*1.08);
+    ocean.addColorStop(0,'#e7f1f1');
+    ocean.addColorStop(.58,'#b9d3d2');
+    ocean.addColorStop(1,'#6f9896');
+    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fillStyle=ocean; ctx.fill();
+    grid(ctx);
+    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.strokeStyle='rgba(38,79,68,.28)'; ctx.lineWidth=1.5; ctx.stroke();
+    projected=[];
+    for (const layer of ['signup','contributor']) {{
+      for (const m of markers) {{
+        if (m.layer!==layer) continue;
+        const p=point(m.lat,m.lng); if (p.z<0) continue;
+        const r=Math.min(13,3+Math.sqrt(m.count)*1.55);
+        ctx.globalAlpha=Math.max(.28,Math.min(1,p.z*2.4));
+        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.fillStyle=layer==='signup'?'#e8a850':'#2e6b47'; ctx.fill();
+        ctx.strokeStyle=layer==='signup'?'#ad6c12':'#173b28'; ctx.lineWidth=1.2; ctx.stroke();
+        projected.push({{...m,x:p.x,y:p.y,r}});
+      }}
+    }} ctx.globalAlpha=1;
+  }}
+  canvas.addEventListener('pointerdown', e => {{
+    dragging=true; lastX=e.clientX; lastY=e.clientY;
+    canvas.setPointerCapture(e.pointerId); tip.style.display='none';
+  }});
+  canvas.addEventListener('pointermove', e => {{
+    if (dragging) {{
+      yaw += (e.clientX-lastX)*.45; pitch=Math.max(-65,Math.min(65,pitch-(e.clientY-lastY)*.35));
+      lastX=e.clientX; lastY=e.clientY; draw(); return;
+    }}
+    const rect=canvas.getBoundingClientRect(), x=e.clientX-rect.left, y=e.clientY-rect.top;
+    let hit=null, distance=18;
+    for (const p of projected) {{
+      const d=Math.hypot(x-p.x,y-p.y);
+      if (d<distance) {{hit=p;distance=d;}}
+    }}
+    if (!hit) {{ tip.style.display='none'; return; }}
+    tip.textContent=hit.label+' · '+hit.count.toLocaleString(); tip.style.display='block';
+    tip.style.left=Math.min(wrap.clientWidth-tip.offsetWidth-6,e.clientX-rect.left+12)+'px';
+    tip.style.top=Math.max(4,e.clientY-rect.top-tip.offsetHeight-8)+'px';
+  }});
+  const stop=()=>{{ dragging=false; }};
+  canvas.addEventListener('pointerup',stop); canvas.addEventListener('pointercancel',stop);
+  canvas.addEventListener('mouseleave',()=>{{ tip.style.display='none'; }});
+  canvas.addEventListener('keydown',e=>{{
+    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) return;
+    e.preventDefault(); yaw += e.key==='ArrowLeft'?5:e.key==='ArrowRight'?-5:0;
+    pitch=Math.max(-65,Math.min(65,pitch+(e.key==='ArrowUp'?5:e.key==='ArrowDown'?-5:0))); draw();
+  }});
+  function tick(now) {{
+    requestAnimationFrame(tick);
+    if (!visible || dragging || !shouldRotate) {{ lastFrame=now; return; }}
+    const elapsed=now-(lastFrame||now); if (elapsed<33) return;
+    yaw += Math.min(80,elapsed)*.0028; lastFrame=now; draw();
+  }}
+  addEventListener('resize',resize);
+  document.addEventListener('visibilitychange',()=>{{visible=!document.hidden;}});
+  if (window.IntersectionObserver) {{
+    new IntersectionObserver(
+      e=>{{visible=e[0].isIntersecting;}},{{threshold:.05}}
+    ).observe(canvas);
+  }}
+  resize(); requestAnimationFrame(tick);
+}})();
+</script>
+</body>
+</html>"""
+
+
 def _build_html(
     d3_script: str,
     topojson_script: str,
@@ -135,6 +354,13 @@ def _build_html(
     auto_rotate: bool,
     height: int,
 ) -> str:
+    try:
+        marker_values = json.loads(markers_json)
+    except (TypeError, ValueError):
+        marker_values = []
+    if not isinstance(marker_values, list):
+        marker_values = []
+    markers_json = _json_for_script(_normalise_markers(marker_values))
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -588,33 +814,26 @@ def render_globe(
         Whether to start with auto-rotation enabled.  Callers should pass
         False if ``prefers-reduced-motion`` is active at the Python level.
     """
-    static = _load_static_assets()
-    if static is None:
-        try:
-            import streamlit as st
-            st.markdown(
-                "<div style='height:200px;display:flex;align-items:center;"
-                "justify-content:center;color:#6b6457;font-size:14px;'>"
-                "Globe unavailable — check network and restart the app.</div>",
-                unsafe_allow_html=True,
-            )
-        except ImportError:
-            pass
-        return
-
     import streamlit as st
 
-    d3_script, topojson_script, world_json = static
-    markers_json = json.dumps(markers)
-
-    html = _build_html(
-        d3_script=d3_script,
-        topojson_script=topojson_script,
-        world_json=world_json,
-        markers_json=markers_json,
-        auto_rotate=auto_rotate,
-        height=height,
-    )
+    markers_json = _json_for_script(_normalise_markers(markers))
+    static = _load_static_assets()
+    if static is None:
+        html = _build_fallback_html(
+            markers_json=markers_json,
+            auto_rotate=auto_rotate,
+            height=height,
+        )
+    else:
+        d3_script, topojson_script, world_json = static
+        html = _build_html(
+            d3_script=d3_script,
+            topojson_script=topojson_script,
+            world_json=world_json,
+            markers_json=markers_json,
+            auto_rotate=auto_rotate,
+            height=height,
+        )
 
     # No key= anywhere below: neither embedding API takes one, and passing a
     # key raises TypeError.  Streamlit identifies the iframe by its position in

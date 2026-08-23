@@ -14,15 +14,13 @@ patch the st module to intercept those and test only the routing logic.
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+from auth import google_sign_in_required  # noqa: E402
 
 
 def _make_session(page: str, authenticated: bool) -> dict:
@@ -109,3 +107,12 @@ class TestPageGuards:
         assert session["current_page"] == "profile", (
             "Authenticated user must NOT be redirected away from profile"
         )
+
+
+def test_hosted_auth_never_falls_back_to_password_forms():
+    """A missing hosted OAuth secret must surface as an error, not password signup."""
+    assert google_sign_in_required(hosted=True, oidc_available=False) is True
+
+
+def test_local_auth_can_retain_the_password_fallback():
+    assert google_sign_in_required(hosted=False, oidc_available=False) is False

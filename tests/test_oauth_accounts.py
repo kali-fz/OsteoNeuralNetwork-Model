@@ -24,6 +24,7 @@ import sqlite3
 import sys
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,6 +37,94 @@ import auth  # noqa: E402
 import backend  # noqa: E402
 import community  # noqa: E402
 import database  # noqa: E402
+
+# oauth.py only needs Streamlit's small auth surface. Isolate these unit tests
+# from the developer machine's optional Streamlit/Starlette package versions.
+_original_streamlit = sys.modules.get("streamlit")
+sys.modules["streamlit"] = SimpleNamespace(
+    button=lambda *_a, **_k: False,
+    caption=lambda *_a, **_k: None,
+    error=lambda *_a, **_k: None,
+    login=lambda *_a, **_k: None,
+    logout=lambda: None,
+    secrets={},
+    subheader=lambda *_a, **_k: None,
+    user={},
+)
+import oauth  # noqa: E402
+
+if _original_streamlit is None:
+    del sys.modules["streamlit"]
+else:
+    sys.modules["streamlit"] = _original_streamlit
+
+
+# ---------------------------------------------------------------------------
+# Google OIDC configuration and sign-in UI
+# ---------------------------------------------------------------------------
+def _named_google_secrets() -> dict:
+    return {
+        "auth": {
+            "redirect_uri": "https://example.invalid/oauth2callback",
+            "cookie_secret": "cookie-secret",
+            "google": {
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "server_metadata_url": "https://accounts.google.com/.well-known/openid-configuration",
+            },
+        }
+    }
+
+
+def _stub_sign_in_ui(monkeypatch, *, clicked: bool = True) -> tuple[list, list]:
+    errors: list[str] = []
+    login_calls: list[tuple] = []
+    monkeypatch.setattr(oauth.st, "subheader", lambda *_a, **_k: None)
+    monkeypatch.setattr(oauth.st, "caption", lambda *_a, **_k: None)
+    monkeypatch.setattr(oauth.st, "error", lambda message, **_k: errors.append(message))
+    monkeypatch.setattr(oauth.st, "button", lambda *_a, **_k: clicked)
+    monkeypatch.setattr(oauth.st, "login", lambda *args, **_k: login_calls.append(args))
+    monkeypatch.setattr(oauth.st, "logout", lambda: None)
+    monkeypatch.setattr(oauth.st, "user", {})
+    return errors, login_calls
+
+
+def test_named_google_oidc_is_detected_and_selected(monkeypatch) -> None:
+    errors, login_calls = _stub_sign_in_ui(monkeypatch)
+    monkeypatch.setattr(oauth.st, "secrets", _named_google_secrets())
+
+    assert oauth.oidc_configured() is True
+    oauth.render_sign_in()
+
+    assert errors == []
+    assert login_calls == [("google",)]
+
+
+def test_single_provider_google_oidc_is_supported(monkeypatch) -> None:
+    secrets = _named_google_secrets()
+    google = secrets["auth"].pop("google")
+    secrets["auth"].update(google)
+    errors, login_calls = _stub_sign_in_ui(monkeypatch)
+    monkeypatch.setattr(oauth.st, "secrets", secrets)
+
+    assert oauth.oidc_configured() is True
+    oauth.render_sign_in()
+
+    assert errors == []
+    assert login_calls == [()]
+
+
+def test_incomplete_oidc_fails_closed_without_a_login_call(monkeypatch) -> None:
+    secrets = _named_google_secrets()
+    del secrets["auth"]["google"]["client_secret"]
+    errors, login_calls = _stub_sign_in_ui(monkeypatch)
+    monkeypatch.setattr(oauth.st, "secrets", secrets)
+
+    assert oauth.oidc_configured() is False
+    oauth.render_sign_in()
+
+    assert errors and "temporarily unavailable" in errors[0]
+    assert login_calls == []
 
 
 # ---------------------------------------------------------------------------

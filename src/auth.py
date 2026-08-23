@@ -141,3 +141,8 @@ def login_session(state: MutableMapping[str, Any], user: User) -> None:
 def logout_session(state: MutableMapping[str, Any]) -> None:
     state.clear()
     initialize_session(state)
+
+
+def google_sign_in_required(*, hosted: bool, oidc_available: bool) -> bool:
+    """Keep hosted/D1 account creation on Google even after config failures."""
+    return hosted or oidc_available

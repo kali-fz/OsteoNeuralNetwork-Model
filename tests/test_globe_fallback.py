@@ -2,19 +2,16 @@
 
 Covers:
 - ``render_globe`` degrades gracefully when assets are unavailable.
-- ``_fetch_uncached`` (in globe.py's asset downloader) fails soft.
+- production rendering never waits on a globe-asset network download.
+- the explicit globe asset setup helper fails soft.
 - SAMPLE_MARKERS contains no sub-country coordinates and no user identifiers.
 - The component HTML never embeds API keys (privacy contract from section 3B).
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
@@ -80,6 +77,35 @@ class TestGlobeFallback:
         result = globe_mod._ensure_assets()
         assert result is False
 
+    def test_runtime_asset_loading_never_uses_the_network(self, monkeypatch, tmp_path):
+        """A missing optional map asset must produce an immediate local fallback."""
+        import components.globe as globe_mod
+
+        monkeypatch.setattr(globe_mod, "ASSETS_DIR", tmp_path)
+
+        def _unexpected(*_, **__):
+            raise AssertionError("landing-page render attempted a network request")
+
+        monkeypatch.setattr("urllib.request.urlopen", _unexpected)
+        assert globe_mod._load_static_assets() is None
+
+    def test_fallback_html_draws_supplied_coarse_markers(self):
+        from components.globe import _build_fallback_html, _json_for_script
+
+        marker = {
+            "lat": 55.4,
+            "lng": -3.4,
+            "label": "United Kingdom",
+            "count": 5,
+            "layer": "signup",
+        }
+        html = _build_fallback_html(_json_for_script([marker]), True, 320)
+
+        assert "const markers" in html
+        assert "United Kingdom" in html
+        assert "Globe unavailable" not in html
+        assert "cdn.jsdelivr.net" not in html
+
     def test_html_does_not_contain_api_key_patterns(self):
         """The built HTML must not embed API keys.
 
@@ -88,6 +114,7 @@ class TestGlobeFallback:
         should never reach this file in the first place.
         """
         import re
+
         from components.globe import _build_html
 
         html = _build_html(
@@ -115,7 +142,10 @@ class TestGlobeFallback:
         from components.globe import _build_html
 
         # Attempt basic JSON injection
-        evil_markers = '[{"lat":0,"lng":0,"label":"</script><script>alert(1)</script>","count":1,"layer":"signup"}]'
+        evil_markers = (
+            '[{"lat":0,"lng":0,"label":"</script><script>alert(1)</script>",'
+            '"count":1,"layer":"signup"}]'
+        )
         html = _build_html(
             d3_script="/* d3 */",
             topojson_script="/* topo */",
@@ -124,10 +154,36 @@ class TestGlobeFallback:
             auto_rotate=False,
             height=300,
         )
-        # The HTML should contain the JSON but not a dangling </script> before the marker
-        # Our markers are inside a JS variable assignment (const MARKERS = ...), so
-        # the injection attempt appears inside a JS string inside a script tag.
-        # Verify the HTML is structurally valid by checking no premature script close.
-        assert html.count("</script>") >= 1  # at least the closing tag is there
-        # The injected text should appear verbatim (not HTML-escaped) since it's in JS
-        assert "alert(1)" in html  # present but inside a JS context (not HTML context)
+        # The marker is retained, but HTML-significant characters are encoded so
+        # it cannot close the component's script element.
+        assert html.count("</script>") == 3
+        assert "</script><script>alert(1)</script>" not in html
+        assert "\\u003c/script\\u003e" in html
+
+    def test_marker_boundary_drops_identifiers_and_invalid_coordinates(self):
+        from components.globe import _normalise_markers
+
+        markers = _normalise_markers(
+            [
+                {
+                    "lat": 55.4,
+                    "lng": -3.4,
+                    "label": "United Kingdom",
+                    "count": 6,
+                    "layer": "signup",
+                    "email": "private@example.test",
+                    "user_id": "private-user",
+                },
+                {"lat": 200, "lng": 0, "count": 1, "layer": "signup"},
+            ]
+        )
+
+        assert markers == [
+            {
+                "lat": 55.4,
+                "lng": -3.4,
+                "label": "United Kingdom",
+                "count": 6,
+                "layer": "signup",
+            }
+        ]

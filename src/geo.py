@@ -43,7 +43,7 @@ one-line change and needs no migration.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -225,12 +225,30 @@ def _jitter(code: str, layer: str) -> tuple[float, float]:
     return lat_unit * JITTER_DEGREES, lng_unit * JITTER_DEGREES
 
 
-def _markers_for_layer(rows: Iterable[dict[str, Any]], layer: str) -> tuple[list[dict], int]:
+def _nonnegative_int(value: Any) -> int:
+    """Coerce Worker count values without letting malformed data break a page."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, parsed)
+
+
+def _markers_for_layer(
+    rows: Iterable[Mapping[str, Any]] | None,
+    layer: str,
+) -> tuple[list[dict], int]:
     markers: list[dict] = []
     unplaced = 0
+    if isinstance(rows, (str, bytes, Mapping)):
+        rows = []
     for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
         code = str(row.get("country") or "").upper()
-        count = int(row.get("count") or 0)
+        count = _nonnegative_int(row.get("count"))
         if count <= 0:
             continue
         entry = COUNTRY_CENTROIDS.get(code)
@@ -268,7 +286,7 @@ def build_markers(payload: dict[str, Any] | None) -> dict[str, Any]:
     well-formed result rather than an exception. The globe is decoration on a
     landing page; it must never be the reason the page fails to render.
     """
-    if not payload or not payload.get("ok"):
+    if not isinstance(payload, Mapping) or not payload.get("ok"):
         return {
             "markers": [],
             "totals": {"users": 0, "contributors": 0, "approved_submissions": 0,
@@ -279,9 +297,15 @@ def build_markers(payload: dict[str, Any] | None) -> dict[str, Any]:
             "available": False,
         }
 
-    layers = payload.get("layers") or {}
-    signups = layers.get("signups") or {}
-    contributors = layers.get("contributors") or {}
+    layers = payload.get("layers")
+    if not isinstance(layers, Mapping):
+        layers = {}
+    signups = layers.get("signups")
+    if not isinstance(signups, Mapping):
+        signups = {}
+    contributors = layers.get("contributors")
+    if not isinstance(contributors, Mapping):
+        contributors = {}
 
     signup_markers, signup_unplaced = _markers_for_layer(
         signups.get("plotted"), SIGNUP_LAYER
@@ -290,16 +314,25 @@ def build_markers(payload: dict[str, Any] | None) -> dict[str, Any]:
         contributors.get("plotted"), CONTRIBUTOR_LAYER
     )
 
+    raw_totals = payload.get("totals")
+    if not isinstance(raw_totals, Mapping):
+        raw_totals = {}
+    totals = {
+        key: _nonnegative_int(raw_totals.get(key))
+        for key in ("users", "contributors", "approved_submissions", "countries_represented")
+    }
+    k_anonymity_min = _nonnegative_int(payload.get("k_anonymity_min")) or None
+
     return {
         "markers": signup_markers + contributor_markers,
-        "totals": payload.get("totals") or {},
+        "totals": totals,
         # People in countries too small to plot without identifying them.
         "elsewhere": {
-            SIGNUP_LAYER: int(signups.get("elsewhere") or 0),
-            CONTRIBUTOR_LAYER: int(contributors.get("elsewhere") or 0),
+            SIGNUP_LAYER: _nonnegative_int(signups.get("elsewhere")),
+            CONTRIBUTOR_LAYER: _nonnegative_int(contributors.get("elsewhere")),
         },
         # People whose country code has no centroid in this table.
         "unplaced": {SIGNUP_LAYER: signup_unplaced, CONTRIBUTOR_LAYER: contributor_unplaced},
-        "k_anonymity_min": payload.get("k_anonymity_min"),
+        "k_anonymity_min": k_anonymity_min,
         "available": True,
     }

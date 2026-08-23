@@ -29,14 +29,15 @@ CONFIGURATION
     client_secret       = "<secret>"
     server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 
-Absent that block the module reports itself unconfigured and the app falls back
-to password login, which is what a local run should do -- OAuth against
-localhost would otherwise need its own Google client for no gain.
+Absent that block the module reports itself unconfigured. A local-only run may
+still use the legacy password path, but a hosted/D1 deployment must fail closed
+with a configuration message instead of quietly presenting password signup.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import streamlit as st
@@ -46,6 +47,39 @@ from backend import get_or_create_oauth_user
 logger = logging.getLogger(__name__)
 
 PROVIDER = "google"
+_SHARED_SETTINGS = ("redirect_uri", "cookie_secret")
+_PROVIDER_SETTINGS = ("client_id", "client_secret", "server_metadata_url")
+
+
+def _oidc_target() -> tuple[bool, str | None]:
+    """Return whether OIDC is usable and the provider name for ``st.login``.
+
+    Streamlit supports both the named ``[auth.google]`` layout used by ONNM's
+    deployment guide and a single-provider layout with the Google settings
+    directly under ``[auth]``. Supporting both prevents a valid Google setup
+    from being mistaken for permission to expose the password-registration
+    fallback.
+    """
+    if not all(hasattr(st, command) for command in ("login", "logout", "user")):
+        return False, None
+    try:
+        auth = st.secrets.get("auth", {})
+    except Exception:  # noqa: BLE001 - no secrets file is a normal local state
+        return False, None
+    if not isinstance(auth, Mapping):
+        return False, None
+
+    named = auth.get(PROVIDER)
+    if isinstance(named, Mapping):
+        provider_settings = named
+        provider_name: str | None = PROVIDER
+    else:
+        provider_settings = auth
+        provider_name = None
+
+    shared_ready = all(bool(auth.get(key)) for key in _SHARED_SETTINGS)
+    provider_ready = all(bool(provider_settings.get(key)) for key in _PROVIDER_SETTINGS)
+    return shared_ready and provider_ready, provider_name
 
 
 def oidc_configured() -> bool:
@@ -55,17 +89,8 @@ def oidc_configured() -> bool:
     empty when no secrets file exists at all, which is the normal state of a
     fresh local checkout and must not be an error.
     """
-    if not hasattr(st, "login"):
-        return False  # Streamlit older than 1.42
-    try:
-        auth = st.secrets.get("auth", {})
-    except Exception:  # noqa: BLE001 - no secrets file is a normal local state
-        return False
-    try:
-        google = auth.get(PROVIDER, {})
-        return bool(auth.get("redirect_uri") and google.get("client_id"))
-    except AttributeError:
-        return False
+    configured, _ = _oidc_target()
+    return configured
 
 
 def _claims() -> Any:
@@ -84,15 +109,28 @@ def is_signed_in() -> bool:
 
 
 def render_sign_in() -> None:
-    """The whole login screen when Google Sign-In is configured."""
-    st.subheader("Sign in")
+    """Render Google Sign-In, failing closed when hosted secrets are incomplete."""
+    st.subheader("Sign in with Google")
     st.caption(
         "ONNM uses Google Sign-In, so this app never receives or stores your "
         "password. Only your email address and Google's account identifier are "
         "kept, to attach your scans to you."
     )
+
+    configured, provider_name = _oidc_target()
+    if not configured:
+        logger.error("Google OIDC is required here but is not fully configured")
+        st.error(
+            "Google Sign-In is temporarily unavailable because this deployment's "
+            "authentication settings are incomplete. Please try again later."
+        )
+        return
+
     if st.button("Continue with Google", type="primary", use_container_width=True):
-        st.login(PROVIDER)
+        if provider_name is None:
+            st.login()
+        else:
+            st.login(provider_name)
     st.caption(
         "By continuing you accept the Terms of Service and Privacy Policy below, "
         "and acknowledge that this is an unvalidated research prototype and not "

@@ -18,15 +18,23 @@ from __future__ import annotations
 import sys
 import unittest.mock
 from pathlib import Path
+from types import SimpleNamespace
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+_original_streamlit = sys.modules.get("streamlit")
+sys.modules["streamlit"] = SimpleNamespace(markdown=lambda *_a, **_k: None)
+import theme  # noqa: E402
+
+if _original_streamlit is None:
+    del sys.modules["streamlit"]
+else:
+    sys.modules["streamlit"] = _original_streamlit
+
 
 def _captured_payloads() -> list[str]:
-    import theme
-
     with unittest.mock.patch.object(theme.st, "markdown") as markdown:
         theme.inject_theme()
     return [call.args[0] for call in markdown.call_args_list]
@@ -66,3 +74,11 @@ def test_every_css_section_survives_the_first_blank_line():
 def test_inject_theme_emits_the_google_fonts_link():
     payloads = _captured_payloads()
     assert any("fonts.googleapis.com" in p for p in payloads)
+
+
+def test_streamlit_material_icons_keep_their_icon_font():
+    """The app font must not expose icon ligatures as overlapping text."""
+    css = next(p for p in _captured_payloads() if "<style>" in p)
+    assert '[data-testid="stIconMaterial"]' in css
+    assert 'font-family:"Material Symbols Rounded"' in css
+    assert 'font-feature-settings:"liga" !important' in css

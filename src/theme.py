@@ -77,6 +77,26 @@ _CSS = """
 }
 [data-testid="stHeader"] { background: transparent; }
 html, body, [data-testid="stAppViewContainer"] * { font-family: var(--sans); }
+/* Streamlit renders uploader/expander icons as Material Symbols ligatures.
+   The broad type rule above used to replace their icon font with Inter, which
+   exposed strings such as "upload" and "keyboard_arrow_right" on top of the
+   real labels.  Keep Streamlit's icon font explicit and isolated. */
+[data-testid="stIconMaterial"],
+.material-symbols-rounded,
+.material-symbols-outlined {
+  font-family:"Material Symbols Rounded","Material Symbols Outlined" !important;
+  font-weight:normal !important;
+  font-style:normal !important;
+  line-height:1 !important;
+  letter-spacing:normal !important;
+  text-transform:none !important;
+  white-space:nowrap !important;
+  word-wrap:normal !important;
+  direction:ltr !important;
+  -webkit-font-feature-settings:"liga" !important;
+  -webkit-font-smoothing:antialiased !important;
+  font-feature-settings:"liga" !important;
+}
 .block-container { padding-top: 1.6rem; max-width: 1400px; }
 
 /* ── Type scale ──────────────────────────────────────────────────────────── */
@@ -87,6 +107,16 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
 [data-testid="stMarkdownContainer"] p { font-size:16px; line-height:1.6; color:var(--ink); }
 
 /* ── Landing nav ─────────────────────────────────────────────────────────── */
+.onnm-public-brand {
+  min-height:44px; display:flex; align-items:center; gap:14px;
+  font-family:var(--mono); font-size:14px; font-weight:600;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink);
+  border-bottom:1px solid var(--line); margin-bottom:14px;
+}
+.onnm-public-brand span {
+  font-family:var(--sans); font-size:12px; font-weight:500;
+  letter-spacing:.02em; text-transform:none; color:var(--muted);
+}
 .onnm-nav {
   display:flex; align-items:center; justify-content:space-between;
   padding:20px 0 16px; border-bottom:1px solid var(--line);
@@ -110,6 +140,36 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
 .onnm-nav-btn.primary:hover { background:var(--green-hv); border-color:var(--green-hv); }
 
 /* ── Hero ────────────────────────────────────────────────────────────────── */
+.onnm-home-hero {
+  min-height:410px; padding:54px 48px 44px; margin:8px 0 16px;
+  border:1px solid var(--line); border-radius:18px; overflow:hidden;
+  background-image:
+    linear-gradient(
+      90deg,rgba(247,244,239,.98) 0%,rgba(247,244,239,.92) 58%,
+      rgba(247,244,239,.56) 100%
+    ),
+    var(--hero-img);
+  background-size:cover; background-position:center;
+  box-shadow:0 20px 55px rgba(47,58,45,.08);
+}
+.onnm-home-hero .onnm-hero-title {
+  max-width:720px; font-size:clamp(44px,5.8vw,78px); line-height:.98;
+}
+.onnm-home-hero .onnm-hero-subtitle { max-width:620px; }
+.onnm-hero-points { display:flex; flex-wrap:wrap; gap:8px; margin-top:26px; }
+.onnm-hero-points span {
+  padding:7px 10px; border:1px solid rgba(46,107,71,.23); border-radius:999px;
+  background:rgba(255,255,255,.7); color:#405144; font-family:var(--mono);
+  font-size:11px; font-weight:500;
+}
+.onnm-globe-heading { margin:14px 0 2px; padding:0 6px; }
+.onnm-globe-heading span {
+  display:block; color:var(--muted); font-family:var(--mono); font-size:11px;
+  font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+}
+.onnm-globe-heading strong {
+  display:block; margin-top:5px; color:var(--ink); font-size:16px; font-weight:600;
+}
 .onnm-hero {
   position:relative; overflow:hidden;
   min-height:480px; padding:56px 0 0; margin:0 -1rem;
@@ -298,13 +358,36 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
 
 /* ── Actions ─────────────────────────────────────────────────────────────── */
 .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
-  border-radius:0; border:1px solid var(--line); background:rgba(0,0,0,.04);
-  color:var(--ink); font-weight:500; min-height:44px; box-shadow:none;
-  transition:background .2s, border-color .2s;
+  border-radius:8px; border:1px solid var(--line); background:var(--white);
+  color:var(--ink); font-weight:600; min-height:44px; box-shadow:none;
+  transition:background .18s, border-color .18s, transform .18s;
 }
+
+.onnm-scanner-intro {
+  display:grid; grid-template-columns:auto 1fr; gap:6px 18px;
+  align-items:baseline; padding:18px 20px; margin:2px 0 20px;
+  border:1px solid var(--line); border-left:5px solid var(--green);
+  border-radius:10px; background:var(--white);
+}
+.onnm-scanner-intro span {
+  grid-row:1 / span 2; font-family:var(--mono); font-size:11px; font-weight:600;
+  letter-spacing:.07em; text-transform:uppercase; color:var(--green);
+}
+.onnm-scanner-intro strong { font-size:16px; font-weight:600; color:var(--ink); }
+.onnm-scanner-intro p { margin:0; font-size:13px; color:var(--muted); }
 .stButton > button:hover, .stDownloadButton > button:hover,
 .stFormSubmitButton > button:hover {
   border-color:var(--ink); background:var(--white); color:var(--ink);
+  transform:translateY(-1px);
+}
+.stButton > button[kind="primary"],
+[data-testid="stBaseButton-primary"] {
+  min-height:52px; border-color:var(--green); background:var(--green); color:#fff;
+  padding-inline:28px; font-size:15px;
+}
+.stButton > button[kind="primary"]:hover,
+[data-testid="stBaseButton-primary"]:hover {
+  border-color:var(--green-hv); background:var(--green-hv); color:#fff;
 }
 .stFormSubmitButton > button {
   min-height:52px; border:0; background:var(--green); color:#fff;
@@ -322,10 +405,18 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
   border-color:var(--line) !important;
 }
 [data-testid="stFileUploader"] section {
-  border:1px solid var(--line); background:var(--bg); padding:26px;
+  border:1px dashed #b9b2a5; border-radius:12px; background:var(--white);
+  padding:30px 24px; min-height:112px;
 }
 [data-testid="stFileUploader"] section:hover {
-  border-color:var(--ink); background:var(--white);
+  border-color:var(--green); background:#fbfdfb;
+}
+[data-testid="stFileUploaderDropzone"] button {
+  border-radius:8px; border-color:var(--green); background:var(--green);
+  color:#fff; font-weight:600; min-height:44px; padding-inline:22px;
+}
+[data-testid="stFileUploaderDropzone"] button:hover {
+  border-color:var(--green-hv); background:var(--green-hv); color:#fff;
 }
 [data-testid="stWidgetLabel"] p { font-size:14px; font-weight:500; }
 [data-testid="stSlider"] [role="slider"] { border-radius:0; }
@@ -403,6 +494,7 @@ hr { border-top:1px solid var(--line-s); }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  .onnm-home-hero { min-height:auto; padding:40px 28px 34px; }
   .onnm-hero-title  { font-size: clamp(32px,8vw,52px); }
   .onnm-hero-subtitle { max-width: 100%; }
   .onnm-stats       { flex-direction: column; }
@@ -410,6 +502,8 @@ hr { border-top:1px solid var(--line-s); }
   .onnm-stat:last-child { border-bottom: none; }
   .onnm-metric-grid { grid-template-columns: 1fr 1fr; }
   .onnm-appbar-email { display: none; }
+  .onnm-scanner-intro { grid-template-columns:1fr; }
+  .onnm-scanner-intro span { grid-row:auto; }
 }
 @media (max-width: 480px) {
   .onnm-metric-grid { grid-template-columns: 1fr; }

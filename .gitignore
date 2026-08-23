@@ -68,6 +68,10 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
+# --- Local design-review captures -------------------------------------------
+# Browser-saved Streamlit pages and their companion assets are review-only.
+/yasmine/
+
 # --- uv (tests are run via uv in some environments) ---------------------------
 uv.lock
 

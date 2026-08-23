@@ -65,7 +65,7 @@ CONTRIBUTOR_QUERY = """
      GROUP BY origin_country
 """
 
-K_ANONYMITY_MIN = 5
+K_ANONYMITY_MIN = 1
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def add_submission(con, sid, uid, country=None, status="pending"):
 
 
 def suppress(rows, k=K_ANONYMITY_MIN):
-    """The Worker's k-anonymity split, restated."""
+    """The Worker's configurable display-threshold split, restated."""
     plotted = [{"country": r["country"], "count": r["n"]} for r in rows if r["n"] >= k]
     elsewhere = sum(r["n"] for r in rows if r["n"] < k)
     return plotted, elsewhere
@@ -156,17 +156,14 @@ def test_cloudflare_placeholders_are_storable(db) -> None:
 # ---------------------------------------------------------------------------
 # 2. Suppression: a country is plotted only when enough people share it
 # ---------------------------------------------------------------------------
-def test_a_country_below_the_threshold_is_never_plotted(db) -> None:
-    for i in range(K_ANONYMITY_MIN - 1):
-        add_user(db, f"small{i}", "IS")
-    for i in range(K_ANONYMITY_MIN):
-        add_user(db, f"big{i}", "GB")
+def test_a_single_account_country_is_plotted(db) -> None:
+    add_user(db, "is-user", "IS")
+    add_user(db, "gb-user", "GB")
 
     plotted, elsewhere = suppress(db.execute(SIGNUP_QUERY).fetchall())
 
-    assert [p["country"] for p in plotted] == ["GB"]
-    assert elsewhere == K_ANONYMITY_MIN - 1, "the suppressed people are still counted"
-    assert "IS" not in str(plotted), "a suppressed country must not appear at all"
+    assert {p["country"] for p in plotted} == {"GB", "IS"}
+    assert elsewhere == 0
 
 
 def test_the_threshold_is_a_floor_not_a_ceiling(db) -> None:
@@ -193,8 +190,8 @@ def test_one_enthusiastic_uploader_cannot_inflate_their_own_country(db) -> None:
     assert rows[0]["n"] == 1, "40 submissions from one person is one contributor"
 
     plotted, elsewhere = suppress(rows)
-    assert plotted == [], "and one contributor is below the disclosure threshold"
-    assert elsewhere == 1
+    assert plotted == [{"country": "MT", "count": 1}]
+    assert elsewhere == 0
 
 
 def test_only_approved_contributions_reach_the_globe(db) -> None:
@@ -359,6 +356,31 @@ def test_the_globe_fails_soft_when_the_backend_is_unreachable() -> None:
         assert built["markers"] == []
         assert built["available"] is False
         assert built["totals"]["users"] == 0
+
+
+def test_malformed_backend_counts_do_not_break_the_landing_page() -> None:
+    payload = {
+        "ok": True,
+        "totals": {"users": "not-a-number"},
+        "layers": {
+            "signups": {
+                "plotted": [
+                    {"country": "GB", "count": "5"},
+                    {"country": "US", "count": "not-a-number"},
+                    "not-a-row",
+                ],
+                "elsewhere": "bad",
+            },
+            "contributors": "not-a-layer",
+        },
+        "k_anonymity_min": "5",
+    }
+
+    built = build_markers(payload)
+    assert [marker["country"] for marker in built["markers"]] == ["GB"]
+    assert built["totals"]["users"] == 0
+    assert built["elsewhere"][SIGNUP_LAYER] == 0
+    assert built["k_anonymity_min"] == 5
 
 
 # ---------------------------------------------------------------------------

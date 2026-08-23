@@ -66,7 +66,7 @@ assume otherwise, and re-verify anything that looks stale.
   - `cloudflare/migrations/0004_geolocation.sql` — country columns on `users`
     and `submissions`, with CHECKs that make a finer location unstorable.
   - `cloudflare/src/worker.js` — captures `request.cf.country` on both write
-    paths, and serves `GET /globe` with k-anonymised per-country counts.
+    paths, and serves `GET /globe` with aggregated per-country counts.
   - `src/community.py` — `CommunityClient.globe()`, which fails soft.
   - `src/geo.py` — `build_markers()`, turning that payload into exactly the
     marker contract in section 3C, plus a 146-country centroid table.
@@ -309,9 +309,11 @@ around any of them to get a denser-looking map:
   decorative globe. **Do not add it.**
 - **The country is never read from the request body.** A client cannot claim to
   be somewhere. The edge already knows, and it is the only source.
-- **Countries with fewer than 5 people are never plotted.** They are summed
-  into an `elsewhere` integer attached to no country. One signup in a small
-  country is not a statistic, it is a person.
+- **Countries are plotted from the first recorded account.** Markers remain at
+  fixed country centroids and never contain an email, account ID, submission
+  ID, timestamp, browser coordinate, or any location finer than country level.
+  This is country-level coarsening, not k-anonymity: a one-account country can
+  now appear publicly.
 - **The contributor layer counts distinct people, not submissions**, and only
   those whose uploads a human reviewer approved. One enthusiastic uploader
   cannot inflate their own country's dot.
