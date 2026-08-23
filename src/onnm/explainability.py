@@ -162,11 +162,56 @@ def compute_cam(cam, image: torch.Tensor, class_index: int | None = None) -> np.
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
+#: Above this share of the frame sitting at the CAM maximum, "the hottest pixel"
+#: has no meaning and the pointing game is not measuring localisation.
+#:
+#: 0.05 is generous: a well-behaved Grad-CAM on a 256x256 input peaks over a few
+#: hundred pixels at most, so this fires only on genuinely flat maps.
+DEGENERATE_PEAK_FRACTION = 0.05
+
+
+def peak_fraction(cam: np.ndarray, tolerance: float = 1e-6) -> float:
+    """Share of the frame sitting at the CAM's maximum.
+
+    A localising CAM has one peak and this is near zero. A saturated one --
+    which is what a badly chosen target layer produces -- can have most of the
+    frame tied at the maximum, and every downstream "where does it look"
+    question then has no answer.
+
+    Reported alongside the scores rather than hidden, because a degenerate CAM
+    and a model that looks in the wrong place produce identical-looking numbers
+    and require completely different fixes.
+    """
+    if cam.size == 0:
+        return float("nan")
+    return float((cam >= cam.max() - tolerance).sum() / cam.size)
+
+
 def pointing_game(cam: np.ndarray, gt_mask: np.ndarray) -> bool:
-    """True when the CAM's single hottest pixel falls inside the lesion."""
+    """True when the CAM's hottest point falls inside the lesion.
+
+    The peak is the **centroid of the maximal region**, not ``argmax``.
+
+    That distinction is not pedantry. ``np.argmax`` returns the first maximal
+    element in raster order, so on a CAM where thousands of pixels tie at the
+    maximum it reports the top-left corner of the plateau every single time --
+    which is background on essentially every radiograph. Scoring the pinned
+    checkpoint that way produced a pointing-game accuracy of exactly 0.0000
+    across 267 images, a number that looked like a devastating result about the
+    model and was in fact a statement about tie-breaking.
+
+    The centroid is well defined whether the maximum is one pixel or half the
+    frame, and reduces to ``argmax`` when the peak is unique. It does not rescue
+    a degenerate CAM -- nothing can -- but it fails honestly instead of
+    reporting a confident zero. Use :func:`peak_fraction` to tell the two apart.
+    """
     if not gt_mask.any():
         return False
-    peak = np.unravel_index(int(np.argmax(cam)), cam.shape)
+    hottest = cam >= cam.max() - 1e-6
+    rows, cols = np.nonzero(hottest)
+    if len(rows) == 0:
+        return False
+    peak = (int(round(rows.mean())), int(round(cols.mean())))
     return bool(gt_mask[peak])
 
 
@@ -230,6 +275,7 @@ def evaluate_localisation(
     hits: list[bool] = []
     ious: list[float] = []
     coverages: list[float] = []
+    peaks: list[float] = []
     n_skipped = 0
 
     for record in records[:max_samples] if max_samples else records:
@@ -251,6 +297,21 @@ def evaluate_localisation(
         hits.append(pointing_game(heatmap, gt_mask))
         ious.append(cam_iou(heatmap, gt_mask, threshold))
         coverages.append(coverage(heatmap, gt_mask, threshold))
+        peaks.append(peak_fraction(heatmap))
+
+    mean_peak = float(np.mean(peaks)) if peaks else float("nan")
+    degenerate = bool(mean_peak >= DEGENERATE_PEAK_FRACTION)
+    if degenerate:
+        # Loud, because every score in this dict is then a number about the CAM's
+        # shape rather than about where the model looks, and they do not read as
+        # obviously wrong -- they read as a bad model.
+        logger.warning(
+            "Grad-CAM is degenerate: on average %.1f%% of each map sits at its "
+            "maximum. Localisation scores below describe a saturated heatmap, not "
+            "the model's attention. Check explain.target_layer -- for DenseNet, "
+            "features.denseblock4 is the raw block output, before the final norm.",
+            100 * mean_peak,
+        )
 
     return {
         "n_scored": len(hits),
@@ -258,6 +319,8 @@ def evaluate_localisation(
         "pointing_game_accuracy": float(np.mean(hits)) if hits else float("nan"),
         "mean_iou": float(np.nanmean(ious)) if ious else float("nan"),
         "mean_coverage": float(np.nanmean(coverages)) if coverages else float("nan"),
+        "mean_peak_fraction": mean_peak,
+        "cam_degenerate": degenerate,
         "cam_threshold": threshold,
     }
 

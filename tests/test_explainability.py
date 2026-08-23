@@ -19,12 +19,14 @@ import pytest
 
 from onnm.dataset import build_transforms
 from onnm.explainability import (
+    DEGENERATE_PEAK_FRACTION,
     boxes_to_mask,
     cam_iou,
     coverage,
     load_annotation,
     map_box_to_model_space,
     overlay_cam,
+    peak_fraction,
     pointing_game,
 )
 
@@ -179,6 +181,52 @@ def test_pointing_game_detects_hit_and_miss() -> None:
     miss = np.zeros((64, 64), dtype=np.float32)
     miss[5, 5] = 1.0
     assert pointing_game(miss, mask) is False
+
+
+def test_pointing_game_uses_the_plateau_centroid_not_raster_order() -> None:
+    """The bug that made a broken measurement look like a broken model.
+
+    ``np.argmax`` returns the FIRST maximal element, so a CAM with a large tie
+    reports the top-left corner of the plateau every time -- background on
+    essentially every radiograph. Scoring the pinned checkpoint that way gave a
+    pointing-game accuracy of exactly 0.0000 across 267 images, which read as a
+    devastating result about the model and was a statement about tie-breaking.
+
+    Here the plateau is centred on the lesion, so the honest answer is a hit.
+    """
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[24:40, 24:40] = True
+
+    cam = np.zeros((64, 64), dtype=np.float32)
+    cam[20:44, 20:44] = 1.0          # a plateau centred on the lesion
+    assert np.unravel_index(int(np.argmax(cam)), cam.shape) == (20, 20)
+    assert not mask[20, 20], "argmax lands outside the lesion, which is the trap"
+    assert pointing_game(cam, mask) is True
+
+
+def test_pointing_game_still_misses_when_the_plateau_is_elsewhere() -> None:
+    """The centroid must not turn every degenerate CAM into a hit."""
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[40:60, 40:60] = True
+
+    cam = np.zeros((64, 64), dtype=np.float32)
+    cam[0:20, 0:20] = 1.0
+    assert pointing_game(cam, mask) is False
+
+
+def test_peak_fraction_separates_a_peak_from_a_plateau() -> None:
+    """The number that tells a bad model apart from an unusable measurement."""
+    sharp = np.zeros((64, 64), dtype=np.float32)
+    sharp[30, 30] = 1.0
+    assert peak_fraction(sharp) == pytest.approx(1 / 4096)
+
+    flat = np.ones((64, 64), dtype=np.float32)
+    assert peak_fraction(flat) == pytest.approx(1.0)
+
+    # What the pinned checkpoint actually produces: most of the frame tied.
+    saturated = np.full((64, 64), 1.0, dtype=np.float32)
+    saturated[0:16, 0:16] = 0.2
+    assert peak_fraction(saturated) > DEGENERATE_PEAK_FRACTION
 
 
 def test_pointing_game_without_ground_truth_is_false() -> None:

@@ -25,13 +25,20 @@ logger = get_logger("overfit")
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/base.yaml")
+    # Every other script takes this; without it gate 6 could not run on the
+    # machine it exists to check. base.yaml sets `train.miopen: true`, and this
+    # is the one gate that trains -- so on ROCm/Windows it died inside the
+    # MIOpen BatchNorm defect that `configs/full_run.yaml` exists to dodge,
+    # which reads as "the gate is broken" rather than "pass the override".
+    parser.add_argument("--override", action="append", default=[],
+                        help="config overrides, e.g. --override configs/full_run.yaml")
     parser.add_argument("--profile", default=None)
     parser.add_argument("--samples", type=int, default=32)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--target", type=float, default=0.95)
     args = parser.parse_args()
 
-    cfg = load_config(args.config, profile=args.profile)
+    cfg = load_config(args.config, overrides=args.override, profile=args.profile)
 
     print("=" * 66)
     print("OVERFIT CHECK")
