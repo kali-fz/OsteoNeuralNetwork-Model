@@ -25,14 +25,14 @@ fileWatcherType = "auto"
 gatherUsageStats = false
 
 [theme]
-# Git-Design tokens. Streamlit paints the chrome it owns (widget accents, the
-# running indicator) before any CSS lands, so these have to agree with theme.py
+# Warm-ivory tokens. Streamlit paints the chrome it owns (widget accents, the
+# running indicator) before any CSS lands, so these must agree with theme.py
 # or the first paint of every rerun flashes the stock palette.
 base = "light"
-primaryColor = "#08872b"
-backgroundColor = "#e9edec"
-secondaryBackgroundColor = "#f2f5f3"
-textColor = "#000000"
+primaryColor = "#2e6b47"
+backgroundColor = "#f7f4ef"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1c1a17"
 
 [runner]
 fastReruns = true

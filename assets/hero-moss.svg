@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 560" preserveAspectRatio="xMidYMax slice" role="presentation" aria-hidden="true">
+  <defs>
+    <!-- Organic moss texture via fractal noise -->
+    <filter id="f-moss-far" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.028 0.018" numOctaves="5" seed="17" result="n"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.18  0 0 0 0 0.30  0 0 0 0 0.10  0 0 0 12 -2" in="n" result="g"/>
+      <feBlend in="SourceGraphic" in2="g" mode="soft-light"/>
+    </filter>
+    <filter id="f-moss-mid" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.042 0.030" numOctaves="5" seed="53" result="n"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.10  0 0 0 0 0.22  0 0 0 0 0.06  0 0 0 14 -3" in="n" result="g"/>
+      <feBlend in="SourceGraphic" in2="g" mode="multiply"/>
+    </filter>
+    <filter id="f-moss-fore" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.065 0.055" numOctaves="4" seed="91" result="n"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.06  0 0 0 0 0.15  0 0 0 0 0.04  0 0 0 16 -4" in="n" result="g"/>
+      <feBlend in="SourceGraphic" in2="g" mode="overlay"/>
+    </filter>
+    <filter id="f-glow">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feComposite in="SourceGraphic" in2="b" operator="over"/>
+    </filter>
+
+    <!-- Sky gradient: warm ivory fading to a softer horizon -->
+    <linearGradient id="g-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#f0ebe0"/>
+      <stop offset="55%"  stop-color="#e8e0d3"/>
+      <stop offset="100%" stop-color="#ddd5c4"/>
+    </linearGradient>
+
+    <!-- Layer gradients -->
+    <linearGradient id="g-far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#afc49a"/>
+      <stop offset="100%" stop-color="#7a9b68"/>
+    </linearGradient>
+    <linearGradient id="g-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#6a9358"/>
+      <stop offset="100%" stop-color="#47703c"/>
+    </linearGradient>
+    <linearGradient id="g-fore" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#3d6436"/>
+      <stop offset="100%" stop-color="#263f20"/>
+    </linearGradient>
+    <linearGradient id="g-mound-a" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#456e3c"/>
+      <stop offset="100%" stop-color="#2d4e27"/>
+    </linearGradient>
+    <linearGradient id="g-mound-b" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#3c6634"/>
+      <stop offset="100%" stop-color="#28472c"/>
+    </linearGradient>
+
+    <!-- Warm atmospheric veil: preserves text legibility over any land colour -->
+    <linearGradient id="g-veil" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#f0ebe0" stop-opacity="0.92"/>
+      <stop offset="48%"  stop-color="#f0ebe0" stop-opacity="0.55"/>
+      <stop offset="72%"  stop-color="#f0ebe0" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#f0ebe0" stop-opacity="0.00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="1440" height="560" fill="url(#g-sky)"/>
+
+  <!-- Far hills — haze-lit, very soft -->
+  <path d="M0 350
+    C 90 328  200 318  340 336
+    C 480 354  620 344  780 322
+    C 940 300  1100 308  1260 326
+    C 1360 338  1420 334  1440 330
+    L 1440 560 L 0 560 Z"
+    fill="url(#g-far)" filter="url(#f-moss-far)" opacity="0.72"/>
+
+  <!-- Mid range — primary moss sward -->
+  <path d="M0 398
+    C 80 376  210 360  380 378
+    C 550 396  700 384  860 368
+    C 1020 352  1180 364  1320 376
+    C 1400 384  1440 380  1440 378
+    L 1440 560 L 0 560 Z"
+    fill="url(#g-mid)" filter="url(#f-moss-mid)"/>
+
+  <!-- Foreground — deep moss, full saturation -->
+  <path d="M0 444
+    C 60 428  150 420  280 432
+    C 410 444  530 436  660 426
+    C 790 416  920 422  1060 432
+    C 1200 442  1340 436  1440 430
+    L 1440 560 L 0 560 Z"
+    fill="url(#g-fore)" filter="url(#f-moss-fore)"/>
+
+  <!-- Organic mounds — natural lenticular shapes -->
+  <ellipse cx="155"  cy="492" rx="148" ry="54" fill="url(#g-mound-a)" filter="url(#f-moss-fore)" opacity="0.82"/>
+  <ellipse cx="480"  cy="480" rx="195" ry="60" fill="url(#g-mound-b)" filter="url(#f-moss-fore)" opacity="0.78"/>
+  <ellipse cx="820"  cy="488" rx="165" ry="52" fill="url(#g-mound-a)" filter="url(#f-moss-fore)" opacity="0.76"/>
+  <ellipse cx="1120" cy="478" rx="185" ry="58" fill="url(#g-mound-b)" filter="url(#f-moss-fore)" opacity="0.80"/>
+  <ellipse cx="1340" cy="490" rx="140" ry="48" fill="url(#g-mound-a)" filter="url(#f-moss-fore)" opacity="0.75"/>
+
+  <!-- Atmospheric veil: keeps left-side text legible regardless of moss colour -->
+  <rect width="1440" height="560" fill="url(#g-veil)"/>
+</svg>

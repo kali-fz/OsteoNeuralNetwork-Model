@@ -24,59 +24,59 @@ _CLASS_COLORS = {
     "malignant": "#c62828",
 }
 
-# Git-Design, mirrored from theme.py. The tokens are duplicated rather than
-# imported because this module is deliberately torch-free *and* Streamlit-free:
-# importing theme.py here would pull Streamlit into the report path and break
-# that. The two lists are short and change together.
+# Warm-ivory tokens, mirrored from theme.py.  Duplicated (not imported) so
+# this module stays Streamlit-free and torch-free.  The report background is
+# print-safe white; warm-ivory is for presentation layers only.
 _STYLE = """
   :root {
-    --gd-bg:#e9edec; --gd-inset:#f2f5f3; --gd-white:#fff; --gd-ink:#000;
-    --gd-muted:#58635b; --gd-line:#b6bfb8; --gd-line-soft:#d2d9d4; --gd-green:#08872b;
-    --gd-sans:"Mona Sans","Avenir Next","Segoe UI",Arial,sans-serif;
-    --gd-mono:"Mona Sans Mono","SFMono-Regular",Consolas,monospace;
+    --bg:#ffffff; --inset:#f7f4ef; --white:#ffffff; --ink:#1c1a17;
+    --muted:#6b6457; --line:#ddd8ce; --line-s:#e8e3da; --green:#2e6b47;
+    --sans:"Inter","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:"JetBrains Mono","SFMono-Regular","SF Mono",Consolas,monospace;
   }
   * { box-sizing: border-box; }
-  body { font-family: var(--gd-sans); color: var(--gd-ink); margin: 0;
-         background: var(--gd-bg); font-size: 16px; line-height: 1.5; }
-  .page { max-width: 900px; margin: 0 auto; background: var(--gd-white);
-          padding: 40px 48px; border-inline: 1px solid var(--gd-line-soft); }
-  h1 { font-size: 2.25rem; font-weight: 425; letter-spacing: -.03em;
+  body { font-family: var(--sans); color: var(--ink); margin: 0;
+         background: var(--bg); font-size: 16px; line-height: 1.5; }
+  .page { max-width: 900px; margin: 0 auto; background: var(--white);
+          padding: 40px 48px; border-inline: 1px solid var(--line-s); }
+  h1 { font-size: 2.1rem; font-weight: 300; letter-spacing: -.035em;
        line-height: 1.05; margin: 0 0 14px; }
-  h2 { font-size: 1.25rem; font-weight: 460; letter-spacing: -.01em;
-       margin: 34px 0 10px; border-bottom: 1px solid var(--gd-line);
+  h2 { font-size: 1.2rem; font-weight: 500; letter-spacing: -.01em;
+       margin: 32px 0 10px; border-bottom: 1px solid var(--line);
        padding-bottom: 8px; }
-  .meta { font-family: var(--gd-mono); font-size: 0.82rem; font-weight: 500;
-          color: var(--gd-muted); margin: 0 0 22px; padding-bottom: 16px;
-          border-bottom: 1px solid var(--gd-line); }
-  .signal { display: inline-block; width: 10px; height: 10px;
-            background: var(--gd-green); vertical-align: middle; margin-left: 4px; }
-  .verdict { border: 1px solid var(--gd-line); border-left: 8px solid var(--accent);
-             background: var(--gd-white); padding: 20px 24px; border-radius: 0;
+  .meta { font-family: var(--mono); font-size: 0.80rem; font-weight: 500;
+          color: var(--muted); margin: 0 0 22px; padding-bottom: 14px;
+          border-bottom: 1px solid var(--line); }
+  .signal { display: inline-block; width: 9px; height: 9px;
+            background: var(--green); border-radius: 50%;
+            vertical-align: middle; margin-left: 4px; }
+  .verdict { border: 1px solid var(--line); border-left: 7px solid var(--accent);
+             background: var(--white); padding: 20px 24px;
              margin: 22px 0; }
-  .verdict h2 { border: none; margin: 0; padding: 0; font-size: 1.75rem;
-                font-weight: 425; letter-spacing: -.02em; color: var(--accent); }
-  .verdict p { margin: 8px 0 0; font-family: var(--gd-mono); font-size: 0.82rem;
-               font-weight: 500; color: var(--gd-muted); }
+  .verdict h2 { border: none; margin: 0; padding: 0; font-size: 1.7rem;
+                font-weight: 300; letter-spacing: -.025em; color: var(--accent); }
+  .verdict p { margin: 8px 0 0; font-family: var(--mono); font-size: 0.80rem;
+               font-weight: 500; color: var(--muted); }
   table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
-  td, th { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--gd-line-soft); }
-  th { font-family: var(--gd-mono); font-size: 0.78rem; font-weight: 500;
-       letter-spacing: .04em; text-transform: uppercase; color: var(--gd-muted); }
-  .bar { height: 10px; border-radius: 0; display: inline-block; vertical-align: middle; }
+  td, th { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line-s); }
+  th { font-family: var(--mono); font-size: 0.76rem; font-weight: 500;
+       letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .bar { height: 10px; display: inline-block; vertical-align: middle; }
   .images { display: flex; gap: 16px; flex-wrap: wrap; }
   .images figure { margin: 0; flex: 1 1 260px; }
-  .images img { width: 100%; border: 1px solid var(--gd-line); border-radius: 0; }
-  .images figcaption { font-family: var(--gd-mono); font-size: 0.75rem;
-                       color: var(--gd-muted); margin-top: 6px; }
-  code { font-family: var(--gd-mono); background: var(--gd-inset);
-         border: 1px solid var(--gd-line-soft); padding: 1px 5px; font-size: 90%; }
-  .disclaimer { background: var(--gd-inset); border: 1px solid var(--gd-line);
-                border-left: 6px solid #c62828; border-radius: 0;
+  .images img { width: 100%; border: 1px solid var(--line); }
+  .images figcaption { font-family: var(--mono); font-size: 0.74rem;
+                       color: var(--muted); margin-top: 6px; }
+  code { font-family: var(--mono); background: var(--inset);
+         border: 1px solid var(--line-s); padding: 1px 5px; font-size: 90%; }
+  .disclaimer { background: var(--inset); border: 1px solid var(--line);
+                border-left: 5px solid #c62828;
                 padding: 16px 20px; font-size: 0.82rem; white-space: pre-wrap; }
-  .footnote { font-family: var(--gd-mono); color: var(--gd-muted);
-              font-size: 0.72rem; margin-top: 26px; padding-top: 14px;
-              border-top: 1px solid var(--gd-line-soft); }
+  .footnote { font-family: var(--mono); color: var(--muted);
+              font-size: 0.70rem; margin-top: 26px; padding-top: 14px;
+              border-top: 1px solid var(--line-s); }
   @media print {
-    body { background: var(--gd-white); }
+    body { background: #fff; }
     .page { max-width: none; padding: 0; border-inline: 0; }
     .images figure { page-break-inside: avoid; }
   }
