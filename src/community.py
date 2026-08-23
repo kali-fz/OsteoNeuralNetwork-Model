@@ -70,6 +70,113 @@ MAX_IMAGE_B64_BYTES = 600_000
 
 VALID_LABELS = ("normal", "benign", "malignant")
 
+#: What a reviewer may write into ``admin_label``. ``misc`` means "not a bone
+#: radiograph at all" -- a genuine training target for the OOD detector, which
+#: today has only hand-written heuristics and no negatives to learn from, but
+#: not a diagnosis. The Worker and the D1 schema carry the same four values.
+MISC_LABEL = "misc"
+REVIEW_LABELS = (*VALID_LABELS, MISC_LABEL)
+
+#: The three triage buckets. See :func:`classify_bucket`.
+BUCKET_VALID_BONE = "valid_bone"
+BUCKET_MISC = "misc"
+BUCKET_CONTRADICTION = "contradiction"
+BUCKETS = (BUCKET_VALID_BONE, BUCKET_MISC, BUCKET_CONTRADICTION)
+
+#: Human-readable bucket names, for the review UI and the export summary.
+BUCKET_TITLES = {
+    BUCKET_VALID_BONE: "Valid bone radiographs",
+    BUCKET_MISC: "Misc / misuse",
+    BUCKET_CONTRADICTION: "Mislabelled — the system contradicted itself",
+}
+
+#: Mirrors ``DEFAULT_CONFIDENCE_FLOOR`` in ``onnm.ood`` and ``CONFIDENT_PROB``
+#: in the Worker. Imported rather than re-derived would be nicer, but ``ood``
+#: pulls in numpy and this module is deliberately dependency-light so that
+#: ``backend.py`` can import it without the inference stack.
+CONFIDENT_PROB = 0.65
+
+# ---------------------------------------------------------------------------
+# Who may review
+# ---------------------------------------------------------------------------
+#: The single account permitted to see the review queue or approve anything.
+#:
+#: Hardcoded in three places on purpose -- here, in ``cloudflare/src/worker.js``,
+#: and as a CHECK constraint in ``cloudflare/schema.sql``. Review is the only
+#: path by which any data reaches training, so "who may review" is a property of
+#: the deployment rather than a setting: an environment variable that could be
+#: mistyped, or a database flag that a future endpoint could grant, would both
+#: be weaker than a constant that requires a code change and a migration to
+#: move. Tests assert the three copies agree.
+ADMIN_USER_ID = "c2c5a209-4aaa-4eb9-b112-b2929b6dbe12"
+ADMIN_EMAIL = "kzfhero@gmail.com"
+
+
+def is_admin(user_id: str | None, email: str | None = None) -> bool:
+    """True only for the one account allowed to review submissions.
+
+    Matches on the user id, and on the email address as well when one is given.
+    The id is the real check -- it is what the Worker and the schema pin -- and
+    the email is a second, independent statement of the same fact, so that a
+    session carrying a mismatched pair is refused rather than resolved.
+    """
+    if user_id != ADMIN_USER_ID:
+        return False
+    return email is None or str(email).strip().lower() == ADMIN_EMAIL
+
+
+def classify_bucket(
+    *,
+    ood_flagged: bool,
+    max_probability: float = 0.0,
+    user_says_wrong: bool = False,
+    user_suggested_label: str | None = None,
+) -> tuple[str, str]:
+    """Sort one submission into a triage bucket. Returns ``(bucket, reason)``.
+
+    The Python mirror of ``triageBucket()`` in ``cloudflare/src/worker.js``.
+    The Worker is authoritative -- it is what actually writes the column -- and
+    this exists so the rule can be unit-tested without a network, and so the
+    app can show a user which queue their submission joined.
+
+    The three buckets:
+
+    ``valid_bone``
+        The OOD gate accepted the image and the classifier ran normally. These
+        retrain the lesion head and need a clinical label.
+
+    ``misc``
+        The gate rejected it: a hotdog, a screenshot, a photograph of a wall.
+        Misuse is data. These retrain the OOD detector as negatives, and must
+        never carry a diagnosis, because they have none.
+
+    ``contradiction``
+        The system disagrees with itself. Either the gate rejected an image the
+        user insists is a radiograph -- a false rejection nobody but the user
+        can witness, since inference never ran -- or it accepted one the user
+        says is not a radiograph at all while the classifier confidently
+        diagnosed it. Worth the most per row: each is a demonstrated failure of
+        the gate with the image still attached.
+
+    Note what is *not* a contradiction: a user disputing the grade ("you said
+    malignant, I think benign") on an accepted radiograph. That is a labelling
+    disagreement for the reviewer, not evidence that the gate misfired, and it
+    stays in ``valid_bone``.
+    """
+    user_says_not_radiograph = user_suggested_label == MISC_LABEL
+    if ood_flagged:
+        if user_says_wrong and not user_says_not_radiograph:
+            return BUCKET_CONTRADICTION, "gate rejected it; the user says it is a radiograph"
+        if max_probability >= CONFIDENT_PROB:
+            return (
+                BUCKET_CONTRADICTION,
+                f"gate rejected it but the classifier was {max_probability:.2f} confident",
+            )
+        return BUCKET_MISC, "the out-of-distribution gate rejected it"
+    if user_says_not_radiograph:
+        return BUCKET_CONTRADICTION, "gate accepted it; the user says it is not a radiograph"
+    return BUCKET_VALID_BONE, "the out-of-distribution gate accepted it"
+
 
 @dataclass(frozen=True)
 class User:
@@ -140,6 +247,51 @@ def encode_image_for_sharing(image: Any) -> tuple[str, str, int]:
     return encoded, hashlib.sha256(raw).hexdigest(), len(encoded)
 
 
+def encode_payload_for_sharing(payload: bytes, max_side: int = 256) -> tuple[str, str, int]:
+    """Encode a *rejected* upload -- the raw file bytes -- for community storage.
+
+    :func:`encode_image_for_sharing` takes the model input, which only exists
+    once inference has run. An image the OOD gate turned away never reaches the
+    model, and those are exactly the images the gate needs as negatives: it
+    currently learns from no data at all, only hand-written thresholds. Without
+    this the "misc" bucket would be a queue of rows with nothing in them.
+
+    Re-encoding through Pillow to a grayscale PNG is also the de-identification
+    step. It is the same treatment ``storage.py`` gives a standard image: the
+    pixels survive and every scrap of container metadata -- EXIF, GPS, camera
+    make, colour profiles -- is discarded, because a new single-channel PNG is
+    written from the pixel array rather than the original file being copied.
+
+    DICOM is deliberately not handled here. Its identifiers live in headers that
+    Pillow cannot read and therefore cannot be shown to have stripped, and the
+    de-identification path that does handle them runs later, after the gate. A
+    rejected DICOM is stored as a row with no image; the alternative is a code
+    path that could put patient details in a shared table.
+
+    Returns ``(base64_png, sha256_hex, byte_length)``.
+    """
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(io.BytesIO(payload)) as opened:
+        image = opened.convert("L")
+        # Thumbnail rather than resize: the aspect ratio carries information
+        # about what the misuse actually was, and a squashed hotdog is a worse
+        # negative than a small one.
+        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        array = np.asarray(image)
+
+    buffer = io.BytesIO()
+    Image.fromarray(array, mode="L").save(buffer, format="PNG", optimize=True)
+    raw = buffer.getvalue()
+    encoded = base64.b64encode(raw).decode("ascii")
+    if len(encoded) > MAX_IMAGE_B64_BYTES:
+        raise CommunityError(
+            f"encoded image is {len(encoded)} bytes, over the {MAX_IMAGE_B64_BYTES} limit"
+        )
+    return encoded, hashlib.sha256(raw).hexdigest(), len(encoded)
+
+
 def decode_shared_image(encoded: str) -> Any:
     """Inverse of :func:`encode_image_for_sharing`, for review and retraining."""
     import numpy as np
@@ -173,6 +325,14 @@ class CommunityClient:
 
     @property
     def admin_enabled(self) -> bool:
+        """Whether *this process* can call the admin routes at all.
+
+        Holding the key is necessary but not sufficient: the Worker also
+        requires the request to name the one account allowed to review. Call
+        :func:`is_admin` on the signed-in session before showing any review UI,
+        because this property answers "is a key configured", not "is this
+        person allowed".
+        """
         return bool(self.base_url and self.admin_key)
 
     # -- transport ---------------------------------------------------------
@@ -201,6 +361,11 @@ class CommunityClient:
         request = urllib.request.Request(url, data=data, method=method)
         request.add_header("authorization", f"Bearer {key}")
         request.add_header("user-agent", USER_AGENT)
+        if admin:
+            # Says which account is asking, alongside the key that says the
+            # caller is trusted software. The Worker checks both, so a process
+            # holding the admin key still cannot review as somebody else.
+            request.add_header("x-onnm-admin-user", ADMIN_USER_ID)
         if data is not None:
             request.add_header("content-type", "application/json")
 
@@ -371,6 +536,45 @@ class CommunityClient:
         logger.warning("submission not recorded (%s): %s", status, body.get("error"))
         return None
 
+    def create_rejected_submission(
+        self,
+        user_id: str,
+        *,
+        shared: bool,
+        image_b64: str | None = None,
+        image_sha256: str | None = None,
+        ood_score: float | None = None,
+    ) -> str | None:
+        """Record an upload the OOD gate refused, before inference ever ran.
+
+        These rows are the entire content of the ``misc`` bucket, and the reason
+        the OOD detector can eventually be retrained on evidence rather than on
+        more hand-tuned thresholds. There is no prediction to store, so
+        ``model_label`` is ``'rejected'`` and the probability map is empty --
+        which is also what keeps the row out of the lesion manifest: it has no
+        class, and the export refuses to invent one.
+        """
+        submission_id = str(uuid.uuid4())
+        payload: dict[str, Any] = {
+            "submission_id": submission_id,
+            "user_id": user_id,
+            "model_label": "rejected",
+            "lesion_probability": 0.0,
+            "class_probabilities": {},
+            "ood_flagged": True,
+            "ood_score": ood_score,
+            "shared": bool(shared),
+        }
+        if shared and image_b64:
+            payload["image_b64"] = image_b64
+            payload["image_sha256"] = image_sha256
+
+        status, body = self._request("POST", "/submissions", payload)
+        if status == 201:
+            return submission_id
+        logger.warning("rejection not recorded (%s): %s", status, body.get("error"))
+        return None
+
     def submit_feedback(
         self,
         submission_id: str,
@@ -385,8 +589,8 @@ class CommunityClient:
         Nothing written here can reach a training set: the Worker writes only
         the untrusted columns, and the export query reads only ``admin_label``.
         """
-        if suggested_label and suggested_label not in VALID_LABELS:
-            raise ValueError(f"suggested_label must be one of {VALID_LABELS}")
+        if suggested_label and suggested_label not in REVIEW_LABELS:
+            raise ValueError(f"suggested_label must be one of {REVIEW_LABELS}")
         status, _ = self._request(
             "POST",
             f"/submissions/{urllib.parse.quote(submission_id)}/feedback",
@@ -406,11 +610,25 @@ class CommunityClient:
         return body.get("submissions", []) if status == 200 else []
 
     # -- admin -------------------------------------------------------------
-    def pending_review(self, limit: int = 25, with_images: bool = True) -> list[dict[str, Any]]:
+    def pending_review(
+        self, limit: int = 25, with_images: bool = True, bucket: str | None = None
+    ) -> list[dict[str, Any]]:
+        """The review queue, optionally narrowed to one triage bucket.
+
+        Filtering server-side rather than in the UI matters here: with images
+        attached each row is ~30 KB, so fetching all three buckets in order to
+        render one tab would move megabytes to display a third of them.
+        """
+        if bucket is not None and bucket not in BUCKETS:
+            raise ValueError(f"bucket must be one of {BUCKETS}")
         status, body = self._request(
             "GET",
             "/admin/pending",
-            params={"limit": limit, "images": "1" if with_images else "0"},
+            params={
+                "limit": limit,
+                "images": "1" if with_images else "0",
+                "bucket": bucket,
+            },
             admin=True,
         )
         return body.get("pending", []) if status == 200 else []
@@ -421,23 +639,41 @@ class CommunityClient:
         *,
         decision: str,
         admin_label: str | None = None,
+        admin_bucket: str | None = None,
         note: str | None = None,
-        reviewed_by: str = "admin",
+        reviewed_by: str = ADMIN_USER_ID,
     ) -> tuple[bool, str]:
-        """Approve or reject. Approving requires a ground-truth label.
+        """Approve or reject. Approving requires a ground truth *and* a bucket.
+
+        The bucket says what the row is for -- retraining the lesion head, or
+        hardening the OOD gate -- and the label says what the image is. Both are
+        required because the export sorts on the first and trains on the second,
+        so a row missing either would be silently dropped rather than raise.
+
+        The pairing is checked here, again in the Worker, and a third time by a
+        schema trigger. Two of those are redundant on any given call; the one
+        that is not is whichever the current bug is in.
 
         Returns ``(ok, message)`` so a UI can show why a rejection happened.
         """
         if decision not in ("approved", "rejected"):
             raise ValueError("decision must be 'approved' or 'rejected'")
-        if decision == "approved" and admin_label not in VALID_LABELS:
-            raise ValueError(f"approving requires admin_label in {VALID_LABELS}")
+        if decision == "approved":
+            if admin_label not in REVIEW_LABELS:
+                raise ValueError(f"approving requires admin_label in {REVIEW_LABELS}")
+            if admin_bucket not in BUCKETS:
+                raise ValueError(f"approving requires admin_bucket in {BUCKETS}")
+            if admin_bucket == BUCKET_MISC and admin_label != MISC_LABEL:
+                raise ValueError("a misc row has no diagnosis: label it 'misc'")
+            if admin_bucket == BUCKET_VALID_BONE and admin_label == MISC_LABEL:
+                raise ValueError("a bone radiograph needs a clinical label, not 'misc'")
         status, body = self._request(
             "POST",
             f"/admin/review/{urllib.parse.quote(submission_id)}",
             {
                 "decision": decision,
                 "admin_label": admin_label,
+                "admin_bucket": admin_bucket,
                 "note": note,
                 "reviewed_by": reviewed_by,
             },
@@ -462,7 +698,10 @@ class CommunityClient:
         )
         if status == 200:
             return body
-        return {"batch_id": None, "count": 0, "rows": [], "error": body.get("error")}
+        return {
+            "batch_id": None, "count": 0, "lesion_rows": 0, "ood_rows": 0,
+            "rows": [], "error": body.get("error"),
+        }
 
 
 _client: CommunityClient | None = None

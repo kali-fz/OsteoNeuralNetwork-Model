@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "updated_at": "2026-08-23 01:09 UTC",
+  "versions": [
+    {
+      "version": "v1.0.0",
+      "created_at": "2026-08-23 01:09 UTC",
+      "run": "full-20260822-041653",
+      "status": "serving",
+      "metrics": {
+        "macro_roc_auc": 0.8934045124421072,
+        "macro_pr_auc": 0.8135841591810585,
+        "balanced_accuracy": 0.7494232848829993,
+        "macro_f1": 0.7644290903643786,
+        "malignant_ppv": 0.7560975609756098,
+        "malignant_recall": 0.6326530612244898,
+        "malignant_recall_lo": 0.4897959183673469,
+        "malignant_recall_hi": 0.7755102040816326,
+        "bone_acceptance": 0.96
+      },
+      "community": {},
+      "note": "Baseline: the run every number in overview.md refers to. Trained on BTXRD alone, before the community loop existed.",
+      "parent": null,
+      "held_because": ""
+    }
+  ]
+}

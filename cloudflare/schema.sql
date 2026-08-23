@@ -22,6 +22,27 @@
 -- the Worker, and again in scripts/export_batch.py -- three places, because
 -- this is the one mistake in the whole design that would silently poison the
 -- model rather than raise an error.
+--
+-- ---------------------------------------------------------------------------
+-- THE THREE BUCKETS
+-- ---------------------------------------------------------------------------
+-- Every shared submission is triaged into exactly one of three buckets, and the
+-- bucket decides what the row can teach:
+--
+--   'valid_bone'    the OOD gate accepted it and the classifier ran normally.
+--                   Retrains the lesion classifier. Needs a clinical label.
+--   'misc'          the OOD gate rejected it -- a hotdog, a screenshot, a photo
+--                   of a wall. Retrains the OOD detector as a negative. It must
+--                   never receive a clinical label, because it has none.
+--   'contradiction' the system disagrees with itself: the gate rejected an image
+--                   the user insists is a radiograph, or it accepted one that is
+--                   plainly not. These are the rows worth the most per example,
+--                   because each one is a demonstrated failure of the gate.
+--
+-- As with labels, the bucket exists twice. `triage_bucket` is computed from the
+-- model's own signals and is therefore only as good as the gate that is being
+-- corrected; `admin_bucket` is what a human confirmed. Export reads the admin
+-- column, and falls back to nothing at all rather than to the guess.
 
 -- ---------------------------------------------------------------------------
 -- Accounts.
@@ -54,7 +75,17 @@ CREATE TABLE IF NOT EXISTS users (
 
     created_at      TEXT NOT NULL,
     tos_accepted_at TEXT NOT NULL,
+
+    -- Admin is one specific person, and the database says so.
+    --
+    -- The review queue is the only path by which anything reaches training, so
+    -- "who is an admin" is not a preference to be configured -- it is a fixed
+    -- property of this deployment. Writing the id into a CHECK means no code
+    -- path, no misconfigured environment variable and no future endpoint can
+    -- grant the flag to a second account: the INSERT simply fails. Moving the
+    -- privilege requires a migration, which is the correct amount of friction.
     is_admin        INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
+    CHECK (is_admin = 0 OR user_id = 'c2c5a209-4aaa-4eb9-b112-b2929b6dbe12'),
 
     CHECK (
         (auth_provider = 'password'
@@ -111,10 +142,34 @@ CREATE TABLE IF NOT EXISTS submissions (
     user_comment         TEXT,
     feedback_at          TEXT,
 
+    -- Automatic triage. Computed by the Worker from ood_flagged, the softmax
+    -- confidence and any user dispute -- see triageBucket() in worker.js, and
+    -- classify_bucket() in src/community.py, which must agree.
+    --
+    -- Recomputed when feedback arrives, because a user disputing a rejection is
+    -- exactly the evidence that moves a row from 'misc' to 'contradiction'.
+    -- Untrusted in the same sense the user columns are: it is the guess of the
+    -- system being corrected, so it orders the queue and nothing more.
+    triage_bucket   TEXT NOT NULL DEFAULT 'valid_bone'
+        CHECK (triage_bucket IN ('valid_bone', 'misc', 'contradiction')),
+    triage_reason   TEXT,
+
     -- Trusted human review. This is the gate.
     review_status   TEXT NOT NULL DEFAULT 'pending'
         CHECK (review_status IN ('pending', 'approved', 'rejected')),
-    admin_label     TEXT CHECK (admin_label IN ('normal', 'benign', 'malignant')),
+
+    -- The bucket a human confirmed. NULL until reviewed. Distinct from
+    -- triage_bucket for the same reason admin_label is distinct from
+    -- user_suggested_label: the automatic value is the thing under correction
+    -- and cannot be its own ground truth. Export reads only this column.
+    admin_bucket    TEXT CHECK (admin_bucket IN ('valid_bone', 'misc', 'contradiction')),
+
+    -- 'misc' joins the three clinical classes here, and means "not a bone
+    -- radiograph". It is a real training target -- the OOD detector needs
+    -- negatives and currently has none but hand-written heuristics -- but it is
+    -- not a diagnosis, so the trigger below stops it being paired with a
+    -- diagnostic bucket and stops a diagnosis being pinned to a non-radiograph.
+    admin_label     TEXT CHECK (admin_label IN ('normal', 'benign', 'malignant', 'misc')),
     admin_note      TEXT,
     reviewed_at     TEXT,
     reviewed_by     TEXT,
@@ -130,13 +185,37 @@ CREATE TABLE IF NOT EXISTS submissions (
 -- Never approve a row without a ground-truth label. Enforced by the database
 -- rather than trusted to the Worker, because this is the invariant that
 -- protects the training set.
+--
+-- The bucket is required for the same reason the label is: export sorts rows by
+-- admin_bucket into two different training targets, and a row with no bucket
+-- would be silently dropped from both rather than raise.
 CREATE TRIGGER IF NOT EXISTS approved_rows_need_a_label
 BEFORE UPDATE OF review_status ON submissions
 WHEN NEW.review_status = 'approved'
-     AND (NEW.admin_label IS NULL OR NEW.shared = 0)
+     AND (NEW.admin_label IS NULL OR NEW.admin_bucket IS NULL OR NEW.shared = 0)
 BEGIN
     SELECT RAISE(ABORT,
-        'cannot approve: an approved row needs admin_label set and shared = 1');
+        'cannot approve: an approved row needs admin_label, admin_bucket and shared = 1');
+END;
+
+-- A label and a bucket that contradict each other would poison whichever
+-- training target believed it.
+--
+-- A 'misc' row carries no diagnosis: calling a hotdog 'benign' is precisely the
+-- hotdog case one level up, dressed as a bucket assignment. And a row a human
+-- put in a bone bucket cannot be labelled 'misc', because the lesion manifest
+-- has no index for it and it would land in training as class -1 or be silently
+-- skipped. 'contradiction' accepts either: the bucket records that the gate got
+-- it wrong, and the label records what the image actually was, which is what
+-- makes those rows the useful ones.
+CREATE TRIGGER IF NOT EXISTS bucket_and_label_must_agree
+BEFORE UPDATE OF admin_label, admin_bucket ON submissions
+WHEN NEW.admin_bucket IS NOT NULL AND NEW.admin_label IS NOT NULL
+     AND ((NEW.admin_bucket = 'misc'       AND NEW.admin_label != 'misc')
+       OR (NEW.admin_bucket = 'valid_bone' AND NEW.admin_label = 'misc'))
+BEGIN
+    SELECT RAISE(ABORT,
+        'cannot review: admin_bucket and admin_label disagree (misc takes the misc label; valid_bone takes a clinical label)');
 END;
 
 CREATE INDEX IF NOT EXISTS idx_submissions_user
@@ -147,6 +226,14 @@ CREATE INDEX IF NOT EXISTS idx_submissions_review
 -- keeps it small as unshared submissions accumulate.
 CREATE INDEX IF NOT EXISTS idx_submissions_queue
     ON submissions(created_at) WHERE shared = 1 AND review_status = 'pending';
+-- The review UI shows one bucket at a time, so the queue is always filtered on
+-- it; without this the tab a bucket is empty in still scans the whole queue.
+CREATE INDEX IF NOT EXISTS idx_submissions_triage
+    ON submissions(triage_bucket, created_at) WHERE shared = 1 AND review_status = 'pending';
+-- Export walks approved rows bucket by bucket -- lesion rows to one manifest,
+-- OOD negatives to another.
+CREATE INDEX IF NOT EXISTS idx_submissions_approved_bucket
+    ON submissions(admin_bucket, created_at) WHERE review_status = 'approved';
 CREATE INDEX IF NOT EXISTS idx_submissions_batch
     ON submissions(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_submissions_sha
@@ -159,7 +246,12 @@ CREATE TABLE IF NOT EXISTS batches (
     batch_id    TEXT PRIMARY KEY,
     created_at  TEXT NOT NULL,
     note        TEXT,
-    row_count   INTEGER NOT NULL DEFAULT 0
+    row_count   INTEGER NOT NULL DEFAULT 0,
+    -- Split by what the rows retrain, because a batch of 40 that was 39 OOD
+    -- negatives and one bone film is not the same event as the reverse, and
+    -- "which generation saw what" is unanswerable later from a single total.
+    lesion_rows INTEGER NOT NULL DEFAULT 0,
+    ood_rows    INTEGER NOT NULL DEFAULT 0
 );
 
 -- ---------------------------------------------------------------------------
@@ -178,7 +270,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('bytes_stored', '0');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
 
 -- Per-user, per-day write counter. Bounds one account's ability to consume
 -- the shared free tier, whether by enthusiasm or malice.

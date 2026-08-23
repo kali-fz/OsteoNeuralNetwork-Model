@@ -45,12 +45,15 @@ from auth import (  # noqa: E402
 )
 from backend import initialize_database, using_community  # noqa: E402
 from checkpoint_fetch import ensure_checkpoint  # noqa: E402
-from community import get_client  # noqa: E402
+from community import get_client, is_admin  # noqa: E402
 from community_ui import (  # noqa: E402
+    admin_can_review,
     community_status,
+    record_rejection,
     record_submission,
     render_admin_review,
     render_feedback,
+    render_rejection_dispute,
     render_share_consent,
 )
 from database import (  # noqa: E402
@@ -446,12 +449,35 @@ with st.sidebar:
     render_scan_history(st.session_state["user_id"])
 
     st.divider()
-    # Community loop status. The review queue appears only when ONNM_ADMIN_KEY
-    # is set, which it is not in the hosted Space.
+    # Community loop status. The review queue is opened only for the owning
+    # account, and only where ONNM_ADMIN_KEY is set -- which it is not in the
+    # hosted Space, so a leak of the app's key cannot approve its own training
+    # data. Everyone else sees nothing at all: the pending count is a fact about
+    # other people's uploads and is not theirs to read.
     _status = community_status()
-    if _status is not None:
+    if _status is not None and is_admin(
+        st.session_state.get("user_id"), st.session_state.get("user_email")
+    ):
         with st.expander(f"Community · {_status.get('pending_review', 0)} awaiting review"):
-            render_admin_review()
+            # Reviewing properly happens in review_app.py: a sidebar column is
+            # too narrow to judge a radiograph in, and that console is never
+            # deployed, so the review path is not even present in the process
+            # strangers talk to. This stays so the queue is discoverable.
+            st.caption(
+                "Full-width console, and the place to actually work:\n\n"
+                "`python -m streamlit run review_app.py --server.port 8502`"
+            )
+            if admin_can_review(
+                st.session_state.get("user_id"), st.session_state.get("user_email")
+            ):
+                render_admin_review(
+                    st.session_state.get("user_id"), st.session_state.get("user_email")
+                )
+            else:
+                st.caption(
+                    "Set ONNM_ADMIN_KEY to open the review queue. It is deliberately "
+                    "not configured in the hosted app."
+                )
 
     # A clone has no weights (reports/ is gitignored), so a hosted deployment
     # fetches one from ONNM_CHECKPOINT_URL on first boot. No-op locally.
@@ -679,7 +705,10 @@ if "cases" not in st.session_state:
     st.session_state["cases"] = {}
 cases: dict = st.session_state["cases"]
 
-rejected: list[tuple[str, object]] = []
+# Rejections carry their bytes as well as the report: an image the gate turned
+# away is a training negative for the gate, and it is the only kind of example
+# the OOD detector has ever been able to learn from.
+rejected: list[tuple[str, object, bytes]] = []
 failed: list[tuple[str, str]] = []
 ready: list[tuple[str, dict]] = []
 
@@ -691,7 +720,7 @@ for uploaded in uploads:
     # an unvalidated photograph would come back as a ~50% "benign" call.
     validation = validate_payload(payload, uploaded.name)
     if not validation.is_radiograph:
-        rejected.append((uploaded.name, validation))
+        rejected.append((uploaded.name, validation, payload))
         continue
 
     digest = hashlib.sha256(payload).hexdigest()
@@ -822,8 +851,19 @@ for uploaded in uploads:
 
     ready.append((uploaded.name, entry))
 
-for name, validation in rejected:
+for name, validation, payload in rejected:
     st.error(f"`{name}` — {REJECTION_MESSAGE}")
+
+    # Record the rejection. Keyed on the file digest and cached in session state
+    # so the Streamlit rerun that follows every widget interaction cannot write
+    # the same refusal a dozen times.
+    rejection_key = f"rejected:{st.session_state['user_id']}:{hashlib.sha256(payload).hexdigest()}"
+    if rejection_key not in st.session_state:
+        st.session_state[rejection_key] = record_rejection(
+            st.session_state["user_id"], payload,
+            shared=SHARE_CONSENT, filename=name,
+        )
+
     with st.expander(f"Why was {name} rejected?"):
         for check in validation.failures:
             st.markdown(f"- **{check.name}** — {check.detail}")
@@ -831,6 +871,12 @@ for name, validation in rejected:
             "These are pre-inference heuristics (channel structure, dynamic range, "
             "intensity entropy, edge density). If a genuine radiograph is rejected, "
             "export it as an uncropped grayscale DICOM or PNG and try again."
+        )
+        # The only witness to a false rejection. Inference never ran, so nothing
+        # in the stored row distinguishes a real radiograph the heuristics
+        # mishandled from the photograph they correctly turned away.
+        render_rejection_dispute(
+            st.session_state[rejection_key], st.session_state["user_id"], key=rejection_key
         )
 for name, message in failed:
     st.error(f"`{name}` — {message}")

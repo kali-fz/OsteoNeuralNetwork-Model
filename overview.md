@@ -229,6 +229,23 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
     the default `Python-urllib/3.x` signature with a 403 and a plain-text
     `error code: 1010` body, before the request reaches any Worker. See
     `community.USER_AGENT`.
+14. **A `misc` row must never reach `manifest.csv`.** `build_records` reads that file and
+    merges anything with a recognised label column into the three-class set, so a bucket
+    column would not save it — the separation has to be two files. Enforced by the
+    `bucket_and_label_must_agree` trigger, the review endpoint, and `_check_row` in
+    `export_batch.py`, which is the only one of the three that runs locally.
+15. **The review form preselects nothing.** A bucket radio already sitting on
+    `triage_bucket` is an "approve as-is" button in disguise: it feeds the gate its own
+    output and teaches it only to be more confident about what it already believed.
+16. **Registration and promotion are separate acts.** Training writes to a fresh
+    `reports/<run>/` and never touches an existing checkpoint; `reports/PRODUCTION` moves
+    only through `version_model.py`, and only when no guarded metric regressed. Nothing in
+    the daily cycle can overwrite a good model with a bad one.
+17. **`ONN.md` is generated — never hand-edit it.** `model_versions.json` is the source of
+    truth. A ledger that can disagree with itself is worse than no ledger.
+18. **No new approvals means no training run.** Not an optimisation: a day with no new
+    data has no new information in it, and a version number that marks nothing makes the
+    history unreadable.
 
 ---
 
@@ -261,14 +278,16 @@ dependencies list torch, and pip would pull a CPU wheel over Colab's CUDA build.
 ```
 Google Sign-In --OIDC--> Streamlit Cloud (app.py) --HTTPS+key--> Cloudflare Worker + D1
                             OOD gate, inference                 users, submissions, feedback
-                            opt-in share checkbox               review queue, batches
-                            "this looks wrong" button                 |
+                            opt-in share checkbox               triage into 3 buckets
+                            "this looks wrong" button           review queue, batches
+                            "this really is a radiograph"            |
                                                                      v
-                              scripts/export_batch.py --> manifest.csv --> Colab retrain
+                                 scripts/export_batch.py --> manifest.csv     --> lesion retrain
+                                                         --> ood_manifest.csv --> OOD hardening
 ```
 
 Live endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 `onnm-community`
-(id `961f0440-7ff1-466e-88fe-0c2b30f3083b`, 5 tables, schema_version 2), app
+(id `961f0440-7ff1-466e-88fe-0c2b30f3083b`, 5 tables, schema_version 3), app
 `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`.
 
 - `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
@@ -279,8 +298,17 @@ Live endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 `onnm-co
 - `src/community.py` — client; **fails soft** so a dead API never blocks inference.
 - `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
   SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
-- `src/community_ui.py` — consent checkbox, feedback widget, admin review queue.
-- `scripts/export_batch.py` — approved rows to a `controls_manifest`-format CSV.
+- `src/community_ui.py` — consent checkbox, feedback widget, rejection dispute,
+  three-tab admin review queue.
+- `review_app.py` — **the review console**, and where approving actually happens:
+  `python -m streamlit run review_app.py --server.port 8502`. Local only, never deployed,
+  so the review path is not present in the process strangers talk to. `app.py` keeps a
+  sidebar entry for discoverability.
+- `scripts/export_batch.py` — approved rows to a `controls_manifest`-format CSV, plus a
+  separate OOD-negatives manifest and a `batch.json` summary.
+- `scripts/sync_community.py` — claim + rebuild in one step. Writes the cumulative
+  `configs/controls_manifest.csv`, which `base.yaml` **already** reads, so an approval
+  reaches training with no config edit.
 
 **Free tier only: Workers + D1, no R2, no payment method.** Shared images are the 256px
 preprocessed PNG as base64 in D1 (~30 KB each), capped at 200 MB in the Worker. With no
@@ -292,8 +320,58 @@ training. Enforced three times: a schema trigger that aborts approval without a 
 review endpoint, and the export query. Redundant on purpose — every other bug here
 announces itself, this one would quietly train on a hotdog labelled "normal bone".
 
+**Three buckets, triaged on arrival.** `triage_bucket` is computed by the Worker
+(`triageBucket()`, mirrored as `community.classify_bucket`) from `ood_flagged`, the max
+softmax probability and any dispute:
+
+| bucket | means | retrains |
+|---|---|---|
+| `valid_bone` | the OOD gate accepted it | the lesion classifier |
+| `misc` | the gate rejected it — misuse, and misuse is data | the OOD detector, as negatives |
+| `contradiction` | the system disagreed with itself | either, per the label |
+
+A contradiction is a *gate* failure, not a grading disagreement: the gate rejected an image
+the user insists is a radiograph, or accepted one the user says is not while the classifier
+confidently diagnosed it. "You said malignant, I think benign" stays in `valid_bone`.
+
+`admin_bucket` is the confirmed bucket and is what export reads — separate from
+`triage_bucket` for exactly the reason `admin_label` is separate from
+`user_suggested_label`: the automatic value is the guess of the system being retrained and
+cannot be its own ground truth. The review form therefore preselects nothing.
+
+`admin_label` gained a fourth value, `misc`, meaning "not a bone radiograph". It is a real
+training target — `onnm.ood` stage 1 has no learned component and no negatives — but not a
+diagnosis, so a second trigger (`bucket_and_label_must_agree`) makes "hotdog, benign"
+unsayable, and export writes misc rows to `ood_manifest.csv`, never to `manifest.csv`.
+
+**OOD rejections are now recorded, not discarded.** `app.py` writes a row with
+`model_label='rejected'` and no probabilities, and offers "this really is a radiograph",
+which is the only witness to a false rejection — inference never ran, so nothing else in
+the row distinguishes a mishandled radiograph from a correctly-refused photograph. Images
+for these come from `encode_payload_for_sharing`, which re-encodes the raw upload to a
+metadata-free 256px grayscale PNG; DICOM is deliberately excluded, because its identifiers
+live in headers Pillow cannot be shown to have stripped.
+
+**Review is one hardcoded account** — `kzfhero@gmail.com`,
+`c2c5a209-4aaa-4eb9-b112-b2929b6dbe12` — pinned in three places: a CHECK constraint on
+`users` (no other row can hold `is_admin = 1`), an `x-onnm-admin-user` header the Worker
+requires on `/admin/*`, and `community.is_admin` gating the UI. `ADMIN_KEY` authenticates
+the *caller*, the header identifies the *account*; the pair is not defence against a stolen
+key, it stops an app process that legitimately holds the key serving the queue to whoever
+is signed in.
+
 **Colab cannot host the app.** Runtimes are ephemeral (~90 min idle, 12 h cap), have no
 persistent URL, and need the owner's browser session.
+
+**The loop is a pull, not a push.** Nothing can send an approved batch *to* Colab: a
+runtime has no inbound address. So the notebook claims at the start of each run, and
+"approve whenever, it lands next run" is the only shape available — not a limitation of
+this implementation.
+
+**In Colab the community store must live on Drive.** Export *claims* rows (the Worker
+stamps `batch_id` so nothing trains twice) and a claim cannot be undone from the client.
+A batch claimed onto `/content` and then lost to a disconnect reads as exported forever
+while its images no longer exist. `sync_community.py --store <drive>/community`.
 
 **Hosting is Streamlit Community Cloud** (`deploy/streamlit-cloud/`) — free, 2.7 GB RAM,
 deploys from GitHub, redeploys on push. **Hugging Face Spaces is not an option:** Gradio
@@ -324,6 +402,62 @@ torch's zip magic, because a CDN 404 typically returns HTTP 200 with an HTML pag
 would otherwise land in `best.pt` and fail much later inside `torch.load`. The default run
 name is `hosted`, not `production` — that would collide with the `reports/PRODUCTION`
 marker on case-insensitive filesystems.
+
+---
+
+## Versioning — `ONN.md` / `model_versions.json`
+
+Every training generation is registered before anything is promoted, and promotion is a
+separate guarded act (`onnm.versioning`). A run that regresses is recorded as `held`,
+`reports/PRODUCTION` does not move, and the previous checkpoint keeps serving — **rollback
+is the default outcome of a bad run, not a recovery procedure.**
+
+| level | means |
+|---|---|
+| major | a different model — another architecture family or task head |
+| minor | a deliberate recipe change (augmentation, loss, backbone) |
+| patch | the same recipe, more data — what the daily community loop produces |
+
+Guarded metrics, any of which falling by more than `REGRESSION_TOLERANCE` (0.01) blocks
+promotion: `macro_roc_auc`, `malignant_recall`, `misc_rejection`. Accuracy is deliberately
+absent — invariant 7. The tolerance is not zero because bootstrap noise on 536 test images
+moves malignant recall by more than a point between identical runs, and a gate that fires
+on noise is a gate that gets overridden by habit.
+
+`misc_rejection` (`onnm.ood_eval`) is the new one: the share of *human-confirmed*
+non-radiographs the OOD gate turns away. Until the community loop started recording
+rejections there was no data on which stage 1 could be scored at all, so "getting better at
+bone vs misc" was not a checkable claim. It is reported beside `bone_acceptance`, never
+folded into one number — a gate that rejects everything scores 1.0 on the first and 0.0 on
+the second.
+
+**Measured at v1.0.0: `bone_acceptance` = 0.960** on the first 200 BTXRD images. The gate
+turns away 8 in 200 real radiographs on `histogram_entropy` just over the 7.5 threshold.
+Those are exactly the false rejections the `contradiction` bucket now collects.
+
+`ONN.md` is **generated** from `model_versions.json` by `scripts/version_model.py render`;
+a test asserts the two are in step. Both are git-tracked because `reports/` is not, so the
+ledger is the only part of a version that survives a fresh clone.
+
+## Daily cycle — `scripts/daily_cycle.py`
+
+```
+approved rows waiting?  --no-->  stop. no training, no version, no ledger row.
+        |
+       yes
+        v
+sync_community -> make_splits -> train -> calibrate -> evaluate -> version_model register
+                                                                          |
+                                                            promote only if nothing regressed
+```
+
+**The skip is the point.** Retraining on an unchanged dataset produces a *different* model
+scoring within noise of the last; promoting it would make the served model wander for no
+reason and fill the ledger with meaningless numbers. `--min-rows` raises the bar, `--force`
+overrides it, `--dry-run` decides without acting.
+
+Scheduled with Windows Task Scheduler; it needs `ONNM_COMMUNITY_URL` / `ONNM_ADMIN_KEY` as
+user or system environment variables, since a scheduled task has no shell session.
 
 ---
 
