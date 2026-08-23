@@ -64,7 +64,33 @@ The normal path is local to the app host:
 4. Grad-CAM produces a visual explanation. The result page keeps the raw class breakdown visible beneath the simpler normal/lesion headline.
 5. If the user opts in, the processed image and prediction are sent through the authenticated Worker into D1 for review. Sharing is never implied by uploading.
 
-## How it was made
+## How I built it
+
+### Why I started building it
+
+The gap I kept coming back to was in early detection tools for bone lesions, where accessible and genuinely accurate options are still thin on the ground. I wanted a zero-cost research prototype that could take a musculoskeletal X-ray and return a calibrated, explainable second opinion. Because it deals with medical data, I couldn't just hack something together and hope it held up — it had to be secure and accurate from the first design decision, which is what pushed the planning phase out well before I wrote a line of code.
+
+### Planning before any code
+
+Given how high the stakes are with medical data, I brought in two people to sanity-check the architecture rather than working it out alone.
+
+On the infrastructure side, I worked with a Master's student from King's College London who is currently interning at Cloudflare on frontier AI models. Together we designed a zero-trust, edge-based backend that could handle heavy image processing without touching patient confidentiality or racking up cloud costs.
+
+On the governance side, I brought in a second Master's student who specialises in GRC, and we drafted the legal framework and terms of service together, along with anti-misuse pipelines aimed at data poisoning — working through how to handle people who might try to dilute the model by uploading irrelevant images or mislabelling healthy scans as cancerous.
+
+### Building it
+
+Once the sitemap was settled, the database schemas were locked and the underlying maths had been checked, I moved into the build itself.
+
+I set up Google Login for authentication and put a guarded Cloudflare Worker in front of D1, with every image anonymised on the way in so all DICOM patient information is stripped before it reaches the database. Object storage would have been the obvious home for the images, but R2 needs a payment method on file, so consented uploads live as de-identified 256px images inside D1 itself and the storage layer stays behind one accessor — the reasoning is written up in [cloudflare/README.md](cloudflare/README.md).
+
+On the modelling side, I ran deep training loops on my local GPU across 3,746 clinical radiographs, split 70/15/15 and grouped by surrogate patient so that several views of the same person cannot straddle train and test. Malignant films are only 9.1% of the dataset, so I used focal loss with inverse-frequency alpha and selected the decision thresholds on validation data only, then calibrated the probabilities afterwards — which is what keeps false positives down on complex but normal joint anatomy.
+
+Because compute is expensive and models are bad at knowing what they don't know, I also built an out-of-distribution quality gate. If someone uploads a photo of a hotdog, a landscape or anything that isn't a valid musculoskeletal X-ray, the system flags the invalid input and stops processing rather than making a blind guess, which saves compute and keeps the outputs meaningful.
+
+To close it out, I turned the sitemap into a working Streamlit frontend, set up hosting for reasonable uptime, and added Grad-CAM heatmaps so a doctor or researcher can actually see what the model is reacting to rather than trusting a black box.
+
+### How the code is organised
 
 The project is deliberately more than a notebook wrapped in a web page. The implementation is split into small, testable boundaries:
 
@@ -79,6 +105,12 @@ The project is deliberately more than a notebook wrapped in a web page. The impl
 | Verification | Six gates plus a focused pytest suite catch environment, data, decoding, training, calibration, privacy, and backend regressions. |
 
 The hardest engineering constraints are practical rather than decorative: ROCm on Windows has a training-mode MIOpen failure, Windows DataLoader workers can multiply the MONAI cache, the malignant class is only 9.1% of BTXRD, and a model can learn a shortcut such as a collimation edge instead of a lesion. The code treats those as explicit failure modes with checks and documented workarounds.
+
+Retraining is version-controlled for the same reason. Every generation is registered in [ONN.md](ONN.md) before anything is promoted, and promotion is a separate guarded step — a run that regresses is recorded as `held`, the previous checkpoint keeps serving, and a bad retrain costs a row in a table rather than the working model.
+
+### Where it stands now
+
+ONNM is a functional prototype built on top of proper academic collaboration and GRC planning rather than a rushed hack, and what's left is a UI redesign and the final pass on the legal side before it's ready to go further.
 
 ## Results, with the necessary caveats
 
