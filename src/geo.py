@@ -43,7 +43,8 @@ one-line change and needs no migration.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # ISO 3166-1 alpha-2 -> (display name, latitude, longitude).
@@ -217,7 +218,7 @@ def _jitter(code: str, layer: str) -> tuple[float, float]:
     moved on every page load would imply live tracking, and nothing here is
     tracking anybody.
     """
-    digest = hashlib.sha256(f"{code}:{layer}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"{code}:{layer}".encode()).digest()
     # Two independent bytes -> two offsets in [-1, 1], scaled to degrees.
     lat_unit = (digest[0] / 255.0) * 2.0 - 1.0
     lng_unit = (digest[1] / 255.0) * 2.0 - 1.0
