@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from onnm.dataset import build_transforms
 from onnm.explainability import (
@@ -268,3 +269,149 @@ def test_overlay_produces_rgb_with_box() -> None:
     assert out.dtype == np.uint8
     # The box is drawn pure green.
     assert (out[10, 10:50] == [0, 255, 0]).all()
+
+
+# ---------------------------------------------------------------------------
+# CAM polarity: the tests that would have caught the inverted heatmap
+# ---------------------------------------------------------------------------
+# These MUST construct a real model and go through `build_cam`, and that is the
+# whole point of them.
+#
+# The bug they guard against lived in MONAI's default `postprocessing`, which
+# maps (min, max) -> (1, 0) and therefore inverts the map. `compute_cam` was
+# never at fault. So a test that feeds a synthetic array through a stubbed cam
+# object -- `lambda x, class_idx: some_array` -- never invokes MONAI at all,
+# never invokes the default normalizer, and passes identically whether the bug
+# is present or fixed. Every pre-existing test in this file is synthetic, which
+# is exactly why an exactly-inverted heatmap shipped unnoticed.
+#
+# A stub is only acceptable where the property under test genuinely belongs to
+# `compute_cam` itself, as in the empty-evidence test at the end.
+
+
+class _GapNet(torch.nn.Module):
+    """Tiny conv -> ReLU -> global-average-pool -> linear net.
+
+    Deliberately the same *shape* as DenseNet's head, which is what makes
+    Grad-CAM behave the way it does here, and deliberately tiny so the test
+    costs milliseconds and downloads nothing.
+
+    The weights are set rather than random so the expected CAM is provable
+    rather than hopeful: every conv weight and every classifier weight is
+    positive, so the activation at each position is a positive multiple of the
+    local input intensity, the gradient of the logit w.r.t. those activations is
+    a positive constant, and the CAM is therefore monotonically increasing in
+    input brightness. Bright input region => hot CAM. Nothing else is possible.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.features = torch.nn.Sequential(
+            torch.nn.Conv2d(3, 4, kernel_size=3, padding=1, bias=False),
+            torch.nn.ReLU(),
+        )
+        self.classifier = torch.nn.Linear(4, 2)
+        with torch.no_grad():
+            self.features[0].weight.fill_(0.05)
+            self.classifier.weight.fill_(0.5)
+            self.classifier.bias.zero_()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feats = self.features(x)
+        pooled = torch.nn.functional.adaptive_avg_pool2d(feats, 1).flatten(1)
+        return self.classifier(pooled)
+
+
+def _cam_cfg(cfg, method: str):
+    """Point the config at _GapNet's only conv stage."""
+    cfg._data["explain"]["target_layer"] = "features"
+    cfg._data["explain"]["method"] = method
+    return cfg
+
+
+def _bright_corner_input() -> torch.Tensor:
+    """A 32x32 input whose top-left quadrant is bright and rest is dark."""
+    x = torch.full((1, 3, 32, 32), 0.01)
+    x[:, :, :16, :16] = 1.0
+    return x
+
+
+@pytest.mark.parametrize("method", ["gradcam", "gradcampp"])
+def test_the_cam_is_hot_where_the_evidence_is(cfg, method: str) -> None:
+    """The regression test for the inverted heatmap.
+
+    With this network the bright quadrant is provably the evidence, so a
+    correctly-oriented CAM peaks inside it. Under MONAI's default postprocessing
+    the peak lands in the dark region instead, and this fails.
+    """
+    from onnm.explainability import build_cam, compute_cam
+
+    model = _GapNet().eval()
+    cam = build_cam(model, _cam_cfg(cfg, method))
+    result = compute_cam(cam, _bright_corner_input(), class_index=0)
+
+    assert result.shape == (32, 32)
+    assert result.min() >= 0.0 and result.max() <= 1.0
+
+    bright = np.zeros((32, 32), dtype=bool)
+    bright[:16, :16] = True
+    assert pointing_game(result, bright), (
+        "the CAM peak is outside the region that drove the prediction -- "
+        "the heatmap is inverted"
+    )
+    assert result[:16, :16].mean() > result[16:, 16:].mean(), (
+        "the evidence region must be hotter than the background"
+    )
+
+
+def test_build_cam_does_not_use_monai_default_postprocessing(cfg) -> None:
+    """Pins the fix directly: our CAM must be the opposite of MONAI's default.
+
+    MONAI's `default_normalizer` maps (min, max) -> (1, 0). If someone drops the
+    explicit `postprocessing` argument from `build_cam`, this correlation flips
+    from -1 to +1 and the test fails loudly rather than the overlay quietly
+    going upside down again.
+    """
+    from monai.visualize import GradCAM
+    from monai.visualize.class_activation_maps import default_normalizer
+
+    from onnm.explainability import build_cam, compute_cam
+
+    image = _bright_corner_input()
+    ours = compute_cam(build_cam(_GapNet().eval(), _cam_cfg(cfg, "gradcam")), image, 0)
+    monai_default = compute_cam(
+        GradCAM(
+            nn_module=_GapNet().eval(),
+            target_layers="features",
+            postprocessing=default_normalizer,
+        ),
+        image,
+        0,
+    )
+
+    correlation = float(np.corrcoef(ours.ravel(), monai_default.ravel())[0, 1])
+    assert correlation < -0.99, (
+        f"expected our CAM to be the inverse of MONAI's default (corr ~ -1), got "
+        f"{correlation:+.4f} -- if this is ~ +1, build_cam has lost its explicit "
+        "postprocessing and the heatmap is inverted again"
+    )
+
+
+def test_a_cam_with_no_positive_evidence_reads_empty_not_full() -> None:
+    """Grad-CAM ends in a ReLU, so a map can legitimately be all zeros.
+
+    It must normalise to all zeros -- an honest "no evidence" -- rather than to
+    all ones, which is what an inverting normaliser produces and which paints
+    the entire film as maximum evidence.
+
+    A stub is appropriate here: the property under test is `compute_cam`'s own
+    degenerate-range guard, not the MONAI integration.
+    """
+    from onnm.explainability import compute_cam
+
+    def all_zero_cam(x: torch.Tensor, class_idx: int | None = None) -> torch.Tensor:
+        return torch.zeros(1, 1, 16, 16)
+
+    result = compute_cam(all_zero_cam, torch.zeros(1, 3, 16, 16), class_index=0)
+    assert result.shape == (16, 16)
+    assert np.all(result == 0.0), "an empty CAM must not render as uniformly hot"

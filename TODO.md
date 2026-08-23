@@ -147,90 +147,88 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
 
 ## To do
 
-### Blocking — Grad-CAM is unmeasurable right now
+### Grad-CAM — the heatmap was inverted; fixed 2026-08-23
 
-- [ ] **Find out why the CAM is saturated. It is not the target layer.** Run
-      2026-08-23 on `full-20260822-041653`, test split, 267 annotated images:
+- [x] **The CAM was inverted. Root cause found and fixed.** MONAI's `CAMBase`
+      defaults `postprocessing=default_normalizer`, which maps
+      `(min, max) -> (1, 0)`. Its own docstring says so: "This will flip magnitudes
+      (i.e., smallest will become biggest and vice versa)." `build_cam` never
+      overrode it, and `compute_cam` then min-max rescaled the already-flipped array,
+      which preserves the flip rather than undoing it.
 
-      | metric | value |
-      |---|---|
-      | pointing game (argmax) | **0.0000** |
-      | mean IoU | 0.0237 |
-      | mean coverage | 0.0286 |
-      | **median pixels tied at the CAM maximum** | **50,176 of 65,536 (77%)** |
+      Proven rather than inferred: against an identity-postprocessing CAM on the same
+      films, correlation was **exactly -1.0000** with
+      `max|shipped - (1 - correct)| = 0.0`. Every pixel was the precise inverse.
 
-      The zero was **not** a result about the model. `pointing_game` used `np.argmax`,
-      which returns the *first* maximal element in raster order -- so on a CAM where 77%
-      of the frame ties at the maximum it reported the plateau's top-left corner every
-      time, which is background on essentially every radiograph. **Fixed**: the peak is
-      now the centroid of the maximal region, `peak_fraction` is reported, and
-      `evaluate_localisation` warns loudly when the CAM is degenerate. Regression tests
-      pin all of it.
+      **This explains everything the previous three entries were chasing.** Grad-CAM
+      ends in a ReLU, so most of a healthy map is zero; flipping it turned that zero
+      region into the "hottest evidence". The 77%-of-frame-tied-at-maximum was the zero
+      region. The 68.9%-of-peaks-in-the-padding-band was padding -- zero activation,
+      zero CAM, therefore "hottest" once inverted. The pointing-game 0.0000 was the peak
+      landing in background by construction. It was never the target layer, and it was
+      never the model.
 
-      **The layer comparison is now finished, and it refutes the hypothesis this item
-      used to carry.** Measured 2026-08-23 on the pinned checkpoint, 24 annotated test
-      images, CPU, **a freshly built and freshly loaded model for every layer** (see the
-      methodology warning below -- this matters):
+      **Fix:** `build_cam` now passes an explicit `_identity_postprocessing` to the
+      MONAI factory, leaving `compute_cam`'s min-max as the single normalisation step.
+      `GradCAMpp` subclasses `GradCAM` and inherits the same default, so one change
+      covers both `explain.method` values.
 
-      | target layer | grid | mean CAM | peak % | pointing | IoU | usable? |
-      |---|---|---:|---:|---:|---:|---|
-      | `features.denseblock4` *(current)* | 8x8 | 0.753 | 11.7% | 0.042 | 0.036 | yes |
-      | `features.norm5` | 8x8 | — | — | — | — | **no — raises** |
-      | `features` (whole extractor) | 8x8 | — | — | — | — | **no — raises** |
-      | `features.transition3` | 8x8 | 0.801 | 17.0% | 0.083 | 0.039 | yes |
-      | `features.denseblock3` | 16x16 | 0.870 | 33.0% | 0.042 | 0.040 | yes |
-      | `features.transition2` | 16x16 | 0.896 | 47.8% | 0.000 | 0.043 | yes |
+      **Re-scored on the pinned checkpoint**, test split, all 267 annotated films,
+      `class_index=MALIGNANT_INDEX` (unchanged model, layer, training and checkpoint):
 
-      Lower `peak %` is better -- it is the share of the frame tied at the CAM maximum,
-      so a localising CAM is near zero and a flat one approaches 100%.
+      | metric | before | after |
+      |---|---:|---:|
+      | pointing game | 0.0000 | **0.0936** |
+      | mean IoU | 0.0237 | **0.0428** |
+      | mean coverage | 0.0286 | **0.0440** |
 
-      Two conclusions, and the previous plan was wrong on both:
+      **The saturation is gone.** 232 of the 267 films now have
+      `peak_fraction <= 0.0039` (mean 0.0010) against a degeneracy threshold of 0.05 --
+      compare the old median of 77% of the frame tied at the maximum.
 
-      1. **`features.norm5` cannot be used at all** -- it was the prime suspect *and* the
-         proposed fix. Setting `explain.target_layer: features.norm5` would crash
-         Grad-CAM on every upload in the live app with
-         `RuntimeError: Output 0 of BackwardHookFunctionBackward is a view and is being
-         modified inplace`. The cause is torchvision's own `DenseNet.forward`
-         (v0.24.1), which is four lines long and does
-         `out = F.relu(features, inplace=True)` -- an in-place op on the very tensor a
-         backward hook would need. `features` fails identically, for the same reason.
-         Flipping all 120 `nn.ReLU` modules to `inplace=False` does **not** help: the
-         offending call is functional, not a module. Verified both ways.
+      **No verdict moved.** Across the 24 films common to both report runs, the maximum
+      difference in `malignant_probability` was **0.000e+00** and no
+      `predicted_class` changed. The heatmap is display-only: it is written at
+      `inference.py:643`, returned at `:696`, and read by nothing that gates a
+      decision. Every ROC-AUC, recall and specificity figure in `overview.md` stands.
 
-      2. **Changing the layer does not fix the saturation.** Every layer that *can* be
-         hooked is saturated, and the earlier ones are worse, not better -- peak
-         fraction climbs 11.7% -> 47.8% going back through the network. There is no
-         "layer that gives a non-degenerate CAM" among the candidates.
-         `features.denseblock4` is currently the least-bad option, not the wrong one,
-         and **it should be left alone until the real cause is known.**
+      **Regression tests** in `tests/test_explainability.py` build a real model and go
+      through `build_cam` -- deliberately, because the whole file was synthetic numpy
+      before, which is exactly why an exactly-inverted heatmap shipped unnoticed. A
+      stubbed cam object never invokes MONAI and would pass either way. Verified by
+      reverting the fix: all three new tests fail, then pass again once restored.
 
-      So the cause is still open. It is not the layer, and it is not the tie-break.
-      Next hypothesis worth testing, cheapest first: inspect the **raw
-      pre-normalisation** CAM values. DenseNet's head is global average pooling into a
-      linear classifier, which makes `d(logit)/d(activation)` almost constant across
-      space; Grad-CAM then degenerates toward plain CAM, and if the weighted sum is
-      positive nearly everywhere the min-max rescale in `compute_cam` stretches an
-      almost-flat map across the full [0, 1] range and manufactures the saturation.
-      That would be a property of the architecture and the normalisation, not of a
-      badly chosen layer -- and it would mean the fix belongs in `compute_cam`, or in
-      switching to a method that does not rely on spatially-varying gradients.
+      The pre-fix overlays are kept at
+      `reports/full-20260822-041653/gradcam_test_BEFORE_polarity_fix/` for comparison.
 
-      Also still true and still unexplained: 68.9% of CAM peaks land in the
-      zero-padding band, and excluding padding did not change the score.
+- [ ] **Decide what `cam_degenerate` should mean now.** The flag still reports `True`,
+      and it is now a false alarm. `mean_peak_fraction` is 0.1320, but that is
+      **35 films (13.1%) whose malignant CAM is entirely empty** -- each scoring
+      `peak_fraction = 1.0` because every pixel ties at a maximum of zero -- dragging
+      up a mean whose other 232 members average 0.0010.
 
-      **Until this is resolved no claim about where the model looks is supported**, and
-      the Grad-CAM overlay in the app should be read as decoration, not evidence.
+      An empty CAM and a saturated CAM are different facts requiring different responses,
+      and the mean currently conflates them. An empty malignant CAM on a film the model
+      confidently calls normal is arguably the correct output, not a defect. Options:
+      report the two separately, use a median, or exclude empty maps from the statistic
+      and count them alongside it.
 
-      **Methodology warning for whoever runs the next sweep.** MONAI's `GradCAM`
-      registers forward and backward hooks and **never removes them**. Probing several
-      layers against one model instance leaves every earlier probe's hooks attached, and
-      the later layers then fail for a reason that has nothing to do with the layer. The
-      first attempt at the table above did exactly this and produced confidently wrong
-      results -- including an apparent "`inplace=False` breaks `denseblock4`" that was
-      pure contamination. **Build a fresh model per layer.** The live app is *not*
-      affected: `build_cam` is called once in `RadiographClassifier.__init__`
-      (`src/onnm/inference.py:414`) behind `@st.cache_resource`, so exactly one GradCAM
-      exists per process.
+- [ ] **Interpret the corrected localisation honestly.** Pointing game 0.0936 is low. It
+      is no longer *meaningless*, which is the change, but it is not yet evidence that
+      the model localises. Establish the chance baseline before claiming anything: score
+      a randomly-initialised model the same way, since a lesion box covering ~10% of the
+      frame is hit ~10% of the time by accident. Until that comparison exists, the honest
+      statement is "measurable, and roughly at chance".
+
+      Also note `cam_threshold: 0.5` (`configs/base.yaml:312`) now selects a small
+      concentrated region rather than a large diffuse one, so IoU is penalised for a
+      tight prediction against a large ground-truth box. Re-examine the threshold as its
+      own decision before reading the IoU delta as progress.
+
+- [ ] **Check the UI attention floor.** `cam_floor` defaults to 0.25
+      (`app.py:712`) and was implicitly chosen against a map whose mean was 0.747. The
+      corrected mean is 0.253, so the default now hides roughly half the map. It hides
+      the correct half, but the number was never chosen for this distribution.
 
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` still has
       **0/7 code cells executed**. Nobody has looked at the preprocessed images.

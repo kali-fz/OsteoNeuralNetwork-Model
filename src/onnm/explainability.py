@@ -135,8 +135,36 @@ def boxes_to_mask(boxes: list[Box], size: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Grad-CAM
 # ---------------------------------------------------------------------------
+def _identity_postprocessing(acti_map):
+    """Return the CAM untouched. **Do not delete this as redundant.**
+
+    MONAI's ``CAMBase`` defaults ``postprocessing=default_normalizer``, which is
+    not the innocent rescale the name suggests. It maps ``(min, max) -> (1, 0)``,
+    and its own docstring says so: "This will flip magnitudes (i.e., smallest
+    will become biggest and vice versa)."
+
+    That inversion shipped in this project until 2026-08-23 and made the heatmap
+    exactly wrong -- correlation -1.0000 against the correct map, every pixel.
+    Because Grad-CAM ends in a ReLU, most of a normal map is zero; flipping it
+    turned that zero region into the "hottest" evidence, so the overlay painted
+    the background and the zero-padding band red and left the lesion cold. It
+    also produced the "degenerate/saturated CAM" that was chased for a while as
+    a target-layer problem, which it never was.
+
+    ``compute_cam`` already scales min->0 and max->1, so this is the only
+    normalisation the pipeline needs. Passing it explicitly is what keeps
+    MONAI's default from silently reintroducing the flip.
+    """
+    return acti_map
+
+
 def build_cam(model: torch.nn.Module, cfg):
-    """Construct a MONAI Grad-CAM bound to the configured target layer."""
+    """Construct a MONAI Grad-CAM bound to the configured target layer.
+
+    ``postprocessing`` is passed explicitly -- see :func:`_identity_postprocessing`
+    for why the default is wrong. ``GradCAMpp`` subclasses ``GradCAM`` and
+    inherits the same default, so both methods need it.
+    """
     from monai.visualize import GradCAM, GradCAMpp
 
     from .model import get_cam_layer
@@ -145,11 +173,23 @@ def build_cam(model: torch.nn.Module, cfg):
     method = str(cfg.explain.get("method", "gradcam")).lower()
     factory = GradCAMpp if method == "gradcampp" else GradCAM
     logger.info("Grad-CAM: method=%s target_layer=%s", method, layer)
-    return factory(nn_module=model, target_layers=layer)
+    return factory(
+        nn_module=model, target_layers=layer, postprocessing=_identity_postprocessing
+    )
 
 
 def compute_cam(cam, image: torch.Tensor, class_index: int | None = None) -> np.ndarray:
-    """Return a ``(H, W)`` CAM in [0, 1] for one image tensor ``(1, C, H, W)``."""
+    """Return a ``(H, W)`` CAM in [0, 1] for one image tensor ``(1, C, H, W)``.
+
+    The sole normalisation step: the raw map arrives unscaled (see
+    :func:`_identity_postprocessing`) and leaves with its minimum at 0 and its
+    maximum at 1, **orientation preserved** -- high means "this drove the
+    prediction".
+
+    A map with no positive evidence at all is uniformly zero after Grad-CAM's
+    ReLU. It returns all zeros rather than all ones, which is an honest empty
+    heatmap instead of a uniformly hot one.
+    """
     result = cam(x=image, class_idx=class_index)
     array = result.detach().cpu().numpy()
     while array.ndim > 2:

@@ -75,10 +75,15 @@ interval is the result.
   (observed cases: a normal pelvis at 59.6%, a normal femur at 69.8%). The
   planned fix is more normal controls in training; the app-layer uncertainty
   gate only contains the symptom.
-- **Grad-CAM localisation is unscored.** Pointing-game accuracy has not been
-  measured (`scripts/gradcam_report.py` has never been run on a trained
-  checkpoint), so the claim "the model looks at lesions" is currently
-  unverified.
+- **Grad-CAM localisation is scored, and roughly at chance.** Measured
+  2026-08-23 on the pinned checkpoint over 267 annotated test films:
+  pointing game **0.0936**, mean IoU 0.0428, mean coverage 0.0440. A lesion box
+  covering around a tenth of the frame is hit about a tenth of the time by
+  accident, so **this does not yet support the claim "the model looks at
+  lesions"** -- the chance baseline has not been established. Earlier readings of
+  0.0000 were an artefact: the heatmap was inverted (MONAI's default
+  postprocessing maps min/max to 1/0), which is fixed. Note the correction
+  changed no prediction -- the CAM is display-only.
 - **Single distribution.** Trained and evaluated on BTXRD only. No external
   validation exists; performance on other scanners, populations, or
   acquisition protocols is unknown and should be presumed worse.
