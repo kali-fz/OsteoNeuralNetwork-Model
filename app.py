@@ -296,9 +296,14 @@ def render_landing() -> None:
         data = globe_data()
         markers = data.get("markers", SAMPLE_MARKERS)
         render_globe(markers, height=440)
-        elsewhere = data.get("elsewhere", 0)
-        if elsewhere:
-            st.caption(f"…and {elsewhere:,} users in countries with fewer than 5 people not shown.")
+        # build_markers() returns elsewhere as a per-layer mapping
+        # ({"signup": n, "contributor": n}), not a single integer.  The signup
+        # layer is the "users" figure; contributors are a subset of users and
+        # counted separately, so summing the two would double-count people.
+        elsewhere = data.get("elsewhere") or {}
+        hidden = int(elsewhere.get("signup", 0)) if isinstance(elsewhere, dict) else int(elsewhere)
+        if hidden:
+            st.caption(f"…and {hidden:,} users in countries with fewer than 5 people not shown.")
 
     totals = globe_data().get("totals", {})
     n_users = totals.get("users", 0)

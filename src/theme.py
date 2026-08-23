@@ -425,7 +425,15 @@ def inject_theme() -> None:
     Fonts link (Inter + JetBrains Mono) with system-font fallbacks, then the
     full design-system CSS.
     """
-    st.markdown(_GOOGLE_FONTS_LINK + "<style>" + _CSS + "</style>", unsafe_allow_html=True)
+    # Two separate calls, deliberately.  Streamlit renders markdown before the
+    # raw HTML reaches the browser, and CommonMark treats a leading <link> as a
+    # type-6 HTML block, which *terminates at the first blank line*.  Prepending
+    # the font links to the stylesheet therefore truncated the CSS at its first
+    # blank line and dumped the remainder onto the page as visible text.  A
+    # string that starts with <style> is a type-1 HTML block, which runs to
+    # </style> and ignores blank lines entirely.
+    st.markdown(_GOOGLE_FONTS_LINK, unsafe_allow_html=True)
+    st.markdown("<style>" + _CSS + "</style>", unsafe_allow_html=True)
 
 
 def masthead(title: str, eyebrow: str, meta: list[str]) -> None:

@@ -42,7 +42,7 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 # Pinned CDN versions — bump only these two constants to upgrade.
 _ASSETS: dict[str, str] = {
     "d3-geo.min.js": (
-        "https://cdn.jsdelivr.net/npm/d3-geo@3.1.0/dist/d3-geo.umd.min.js"
+        "https://cdn.jsdelivr.net/npm/d3-geo@3.1.0/dist/d3-geo.min.js"
     ),
     "topojson-client.min.js": (
         "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"
@@ -602,7 +602,7 @@ def render_globe(
             pass
         return
 
-    import streamlit.components.v1 as components
+    import streamlit as st
 
     d3_script, topojson_script, world_json = static
     markers_json = json.dumps(markers)
@@ -616,7 +616,19 @@ def render_globe(
         height=height,
     )
 
-    # Stable key: Streamlit will NOT remount the iframe on reruns unless the
-    # HTML content changes.  Since markers are cached for 5 min (ttl=300) the
-    # component survives all of the widget interactions on the landing page.
-    components.html(html, height=height, scrolling=False, key="onnm_globe")
+    # No key= anywhere below: neither embedding API takes one, and passing a
+    # key raises TypeError.  Streamlit identifies the iframe by its position in
+    # the element tree plus a hash of the HTML, so as long as the markers are
+    # stable (they are cached for 5 min, ttl=300) the component is not
+    # remounted across the landing page's widget interactions.
+    #
+    # st.components.v1.html is deprecated in favour of st.iframe and is slated
+    # for removal, but requirements.txt allows streamlit>=1.42, which predates
+    # st.iframe.  Prefer the new API and fall back so the globe keeps working
+    # on both sides of that change rather than breaking on one of them.
+    if hasattr(st, "iframe"):
+        st.iframe(html, height=height)
+    else:
+        import streamlit.components.v1 as components
+
+        components.html(html, height=height, scrolling=False)
