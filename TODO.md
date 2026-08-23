@@ -212,13 +212,24 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
 - [ ] **Measure what the uncertainty gate withdraws.** How many *true* lesion calls the
       0.65 / 0.90 gates suppress on val, before trusting the defaults.
 
-### Blocking — never run
+### Done — gate 6
 
-- [ ] **Gate 6: overfit check.** Was running when this was written. It had **never been
-      runnable on this machine**: `overfit_check.py` took no `--override`, so it loaded
-      `base.yaml` with `train.miopen: true` and died inside the MIOpen BatchNorm defect —
-      which reads as "the gate is broken" rather than "pass the override". **Flag added**;
-      run it with `--override configs/densenet121_3class.yaml --override configs/full_run.yaml`.
+- [x] **Gate 6: overfit check — PASSES.** 30 images memorised in 3 steps, accuracy 1.0,
+      final loss 0.0059, in about 8 seconds. **The pipeline learns**: labels line up with
+      images, normalisation preserves the signal, gradients reach the backbone.
+
+      It had never run here, for two stacked reasons, and both are fixed:
+
+      1. `overfit_check.py` took no `--override`, so it loaded `base.yaml` with
+         `train.miopen: true`.
+      2. More seriously, **`overfit_batch` never called `configure_backend`**. `train()`
+         does, with a comment saying it must happen before the first conv/BN call --
+         but the gate 6 path skipped it, so `train.miopen: false` was read from the
+         config and silently ignored. The gate then walked into
+         `RuntimeError: miopenStatusUnknownError` on the exact hardware it exists to
+         check, and MIOpen spent over an hour failing to JIT-compile that kernel before
+         giving up, which looked like "training is slow" rather than "the workaround is
+         not applied".
 
 ### High — resolve the regression
 

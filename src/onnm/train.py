@@ -435,6 +435,18 @@ def overfit_batch(
     set_seed(int(cfg.seed))
     device = device or get_device()
 
+    # Same call `train()` makes, and for the same reason -- it must happen before
+    # the first conv/BN call or it has no effect.
+    #
+    # Without it this gate was unrunnable on the hardware it exists to check.
+    # `train.miopen: false` is the workaround for a ROCm defect in the
+    # training-mode BatchNorm kernel, and overfit_batch trains, so it walks
+    # straight into `RuntimeError: miopenStatusUnknownError` -- while the config
+    # says the workaround is enabled and every other training path honours it.
+    # The failure reads as "gate 6 is broken", which is exactly backwards: the
+    # gate was the only thing reporting that this path never applied the fix.
+    configure_backend(bool(cfg.train.get("miopen", True)))
+
     records = build_records(cfg, split="train")
     # Stratify the toy batch so every class is represented; an all-normal sample
     # would be memorised by a constant predictor and prove nothing.
