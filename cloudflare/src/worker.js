@@ -40,6 +40,20 @@ const MAX_SUBMISSIONS_PER_USER_PER_DAY = 50;
 const MAX_USERS = 500; // a test deployment, not a product launch
 const MAX_PAGE_SIZE = 100;
 
+// --- Disclosure guard -------------------------------------------------------
+// The landing-page globe shows how many people signed up and contributed from
+// each country. A count of 1 is not a statistic, it is a person: combined with
+// a small country it identifies someone who uploaded a radiograph, which is
+// exactly the disclosure the country-only schema exists to prevent.
+//
+// So a country is only ever plotted once it holds at least this many people.
+// Everything below the threshold is summed into a single "elsewhere" figure
+// that names no country at all. Five is the conventional floor for published
+// small-area health statistics, and the cost of being wrong here is not
+// symmetric -- an under-populated globe is a cosmetic problem, a re-identified
+// patient is not.
+const K_ANONYMITY_MIN = 5;
+
 // The three clinical classes the lesion classifier predicts.
 const VALID_LABELS = new Set(["normal", "benign", "malignant"]);
 // What a reviewer may write into admin_label. 'misc' means "not a bone
@@ -91,6 +105,28 @@ function timingSafeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/**
+ * The country the request came from, at ISO 3166-1 alpha-2 resolution.
+ *
+ * Cloudflare resolves this at the edge from the connecting address and hands
+ * it over already reduced, so nothing here ever sees or stores an IP. That is
+ * the whole reason it is done this way rather than with the browser
+ * Geolocation API, which would prompt the visitor and return GPS precision the
+ * schema deliberately cannot hold.
+ *
+ * Returns null rather than a placeholder when Cloudflare offers nothing --
+ * `wrangler dev` without `--remote` has no `cf` object at all, and a local run
+ * writing a fake country would be worse than writing none. 'T1' (Tor) and 'XX'
+ * (undetermined) are passed through honestly; they have no centroid, so the
+ * globe drops them at aggregation time.
+ */
+function countryOf(request) {
+  const code = request && request.cf && request.cf.country;
+  if (typeof code !== "string") return null;
+  const upper = code.toUpperCase();
+  return /^[A-Z]{2}$/.test(upper) ? upper : null;
 }
 
 function bearer(request) {
@@ -223,7 +259,107 @@ async function health(db) {
   });
 }
 
-async function createUser(db, body) {
+/**
+ * Aggregated, k-anonymised country counts for the landing-page globe.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT RETURN
+ * --------------------------------------
+ * No user_id, no email, no submission_id, no timestamps, no coordinates, and
+ * no row that could be traced to a person. The response is a list of country
+ * codes and integers, and that is the whole of it. If a future change makes
+ * this endpoint capable of returning anything else, the tests that assert the
+ * shape of this payload should fail -- they exist for that reason.
+ *
+ * It does not emit latitude or longitude either. Turning a country code into a
+ * dot is the client's job (src/geo.py), so the API never carries a coordinate
+ * at all and cannot leak a precision it does not possess.
+ *
+ * TWO LAYERS
+ * ----------
+ *   signups      -- accounts created, per country.
+ *   contributors -- DISTINCT users with at least one APPROVED submission, per
+ *                   country. Distinct users rather than submission count, so
+ *                   one enthusiastic uploader cannot inflate their own dot;
+ *                   approved-only, because an unreviewed submission has not
+ *                   contributed anything yet, and consistency with the review
+ *                   gate matters more than a busier-looking map.
+ *
+ * SUPPRESSION
+ * -----------
+ * Any country under K_ANONYMITY_MIN is removed and its people are added to
+ * `elsewhere`, an integer attached to no country. The totals are reported
+ * separately and are NOT suppressed: "412 users in 23 countries" discloses
+ * nothing, and it is the number the landing page actually wants to show.
+ */
+async function globe(db) {
+  const { results: signupRows } = await db
+    .prepare(
+      `SELECT signup_country AS country, COUNT(*) AS n
+         FROM users
+        WHERE signup_country IS NOT NULL
+        GROUP BY signup_country`
+    )
+    .all();
+
+  const { results: contributorRows } = await db
+    .prepare(
+      `SELECT origin_country AS country, COUNT(DISTINCT user_id) AS n
+         FROM submissions
+        WHERE review_status = 'approved' AND origin_country IS NOT NULL
+        GROUP BY origin_country`
+    )
+    .all();
+
+  // Rows predating migration 0004 carry NULL and are counted in the totals but
+  // never plotted. They are real users; we simply do not know where they are,
+  // and a guess would be a dot corresponding to nothing.
+  const split = (rows) => {
+    const plotted = [];
+    let elsewhere = 0;
+    let suppressed = 0;
+    for (const row of rows ?? []) {
+      if (row.n >= K_ANONYMITY_MIN) plotted.push({ country: row.country, count: row.n });
+      else {
+        elsewhere += row.n;
+        suppressed += 1;
+      }
+    }
+    plotted.sort((a, b) => b.count - a.count || a.country.localeCompare(b.country));
+    return { plotted, elsewhere, suppressed_countries: suppressed };
+  };
+
+  const totalUsers = await db.prepare("SELECT COUNT(*) AS n FROM users").first();
+  const totalContributors = await db
+    .prepare(
+      `SELECT COUNT(DISTINCT user_id) AS n FROM submissions WHERE review_status = 'approved'`
+    )
+    .first();
+  const totalApproved = await db
+    .prepare("SELECT COUNT(*) AS n FROM submissions WHERE review_status = 'approved'")
+    .first();
+
+  const signups = split(signupRows);
+  const contributors = split(contributorRows);
+
+  return json({
+    ok: true,
+    // Headline figures for the landing page. Whole-population counts, so no
+    // suppression applies and none is needed.
+    totals: {
+      users: totalUsers.n,
+      contributors: totalContributors.n,
+      approved_submissions: totalApproved.n,
+      countries_represented: signups.plotted.length + signups.suppressed_countries,
+    },
+    layers: { signups, contributors },
+    // Stated in the payload so the client can label the map honestly rather
+    // than implying the plotted dots are everyone.
+    k_anonymity_min: K_ANONYMITY_MIN,
+    generated_at: nowIso(),
+  });
+}
+
+async function createUser(db, body, country) {
   const {
     user_id,
     email,
@@ -277,8 +413,8 @@ async function createUser(db, body) {
     await db
       .prepare(
         `INSERT INTO users (user_id, email, password_hash, auth_provider, provider_subject,
-                            created_at, tos_accepted_at, is_admin)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                            created_at, tos_accepted_at, is_admin, signup_country)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         user_id,
@@ -288,7 +424,10 @@ async function createUser(db, body) {
         provider === "password" ? null : String(provider_subject),
         created,
         tos_accepted_at || created,
-        is_admin ? 1 : 0
+        is_admin ? 1 : 0,
+        // Never taken from the request body. The client cannot be trusted to
+        // report where it is, and does not need to -- the edge already knows.
+        country ?? null
       )
       .run();
   } catch (err) {
@@ -332,7 +471,7 @@ async function getUserByEmail(db, email) {
   return row ? json(row) : fail(404, "no such user");
 }
 
-async function createSubmission(db, body) {
+async function createSubmission(db, body, country) {
   const {
     submission_id,
     user_id,
@@ -404,8 +543,8 @@ async function createSubmission(db, body) {
             submission_id, user_id, created_at, model_label, lesion_probability,
             class_probabilities, checkpoint, threshold, calibrated,
             ood_flagged, ood_score, shared, consent_at, image_b64, image_sha256, image_bytes,
-            triage_bucket, triage_reason
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            triage_bucket, triage_reason, origin_country
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         submission_id,
@@ -425,7 +564,8 @@ async function createSubmission(db, body) {
         storedImage ? (image_sha256 ?? null) : null,
         imageBytes,
         triage.bucket,
-        triage.reason
+        triage.reason,
+        country ?? null
       ),
     db
       .prepare(
@@ -759,8 +899,15 @@ export default {
 
     try {
       if (method === "GET" && path === "/health") return await health(db);
+      // Aggregated country counts for the landing-page globe. Still behind the
+      // API key like every other route -- the Streamlit server calls this and
+      // renders the result, so the browser never talks to this Worker and the
+      // key never leaves the server. See cloudflare/README.md, "The globe".
+      if (method === "GET" && path === "/globe") return await globe(db);
 
-      if (method === "POST" && path === "/users") return await createUser(db, await readJson(request));
+      if (method === "POST" && path === "/users") {
+        return await createUser(db, await readJson(request), countryOf(request));
+      }
       if (method === "GET" && path === "/users/by-email") {
         return await getUserByEmail(db, url.searchParams.get("email"));
       }
@@ -769,7 +916,7 @@ export default {
       }
 
       if (method === "POST" && path === "/submissions") {
-        return await createSubmission(db, await readJson(request));
+        return await createSubmission(db, await readJson(request), countryOf(request));
       }
       if (method === "GET" && path === "/submissions") {
         return await listUserSubmissions(db, url.searchParams.get("user_id"), url.searchParams.get("limit"));

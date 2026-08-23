@@ -407,6 +407,27 @@ class CommunityClient:
             self.timeout = previous
         return body if status == 200 else None
 
+    # -- globe ---------------------------------------------------------------
+    def globe(self) -> dict[str, Any] | None:
+        """Aggregated, k-anonymised country counts for the landing-page globe.
+
+        Returns country codes and integers only -- never a user, a submission,
+        a timestamp or a coordinate. See the ``/globe`` handler in
+        ``cloudflare/src/worker.js`` for what the Worker refuses to include,
+        and ``src/geo.py`` for the step that attaches coordinates locally.
+
+        Called by the Streamlit **server**, not by the visitor's browser: this
+        route is behind the API key like every other one, and the key must
+        never reach a page. Fails soft like ``health()`` -- a decorative globe
+        is not a reason for a landing page to error.
+        """
+        previous, self.timeout = self.timeout, min(self.timeout, HEALTH_TIMEOUT)
+        try:
+            status, body = self._request("GET", "/globe")
+        finally:
+            self.timeout = previous
+        return body if status == 200 else None
+
     # -- accounts (mirrors database.py) ------------------------------------
     def create_user(
         self, email: str, password_hash: str, *, is_admin: bool = False

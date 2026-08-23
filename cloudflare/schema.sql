@@ -85,6 +85,19 @@ CREATE TABLE IF NOT EXISTS users (
     -- grant the flag to a second account: the INSERT simply fails. Moving the
     -- privilege requires a migration, which is the correct amount of friction.
     is_admin        INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
+
+    -- Coarse origin for the contribution globe: a two-letter ISO 3166-1
+    -- alpha-2 code, or NULL. Cloudflare resolves it at the edge and hands it
+    -- over as `request.cf.country`, so no IP address is ever seen or stored to
+    -- obtain it, and the browser is never prompted for a location.
+    --
+    -- The CHECK is the point. A latitude/longitude pair plus a timestamp plus a
+    -- malignant verdict is jointly identifying however carefully the name is
+    -- omitted, so the schema refuses to be capable of holding one. Recording
+    -- anything finer than a country requires a migration that says so.
+    signup_country  TEXT
+        CHECK (signup_country IS NULL
+               OR (length(signup_country) = 2 AND signup_country = upper(signup_country))),
     CHECK (is_admin = 0 OR user_id = 'c2c5a209-4aaa-4eb9-b112-b2929b6dbe12'),
 
     CHECK (
@@ -100,6 +113,11 @@ CREATE TABLE IF NOT EXISTS users (
 -- but stating the intent keeps the index small and the meaning obvious).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject
     ON users(provider_subject) WHERE provider_subject IS NOT NULL;
+
+-- Globe layer 1: signups per country. Partial, because rows predating the
+-- geolocation migration carry NULL and are never counted or guessed at.
+CREATE INDEX IF NOT EXISTS idx_users_country
+    ON users(signup_country) WHERE signup_country IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Submissions: one row per image a user ran through the model.
@@ -135,6 +153,15 @@ CREATE TABLE IF NOT EXISTS submissions (
     image_b64       TEXT,                        -- NULL unless shared = 1
     image_sha256    TEXT,                        -- dedupe identical resubmissions
     image_bytes     INTEGER NOT NULL DEFAULT 0,
+
+    -- Where this submission was sent from, at country resolution only. Held
+    -- per submission rather than read from `users`, because the two genuinely
+    -- differ -- someone signs up at home and contributes from a hospital
+    -- network. It also lets the globe's contributor layer aggregate without
+    -- joining back to an account table it has no business reading.
+    origin_country  TEXT
+        CHECK (origin_country IS NULL
+               OR (length(origin_country) = 2 AND origin_country = upper(origin_country))),
 
     -- Untrusted user feedback. NULL means "user said nothing".
     user_says_wrong      INTEGER CHECK (user_says_wrong IN (0, 1)),
@@ -239,6 +266,13 @@ CREATE INDEX IF NOT EXISTS idx_submissions_batch
 CREATE INDEX IF NOT EXISTS idx_submissions_sha
     ON submissions(image_sha256) WHERE image_sha256 IS NOT NULL;
 
+-- Globe layer 2: approved contributions per country. Keyed on
+-- (origin_country, user_id) because the layer counts DISTINCT contributors,
+-- not submissions -- one enthusiastic uploader must not inflate their own dot.
+CREATE INDEX IF NOT EXISTS idx_submissions_geo
+    ON submissions(origin_country, user_id)
+    WHERE review_status = 'approved' AND origin_country IS NOT NULL;
+
 -- ---------------------------------------------------------------------------
 -- Training batches: a named, frozen set of approved rows.
 -- ---------------------------------------------------------------------------
@@ -270,7 +304,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('bytes_stored', '0');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '4');
 
 -- Per-user, per-day write counter. Bounds one account's ability to consume
 -- the shared free tier, whether by enthusiasm or malice.
