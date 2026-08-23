@@ -147,10 +147,10 @@ def test_cloudflare_placeholders_are_storable(db) -> None:
     """
     add_user(db, "u1", "T1")
     add_user(db, "u2", "XX")
-    stored = db.execute(
+    count = db.execute(
         "SELECT COUNT(*) FROM users WHERE signup_country IS NOT NULL"
     ).fetchone()[0]
-    assert stored == 2
+    assert count == 2
 
 
 # ---------------------------------------------------------------------------
