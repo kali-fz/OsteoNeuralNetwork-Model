@@ -283,9 +283,12 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
       listed users; publishing needs no Google verification for `openid`/`email`/`profile`
       but testers see an "unverified app" interstitial either way
 - [ ] Delete `smoke-20260822-012828` (the app hides `smoke-*` runs regardless)
-- [ ] **Verify which weights are in GitHub release `v0.1.0`.** Now answerable:
-      `python scripts/publish_model.py v1.0.0 --verify <url>`. If the overnight regression
-      is what is published, the live site has been serving the worse model
+- [x] **Verified which weights are in GitHub release `v0.1.0`** (2026-08-23). Fetched and
+      hashed: sha256 `f6b0ae7e...937c7c`, which **matches v1.0.0 exactly**. The live site
+      has been serving `full-20260822-041653` all along, not the overnight regression.
+      Re-check any future release with
+      `python scripts/publish_model.py v1.0.0 --verify "<url>"` -- quote the URL, or
+      PowerShell parses the angle brackets as redirection operators
 
 ---
 
