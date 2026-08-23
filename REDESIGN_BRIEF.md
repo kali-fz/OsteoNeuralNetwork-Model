@@ -4,11 +4,30 @@ You are Fable 5, acting as Lead Frontend Architect & UI/UX Engineer on
 `OsteoNeuralNetwork-Model` (ONNM), a zero-cost research prototype that triages
 primary bone tumours from plain radiographs.
 
-Execute a complete UI/UX overhaul of the Streamlit interface: separate the
-public marketing landing page from the authenticated scanning tool, add an
-interactive spinning 3D orthographic globe showing where the project's users and
-approved contributors are in the world, surface live project statistics, upgrade
-the diagnostic charts, and add a user profile dashboard.
+Execute and fully implement a complete UI/UX overhaul of the existing Streamlit
+interface. This is both a full visual redesign of the current site and the
+addition of the landing page, globe, live statistics, upgraded charts, and user
+profile described below. The current interface has visual bugs, inconsistent
+spacing and styling, and no coherent hierarchy; carrying its appearance forward
+with a few new components is not completion.
+
+**Keep Streamlit. Do not migrate this project to React or another frontend
+framework.** Apply the redesign through `src/theme.py`, disciplined CSS,
+Streamlit primitives, and focused embedded components where Streamlit cannot
+provide the required interaction. This file is the implementation prompt: do
+not respond with another brief, mock-up, or migration proposal. Make the changes
+in the repository, test them, and leave the working implementation behind.
+Before auditing or changing the interface, read the complete
+[VibeCurb visual-redesign skill](https://github.com/Yu-369/VibeCurb/blob/main/skills/visual-redesign/SKILL.md)
+and use its audit, extraction, prescription, visual-layer surgery, and post-op
+verification workflow as implementation context. Translate its "logic is
+sacred" rule to this Streamlit/Python codebase: preserve authentication,
+inference, privacy, routing, state, data flow, event behaviour, tests, and
+component contracts while redesigning their presentation. Its React examples
+are illustrative only and must **not** trigger a React migration, JavaScript
+application rewrite, or architectural change. You may supplement this with an
+equivalent named design skill suited to the atmosphere, but this brief and the
+Streamlit architecture remain authoritative.
 
 The globe must show real reach without exposing any individual's location. That
 tension is already resolved in the data layer — section 3B explains how, and what
@@ -65,25 +84,53 @@ and the updated Worker has not been deployed. Until both happen, `/globe`
 returns a 404 and `build_markers(None)` yields an empty, well-formed result —
 which is exactly the fallback path you must handle anyway.
 
-**A conflict you must resolve before styling anything**
+**The visual direction is decided**
 
-The app is committed to a **light** theme. `src/theme.py` defines
-`BG = "#e9edec"`, `INK = "#000000"`, `GREEN = "#08872b"`; `.streamlit/config.toml`
-sets `base = "light"` with matching values; and `src/report.py` mirrors the same
-tokens so exported PDF reports match the UI.
+The current Git-Design system gives the wrong first impression for this project
+and may be replaced. Study `assets/references/homepage-reference.png` before
+styling anything. It is a mood and composition reference, not a template: do not
+copy its brand, navigation labels, coin imagery, exact layout, or colour values.
 
-A "dark-mode healthcare AI" globe dropped into that app will look pasted on. Pick
-one and apply it coherently:
+Extract these foundation qualities from it:
 
-- **(a) Keep the light Git-Design system** — restyle the globe to it: pale ocean,
-  high-contrast ink landmasses, `--gd-green` markers. Lowest risk. **Default to
-  this unless the project lead says otherwise.**
-- **(b) Go fully dark** — then you must update `theme.py`, `config.toml`, *and*
-  `report.py` together. `config.toml` carries a comment warning that Streamlit
-  paints its own chrome before your CSS lands, so if the two disagree every rerun
-  flashes the wrong palette. Do not do (b) halfway.
+- a spacious editorial layout with a warm ivory, softly lit atmosphere;
+- an organic, living-system quality expressed through a photorealistic moss
+  landscape in the lower hero layer;
+- calm depth, restrained shadows, and clear foreground/background separation;
+- precise, professional typography and generous whitespace;
+- sterile white functional surfaces for authentication, scanning, results,
+  controls, tables, and review states;
+- an overall feeling of **organic living systems paired with doctoral medical
+  science** — credible, considered, and clinical, never mystical, wellness-led,
+  cartoonish, cyberpunk, or generic "AI healthcare".
 
-State which you chose and why before you start.
+Do not lock the redesign to the reference's sampled hex values. Derive a coherent
+accessible palette after studying the image and the existing medical content.
+The warm ivory atmosphere belongs to presentation layers; task surfaces stay
+clean and white. Update `src/theme.py`, `.streamlit/config.toml`, and
+`src/report.py` coherently so Streamlit chrome never flashes an unrelated theme
+and exported reports remain print-safe and clinical.
+
+You may change the named design skill or reference-led method used to implement
+this direction. Do not preserve Git-Design merely because it exists. The final
+direction must remain within the product scope and safety boundaries documented
+in `overview.md`.
+
+### 0A. Content and typography constraints
+
+- Preserve the existing product wording, medical claims, disclaimers, measured
+  metrics, labels, consent language, and legal text unless this brief explicitly
+  requests new copy. This is a visual and structural redesign, not a rewrite.
+- Google Fonts are allowed. Choose a highly readable professional family or
+  restrained pairing that supports an editorial landing page and dense clinical
+  interfaces. Do not sacrifice clarity for an overly aesthetic display face.
+- Provide robust system-font fallbacks and ensure the page remains usable if the
+  font request is blocked or slow.
+- Generate a bespoke photorealistic moss hero image for ONNM by default. Source
+  one online only if generation cannot produce a suitable result. Commit the
+  final under `assets/`, document its source/licence when externally sourced,
+  and optimise it for the web. Do not reuse the reference image as the
+  production hero and do not ship an unlicensed image.
 
 ---
 
@@ -111,6 +158,8 @@ breaks any of the following is a failed redesign, however good it looks.
    before you declare done. Add tests for what you add.
 8. **Work additively.** Keep the current working path functional at every commit.
    Do not delete a working component until its replacement is verified.
+9. **Preserve product language.** Visual polish must not silently alter medical
+   claims, labels, warnings, consent wording, or measured results.
 
 ---
 
@@ -126,8 +175,21 @@ access control.
 - **Header:** "OSTEO NEURAL NETWORK MODEL", subtitle *"Free to use, for the
   better for health"*.
 - **Top-right nav:** `[ Sign In / Create Account ]`.
-- **Hero:** left column an "Our Mission" card on early bone-cancer detection
-  research; right column the interactive globe (section 3).
+- **Hero composition:** preserve the existing functional composition: mission
+  content on the left and the interactive globe on the right. Rebuild it as a
+  spacious editorial composition rather than two equal dashboard cards.
+- **Hero depth:** use the bespoke photorealistic moss artwork as a grounded lower
+  layer spanning the hero. The globe sits visually higher above that landscape,
+  with deliberate separation and no overlap with the moss, mission content,
+  navigation, statistics, or viewport edge. Rebalance height, padding, and type
+  scale so the composition has room to breathe at every breakpoint.
+- Keep the existing mission wording. The redesign changes hierarchy and visual
+  treatment, not the project's message.
+- Verify the hero at approximately 1440px, 1024px, 768px, and 390px viewport
+  widths. The desktop relationship becomes a clean vertical stack on narrow
+  screens; the globe follows the mission content and remains fully interactive.
+  Use a restrained atmospheric veil where needed so text contrast never depends
+  on which part of the moss image sits behind it.
 - **Stat row** beneath the globe: registered users, approved contributors, and
   GitHub stars (section 3D). Live figures, degrading invisibly when a source is
   unavailable.
@@ -185,6 +247,26 @@ component embedded through `streamlit.components.v1.html`.
   - Keyboard accessible: arrow keys nudge rotation when the canvas has focus.
 - **Marker interaction:** hovering a point shows a tooltip with the country name
   and a count — never anything user-identifying (see 3B).
+
+### 3A.1 Visual treatment — realistic, restrained, integrated
+
+Preserve every globe behaviour in 3A: continuous rotation, manual drag, inertia,
+idle resume, touch, keyboard control, marker tooltips, and reduced-motion support.
+Do not change its privacy contract, marker meaning, data source, rotation logic,
+or interaction model to achieve the new look.
+
+Raise the rendering quality from a cartoon globe to a more realistic,
+atmospheric scientific object. Use restrained directional lighting, subtle
+ocean/land tonal variation, a soft terminator or edge falloff, and carefully
+controlled highlights that fit the warm-ivory hero. It should feel dimensional
+without pretending to be satellite imagery or adding expensive 3D/WebGL
+dependencies. Keep countries and markers legible, maintain AA contrast for
+labels/tooltips, and avoid neon glows, thick outlines, toy-like saturation, and
+busy textures.
+
+Scale and position the globe as a major visual anchor above the moss layer, but
+keep clear air around it. On smaller screens, reduce its diameter and place it
+after the mission content; never let it overlap copy or controls.
 
 ### 3B. Data and privacy — the rules you must not break
 
@@ -310,9 +392,10 @@ want a third figure. No extra work.
   failure path returns `None` and does not raise. Do not put a network call
   inline in `app.py`.
 - Link the counter to `https://github.com/kali-fz/OsteoNeuralNetwork-Model`.
-- **This is the only external network call the landing page may make.** Do not
-  add analytics, fonts from a CDN, or any other third-party request — the
-  project explicitly disables Streamlit's own usage stats to keep that promise.
+- Apart from the explicitly allowed Google Fonts request, this is the only new
+  external network call the landing page may make. Do not add analytics,
+  tracking pixels, runtime image CDNs, or other third-party requests. Streamlit
+  usage statistics remain disabled.
 
 ---
 
@@ -400,13 +483,27 @@ memoise anything keyed on user input that could leak one user's radiograph or
 verdict into another user's session. If an optimisation and an invariant in
 section 1 conflict, the invariant wins and you flag the tradeoff.
 
+### 5E. Motion and visual media
+
+- Keep all globe motion described in section 3A.
+- Subtle section reveals and hero depth motion are allowed when they improve
+  hierarchy. Use transform/opacity animations, restrained distances, and smooth
+  easing; avoid scroll-jacking, parallax that fights reading, looping decorative
+  movement, or effects that feel laggy or tacky.
+- Respect `prefers-reduced-motion` across the entire page, not only the globe.
+- Optimise the hero image with responsive dimensions and compression. It must
+  not become the dominant contributor to first paint or cause layout shift.
+- Test motion on a mid-range laptop and mobile-sized viewport. Remove an effect
+  if it stutters rather than lowering accessibility or interaction quality.
+
 ---
 
 # 6. EXECUTION ORDER
 
 Work in this sequence, keeping the app runnable at each step:
 
-1. **Decide the theme question** (section 0) and state the choice.
+1. **Study the reference and establish the visual system** (section 0). Record
+   the derived tokens and why they fit ONNM; do not copy the reference palette.
 2. **Lazy-import the inference stack** (5A) and measure the improvement. Do this
    first — it is independent of the redesign and the largest single win.
 3. **Route the pages** in `app.py`: `landing`, `auth`, `scanner`, `profile`,
@@ -419,6 +516,8 @@ Work in this sequence, keeping the app runnable at each step:
 6. **Build the charts** (`src/components/charts.py`).
 7. **Profile view**, reusing `list_user_uploads()` and the existing history table.
 8. **Verify** (section 7).
+9. **Commit the finished implementation and all production assets.** This brief
+   asks for a working redesign, not a design recommendation document.
 
 ---
 
@@ -439,4 +538,18 @@ Work in this sequence, keeping the app runnable at each step:
 - Frame time and transfer size reported against the 5B budget.
 - A background tab shows no measurable CPU from the globe.
 - The uploader is unreachable while logged out — verified, not assumed.
+- The public landing page retains mission-left / globe-right composition at
+  desktop width, with the globe visibly above and separate from the moss layer.
+- Mobile and narrow desktop layouts contain no overlap, horizontal scroll,
+  clipped globe, detached labels, or unreadable text over imagery.
+- Authentication, scanner, profile, history, result, loading, empty, disabled,
+  validation, OOD rejection, and network-failure states all use the same visual
+  system and remain readable on sterile white functional surfaces.
+- The bespoke hero asset is committed, optimised, and has documented provenance.
+- Desktop and mobile screenshots demonstrate a coherent, flush composition at
+  the four target widths, with the complete hero visible and no wasted voids.
+- All non-globe motion is subtle, smooth, and disabled or reduced under
+  `prefers-reduced-motion`.
+- Existing copy and measured claims are unchanged except where this brief
+  explicitly introduced new content.
 - Report anything you could not do, rather than narrowing the scope silently.
