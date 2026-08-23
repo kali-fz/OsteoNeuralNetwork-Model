@@ -26,8 +26,12 @@ head_sampling_rate = 0.1   # free-tier friendly; full logging is not needed here
 
 [[d1_databases]]
 binding = "DB"
-database_name = "onnm-community"
-# Filled in by `wrangler d1 create onnm-community` — paste the id it prints.
+# The database is named `onn-model` in the dashboard, not `onnm-community`.
+# The binding resolves by id, so the Worker was never affected — but
+# `wrangler d1 execute <name>` resolves by NAME, so every migration command
+# needs this one. Keeping the wrong name here is how an hour disappears into
+# "database not found" while the Worker is demonstrably talking to it.
+database_name = "onn-model"
 database_id = "961f0440-7ff1-466e-88fe-0c2b30f3083b"
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,22 @@ env/
 .streamlit/secrets.toml
 !.env.example
 
+# D1 database dumps. `wrangler d1 export` is the sensible thing to run before a
+# migration, and it writes into this directory by default -- so the safe habit
+# and the dangerous file are produced by the same command. A dump carries every
+# user's email, their PBKDF2 hash, and every shared radiograph as base64: it is
+# the single most sensitive artefact this project can generate, and it lands one
+# `git add -A` away from a public repository.
+#
+# Ignored by extension rather than by exact name, because the next backup will
+# be called something else and whoever writes it will not check this file first.
+cloudflare/*.sql
+!cloudflare/schema.sql
+cloudflare/migrations/*.sql
+!cloudflare/migrations/[0-9][0-9][0-9][0-9]_*.sql
+# wrangler's local state: a local D1 replica, build output and caches.
+cloudflare/.wrangler/
+
 # --- Tooling ----------------------------------------------------------------
 .pytest_cache/
 .ruff_cache/
