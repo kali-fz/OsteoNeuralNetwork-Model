@@ -3,15 +3,23 @@
 Companion to `overview.md`. Checked items are verified done, not assumed.
 Last audited: 2026-08-23 (community triage, versioning, publish path, Grad-CAM audit).
 
-**Current state:** 374 tests green in the ROCm `.venv`, repo-wide ruff clean. Cloudflare
-Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Cloud
-**deployed and serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
+**Current state:** 403 tests green in the ROCm `.venv`, repo-wide ruff clean. Cloudflare
+Worker + D1 **deployed and live at schema_version 3**; Streamlit Cloud **deployed and
+serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 
-> **Read this first if you read nothing else.** The Grad-CAM localisation claim — the
-> headline feature of this project — is **not currently supported by measurement**, and
-> the reason is a defect in the metric, not (necessarily) in the model. See
-> "Grad-CAM is unmeasurable right now" under Blocking. Nothing about the classifier's
-> reported ROC-AUC, recall or calibration is affected.
+> **Read this first if you read nothing else — DEPLOYMENT HAZARD.**
+> `cloudflare/src/worker.js` in this repository is **ahead of the deployed Worker**. Its
+> `INSERT` statements reference `signup_country` and `origin_country`, which **do not
+> exist in live D1** — migration 0004 is written and tested but has never been applied.
+>
+> **Deploying the Worker before applying migration 0004 breaks the live site**: every
+> account creation and every submission fails with "no such column". The order is
+> **migration first, deploy second**, and it is not optional.
+>
+> Second: the Grad-CAM localisation claim is now *measurable* (the heatmap was inverted;
+> fixed 2026-08-23) but still **roughly at chance** — pointing game 0.0936 with no chance
+> baseline established. It does not yet support "the model looks at lesions". Nothing
+> about the classifier's ROC-AUC, recall or calibration was ever affected.
 
 ---
 
@@ -258,12 +266,71 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
       | 7.7 | 7 (0.19%) |
       | **7.8** | **0** |
 
-      **Not changed, deliberately.** `onnm.ood` documents photographs as sitting near 8.0,
-      so 7.8 leaves a narrow margin, and the cost side has never been measured. Run
-      `python scripts/ood_sweep.py --negatives <folder of photos>` first — that is the
-      other half of the trade, and this is a clinical-facing behaviour change.
+      **Not changed, and still 7.5** (`src/onnm/ood.py:60`) — confirmed 2026-08-23.
+
+      **The radiograph side is now measured** (600-film random sample): p50 6.36,
+      p99 7.54, **max 7.7636**. So the gap between the highest real radiograph and the
+      8.0 that `onnm.ood` quotes for photographs is **0.236 bits — about 3% of the
+      scale**.
+
+      That reframes the decision. It is not "7.5 or 7.8": this single feature has almost
+      no separating power at the top of its range, so *any* threshold there is fragile.
+      **Recommendation: hold at 7.5** and treat the learned OOD detector as the real fix.
+
+      The cost side is still unmeasured. `scripts/ood_sweep.py --negatives <folder>`
+      already exists and works — it only needs a folder of non-radiograph photos, which
+      this repository does not contain. The community `misc` bucket is meant to become
+      that corpus, but `configs/ood_manifest.csv` does not exist yet: nothing has been
+      approved into it.
 - [ ] **Measure what the uncertainty gate withdraws.** How many *true* lesion calls the
       0.65 / 0.90 gates suppress on val, before trusting the defaults.
+
+### Blocking — a disputed false rejection is silently discarded
+
+The single highest-value signal in the community loop is being thrown away, and the UI
+tells the user the opposite. Traced end to end 2026-08-23:
+
+1. The OOD gate rejects an upload. `app.py:909` calls
+   `record_rejection(..., shared=SHARE_CONSENT)`. Without the share tick the row is
+   stored **with no image** — deliberate and correct; consent governs the pixels.
+2. The **"This really is a radiograph" button is rendered unconditionally**
+   (`app.py:924`), whether or not the user shared.
+3. Its help text says **"Sends the image to a human reviewer."** That is **false** for an
+   unshared row: there is no image, and no reviewer will ever see it.
+4. Pressing it re-triages the row to `contradiction` — the bucket `schema.sql` calls
+   "worth the most per row", because each one is a demonstrated failure of the gate.
+5. `pendingReview` (`worker.js:708`) filters `shared = 1`, so the row never reaches the
+   queue. `/health` filters it too (`worker.js:227`, `:239`), so it is not even counted.
+
+**This is the same problem as the entropy threshold above.** Those disputes are precisely
+the evidence that decision is waiting on: 2.16% of BTXRD films trip the gate, the users
+who hit that are the only witnesses, and their testimony is being dropped on the floor.
+
+- [ ] **A. Make the UI tell the truth** (`src/community_ui.py`,
+      `render_rejection_dispute`). When the row carries no image, still record the dispute
+      — it is a real signal and it counts — but say plainly that nothing was kept, so a
+      reviewer cannot check it, and how to make it reviewable (tick share, re-upload).
+      When shared, behaviour and wording unchanged. App-side only: no schema change, no
+      Worker change, no redeploy hazard. **Ships with the next Streamlit deploy.**
+
+- [ ] **B. Make the invisible visible** (`cloudflare/src/worker.js`, `health()`). Add one
+      additive, read-only field counting disputed-but-unshared pending rows. Changes no
+      existing number and does not touch the review gate; gives a running count of the
+      false-rejection evidence currently being lost, which is what makes the entropy
+      decision measurable over time.
+      **Requires a Worker deploy — see the deployment hazard at the top of this file.
+      Migration 0004 must be applied to live D1 first, or the deploy breaks the site.**
+
+- [ ] **C. Decide: prompt for consent at dispute time?** *(not proposed — a human call.)*
+      Asking "share this image so a reviewer can check?" at the moment of dispute would
+      convert the highest-value signal into reviewable training data. It needs a new write
+      path that attaches an image to an existing submission, which is consent-sensitive on
+      a table holding medical images. That is a GRC decision, not an engineering one.
+
+      Tests to accompany A and B: one asserting the new health count catches a disputed
+      unshared row against the real schema (as `tests/test_geolocation.py` does), and one
+      pinning that `pendingReview`'s `shared = 1` filter is **unchanged** — the fix must
+      not smuggle imageless rows into the review queue.
 
 ### Done — gate 6
 
@@ -358,8 +425,15 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
 
 ## Decisions still owed by a human
 
-- **The OOD entropy threshold.** 7.5 costs 2.16% false rejection; 7.8 costs none but
-  narrows the margin against photographs. Measure the negatives side first.
+- **The OOD entropy threshold.** 7.5 costs 2.16% false rejection; 7.8 costs none. But the
+  measured gap between the highest real radiograph (7.7636) and the 8.0 quoted for
+  photographs is only **0.236 bits**, so no threshold in that range is robust.
+  **Recommendation: hold at 7.5**; the learned OOD detector is the real fix. The
+  negatives side is still unmeasured.
+- **Whether to prompt for consent when a user disputes a rejection** (item C under
+  "a disputed false rejection is silently discarded"). It would turn the best signal in
+  the system into reviewable data, at the cost of a new consent-sensitive write path onto
+  a table of medical images.
 - **Whether community data should ever reach val/test.** Currently pinned to `train`,
   which keeps every score comparable to `overview.md`. Changing it invalidates cross-run
   comparison, so it should be deliberate rather than drift.
