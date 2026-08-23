@@ -4,7 +4,7 @@
 
 TTA-hflip averages each film's logits with its mirror image before the softmax.
 On limb radiographs the flip is anatomically legitimate (a left femur is a
-mirrored right femur), so this is a near-free variance reduction — worth
+mirrored right femur), so this is a near-free variance reduction -- worth
 measuring on a test split whose malignant class holds only ~49 images.
 
 Reports macro ROC-AUC and malignant ROC/PR-AUC for both arms on the chosen
@@ -77,7 +77,7 @@ def main() -> int:
     delta = rows[1][1]["roc_auc_macro"] - rows[0][1]["roc_auc_macro"]
     print(f"\n  macro ROC-AUC delta: {delta:+.4f}")
     print(
-        "  On ~49 malignant test images a delta inside ±0.01 is noise; check the val\n"
+        "  On ~49 malignant test images a delta inside +/-0.01 is noise; check the val\n"
         "  split agrees before believing either direction."
     )
     return 0

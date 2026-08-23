@@ -34,6 +34,7 @@ serving — so a bad retrain costs a row in this table and nothing else.
 - **Registered** 2026-08-23 01:09 UTC
 - **Run** `full-20260822-041653`
 - **Note** Baseline: the run every number in overview.md refers to. Trained on BTXRD alone, before the community loop existed.
+- **best.pt sha256** `f6b0ae7e0f257edd58a7bff7ea4fd34aaf5ff53ddbfc09892ee42fd560937c7c`
 
 | metric | value |
 |---|---|

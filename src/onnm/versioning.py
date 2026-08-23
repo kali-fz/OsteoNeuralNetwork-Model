@@ -114,6 +114,15 @@ class Version:
     parent: str | None = None
     #: Why promotion was refused, when it was. Empty on a promoted version.
     held_because: str = ""
+    #: sha256 of this version's ``best.pt``.
+    #:
+    #: The one field that identifies a version from the *outside*. Run names are
+    #: a local convention -- the hosted app calls its directory "hosted"
+    #: regardless of which generation is in it -- so given only a deployed
+    #: checkpoint, the digest is the only way back to a row in this ledger.
+    #: That is what lets the app say which version it is actually serving, as
+    #: opposed to which one it was configured to serve.
+    checkpoint_sha256: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +135,7 @@ class Version:
             "note": self.note,
             "parent": self.parent,
             "held_because": self.held_because,
+            "checkpoint_sha256": self.checkpoint_sha256,
         }
 
     @classmethod
@@ -140,6 +150,7 @@ class Version:
             note=data.get("note", ""),
             parent=data.get("parent"),
             held_because=data.get("held_because", ""),
+            checkpoint_sha256=data.get("checkpoint_sha256", ""),
         )
 
 
@@ -201,6 +212,22 @@ def save_registry(versions: list[Version], path: Path | str = REGISTRY_PATH) -> 
         encoding="utf-8",
     )
     return path
+
+
+def find_by_sha(versions: list[Version], sha256: str) -> Version | None:
+    """Which version a checkpoint file is, by digest. None when unrecognised.
+
+    Unrecognised is a real and useful answer, not a failure: it means the thing
+    being served was never registered, which is exactly what a hand-uploaded or
+    half-finished publish looks like from the outside.
+    """
+    if not sha256:
+        return None
+    wanted = sha256.strip().lower()
+    for version in reversed(versions):
+        if (version.checkpoint_sha256 or "").lower() == wanted:
+            return version
+    return None
 
 
 def latest(versions: list[Version]) -> Version | None:
@@ -276,6 +303,7 @@ def register(
     note: str = "",
     level: str = "patch",
     version: str | None = None,
+    checkpoint_sha256: str = "",
     tolerance: float = REGRESSION_TOLERANCE,
 ) -> tuple[list[Version], Version]:
     """Add a version and decide whether it serves. Returns ``(versions, added)``.
@@ -302,6 +330,7 @@ def register(
         note=note,
         parent=previous.version if previous else None,
         held_because="" if ok else reason,
+        checkpoint_sha256=checkpoint_sha256,
     )
     if ok and incumbent is not None:
         incumbent.status = "superseded"
@@ -385,6 +414,8 @@ def render_markdown(versions: list[Version]) -> str:
             detail.append(f"- **Note** {version.note}")
         if version.held_because:
             detail.append(f"- **Not promoted:** {version.held_because}")
+        if version.checkpoint_sha256:
+            detail.append(f"- **best.pt sha256** `{version.checkpoint_sha256}`")
         if version.community:
             bits = ", ".join(f"{k} = {v}" for k, v in sorted(version.community.items()))
             detail.append(f"- **Community data** {bits}")

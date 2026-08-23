@@ -44,7 +44,7 @@ from auth import (  # noqa: E402
     register_user,
 )
 from backend import initialize_database, using_community  # noqa: E402
-from checkpoint_fetch import ensure_checkpoint  # noqa: E402
+from checkpoint_fetch import ensure_checkpoint, serving_checkpoint_info  # noqa: E402
 from community import get_client, is_admin  # noqa: E402
 from community_ui import (  # noqa: E402
     admin_can_review,
@@ -437,6 +437,51 @@ elif not st.session_state["authenticated"]:
     render_legal_footer()
     st.stop()
 
+def render_serving_version(selected, pinned) -> None:
+    """Name the ONN version actually being served, matched by file digest.
+
+    Every other signal here is a statement of intent -- the run name is a local
+    convention, and the deployment's environment says what was *asked* for. The
+    digest recorded when the checkpoint was fetched says what arrived, and
+    `model_versions.json` maps that back to a version number.
+
+    Which matters because a failed publish is otherwise completely silent: the
+    secrets page shows the new URL, the app starts cleanly, and the previous
+    model keeps answering. This is the one place the two can be seen to
+    disagree.
+
+    Renders nothing on a local run with no fetched checkpoint -- there is no
+    deployment to be wrong about.
+    """
+    info = serving_checkpoint_info()
+    if not info or not info.get("sha256"):
+        return
+
+    try:
+        from onnm.versioning import find_by_sha, load_registry
+
+        version = find_by_sha(load_registry(), info["sha256"])
+    except Exception:  # noqa: BLE001 - a missing ledger must not break the app
+        version = None
+
+    if version is None:
+        st.warning(
+            "Serving a checkpoint that is not in the version ledger. It was fetched "
+            f"from `{info.get('checkpoint_url', 'an unrecorded URL')}` but its digest "
+            "matches no registered version — so nothing here can tell you what it "
+            "scores. Register it, or republish a known version."
+        )
+        return
+
+    st.caption(
+        f"Serving **ONN {version.version}** · fetched {info.get('fetched_at', 'unknown')}"
+    )
+    if selected != pinned:
+        st.caption(
+            "You are previewing a different checkpoint than the one being served."
+        )
+
+
 # -- Sidebar ---------------------------------------------------------------
 with st.sidebar:
     st.success(f"Logged in as: **{st.session_state['user_email']}**")
@@ -523,6 +568,8 @@ with st.sidebar:
             "No production pin — defaulting to the newest run. To pin one, write its "
             "folder name into `reports/PRODUCTION`."
         )
+
+    render_serving_version(selected, pinned)
 
     try:
         with st.spinner("Loading model onto the GPU…"):

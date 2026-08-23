@@ -403,6 +403,41 @@ would otherwise land in `best.pt` and fail much later inside `torch.load`. The d
 name is `hosted`, not `production` — that would collide with the `reports/PRODUCTION`
 marker on case-insensitive filesystems.
 
+**The fetch cache is keyed on the configuration, not the filename.** A `source.json` beside
+the checkpoint records the URLs and digest that produced it; any change re-fetches weights
+*and* calibration together. Three publish bugs died with that change, and all three were
+silent:
+
+1. A changed `ONNM_CHECKPOINT_URL` was ignored whenever the old `best.pt` was still on
+   disk — so whether a publish took effect depended on whether the platform handed you a
+   fresh container.
+2. Weights and calibration were guarded independently, so new weights could serve at the
+   old threshold. That does not raise; it moves where the model calls a lesion.
+3. `reports/PRODUCTION` was written only when absent, so "rename the run to force a
+   re-download" — the obvious workaround for (1) — downloaded the new model into a new
+   directory and left the marker naming the old one.
+
+`ONNM_CHECKPOINT_SHA256` is optional and worth setting: the magic-bytes check catches a
+wrong file, only a digest catches a truncated right one. `ONNM_CHECKPOINT_RUN` is now
+cosmetic — it names a directory and nothing depends on remembering to change it.
+
+**Publishing is `scripts/publish_model.py`.** It stages a version's weights and calibration
+into `dist/<version>/`, refuses if the on-disk bytes no longer match the digest the ledger
+recorded, and prints the exact secrets to paste. `--verify <url>` fetches what you uploaded
+and checks it against the ledger *before* the deployment points at it.
+
+**The app names the version it is serving**, matched by digest against
+`model_versions.json` — `find_by_sha`, fed by the `source.json` record. Every other signal
+is a statement of intent; the digest is what actually arrived. A checkpoint whose digest
+matches no registered version renders a warning rather than a version number, because
+nothing then relates the running model to any measured score.
+
+**Console output in `scripts/` is ASCII.** Windows consoles default to cp1252 and cannot
+encode an em dash, so a stray `—` in a `print` — or in a module docstring, which argparse
+prints for `--help` — is a `UnicodeEncodeError` on the user's machine and a silent failure
+under Task Scheduler. `src/` is exempt: those strings are rendered by Streamlit in a
+browser.
+
 ---
 
 ## Versioning — `ONN.md` / `model_versions.json`

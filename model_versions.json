@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-08-23 01:09 UTC",
+  "updated_at": "2026-08-23 02:37 UTC",
   "versions": [
     {
       "version": "v1.0.0",
@@ -21,7 +21,8 @@
       "community": {},
       "note": "Baseline: the run every number in overview.md refers to. Trained on BTXRD alone, before the community loop existed.",
       "parent": null,
-      "held_because": ""
+      "held_because": "",
+      "checkpoint_sha256": "f6b0ae7e0f257edd58a7bff7ea4fd34aaf5ff53ddbfc09892ee42fd560937c7c"
     }
   ]
 }

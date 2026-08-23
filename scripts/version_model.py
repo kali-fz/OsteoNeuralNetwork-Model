@@ -118,6 +118,28 @@ def _gate_metrics(ood_manifest: Path, bone_sample: int = 0) -> tuple[dict[str, f
     return metrics, report.as_dict()
 
 
+def _checkpoint_sha256(run: str) -> str:
+    """Digest of the run's weights, so the ledger can identify them later.
+
+    Computed once, here, rather than by whatever is asking. A deployed app knows
+    only the bytes it downloaded -- not the run name, which is a local
+    convention -- so this digest is the only link back from a live model to the
+    row describing it.
+    """
+    import hashlib
+
+    for name in ("best.pt", "last.pt"):
+        path = REPORTS / run / name
+        if path.is_file():
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(block)
+            return digest.hexdigest()
+    logger.warning("no checkpoint under reports/%s -- the version will carry no digest", run)
+    return ""
+
+
 def _community_summary(store: Path) -> dict:
     index = store / "store.json"
     if not index.is_file():
@@ -190,6 +212,7 @@ def cmd_register(args: argparse.Namespace) -> int:
         note=args.note or "",
         level=args.level,
         version=args.version,
+        checkpoint_sha256=_checkpoint_sha256(args.run),
     )
     _write(versions)
 
@@ -205,7 +228,7 @@ def cmd_register(args: argparse.Namespace) -> int:
     else:
         current = serving(versions)
         still = f" and still pins {current.run}" if current else ""
-        print(f"\nNOT promoted — {added.held_because}")
+        print(f"\nNOT promoted -- {added.held_because}")
         print(
             f"reports/PRODUCTION is unchanged{still}.\n"
             "The checkpoint is on disk and the row is in the ledger; nothing was lost."

@@ -172,7 +172,7 @@ def main() -> int:
             f"{pending} awaiting review, {health.get('approved')} approved"
         )
         if pending:
-            print(f"  ({pending} still need approving in the review console — "
+            print(f"  ({pending} still need approving in the review console -- "
                   "they are not claimed by this run)")
 
         result = client.export_batch(
@@ -189,7 +189,7 @@ def main() -> int:
                 print(f"  {row['submission_id'][:8]}  [{row.get('admin_bucket'):<13}] "
                       f"-> {row.get('admin_label')}")
             if not rows:
-                print("  (nothing approved and unbatched — approve some first)")
+                print("  (nothing approved and unbatched -- approve some first)")
             return 0
 
         claimed = result.get("count", 0)

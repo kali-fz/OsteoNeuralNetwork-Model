@@ -1,4 +1,4 @@
-"""The daily loop: approvals in, a guarded version out — or nothing at all.
+"""The daily loop: approvals in, a guarded version out -- or nothing at all.
 
     .venv\\Scripts\\python.exe scripts\\daily_cycle.py            # do it
     .venv\\Scripts\\python.exe scripts\\daily_cycle.py --dry-run  # decide only
@@ -107,7 +107,7 @@ def main() -> int:
     args = parser.parse_args()
 
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    print(f"ONNM daily cycle — {stamp}")
+    print(f"ONNM daily cycle -- {stamp}")
 
     current = serving(load_registry())
     print(f"serving: {current.version + ' (' + current.run + ')' if current else 'nothing pinned'}")
@@ -125,7 +125,7 @@ def main() -> int:
 
     health = client.health()
     if health is None:
-        print("cannot reach the community API — nothing done.", file=sys.stderr)
+        print("cannot reach the community API -- nothing done.", file=sys.stderr)
         return 2
 
     try:

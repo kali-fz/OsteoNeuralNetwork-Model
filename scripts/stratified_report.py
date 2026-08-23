@@ -4,10 +4,10 @@
 
 Answers two specific questions the aggregate metrics average away:
 
-* which anatomy regions produce the false positives — the standing complaint
+* which anatomy regions produce the false positives -- the standing complaint
   is complex joint anatomy (pelvis, hips, growth plates), and BTXRD's metadata
   has one-hot anatomy columns, so the hypothesis is directly testable;
-* which tumour subtypes the model misses — osteosarcoma vs the other
+* which tumour subtypes the model misses -- osteosarcoma vs the other
   malignancies vs each benign subtype.
 
 Uses the calibrated operating point beside the checkpoint (calibration.json)
