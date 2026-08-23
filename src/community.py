@@ -190,6 +190,9 @@ class User:
     is_admin: bool = False
     auth_provider: str = "password"
     provider_subject: str | None = None
+    display_name: str | None = None
+    profile_picture_url: str | None = None
+    public_contributor_profile: bool = False
 
 
 class CommunityError(RuntimeError):
@@ -428,6 +431,14 @@ class CommunityClient:
             self.timeout = previous
         return body if status == 200 else None
 
+    def contributors(self) -> list[dict[str, Any]]:
+        """Public, explicitly opted-in Google contributor profiles only."""
+        status, body = self._request("GET", "/contributors")
+        if status != 200:
+            return []
+        rows = body.get("contributors")
+        return rows if isinstance(rows, list) else []
+
     # -- accounts (mirrors database.py) ------------------------------------
     def create_user(
         self, email: str, password_hash: str, *, is_admin: bool = False
@@ -458,7 +469,13 @@ class CommunityClient:
         raise CommunityError(body.get("error", f"could not create account (status {status})"))
 
     def create_oauth_user(
-        self, email: str, provider_subject: str, *, auth_provider: str = "google"
+        self,
+        email: str,
+        provider_subject: str,
+        *,
+        auth_provider: str = "google",
+        display_name: str | None = None,
+        profile_picture_url: str | None = None,
     ) -> User:
         """Create a federated account. Sends no password hash, and cannot.
 
@@ -475,6 +492,8 @@ class CommunityClient:
                 "email": email,
                 "auth_provider": auth_provider,
                 "provider_subject": provider_subject,
+                "display_name": display_name,
+                "profile_picture_url": profile_picture_url,
             },
         )
         if status == 201:
@@ -486,6 +505,8 @@ class CommunityClient:
                 tos_accepted_at=body.get("created_at", ""),
                 auth_provider=auth_provider,
                 provider_subject=provider_subject,
+                display_name=display_name,
+                profile_picture_url=profile_picture_url,
             )
         if status == 409:
             raise DuplicateEmailError("an account already exists for that email")
@@ -501,6 +522,9 @@ class CommunityClient:
             is_admin=bool(body.get("is_admin", 0)),
             auth_provider=body.get("auth_provider") or "password",
             provider_subject=body.get("provider_subject"),
+            display_name=body.get("display_name"),
+            profile_picture_url=body.get("profile_picture_url"),
+            public_contributor_profile=bool(body.get("public_contributor_profile", 0)),
         )
 
     def get_user_by_email(self, email: str) -> User | None:
@@ -513,6 +537,27 @@ class CommunityClient:
             "GET", "/users/by-subject", params={"subject": provider_subject}
         )
         return self._user_from_body(body) if status == 200 else None
+
+    def update_contributor_profile(
+        self,
+        user_id: str,
+        provider_subject: str,
+        *,
+        display_name: str | None,
+        profile_picture_url: str | None,
+        public_profile: bool | None = None,
+    ) -> bool:
+        """Refresh trusted Google fields and optionally change public visibility."""
+        payload: dict[str, Any] = {
+            "user_id": user_id,
+            "provider_subject": provider_subject,
+            "display_name": display_name,
+            "profile_picture_url": profile_picture_url,
+        }
+        if public_profile is not None:
+            payload["public_profile"] = bool(public_profile)
+        status, _ = self._request("POST", "/users/profile", payload)
+        return status == 200
 
     # -- submissions -------------------------------------------------------
     def create_submission(

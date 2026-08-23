@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -106,6 +107,26 @@ def _claims() -> Any:
 
 def is_signed_in() -> bool:
     return _claims() is not None
+
+
+def identity_profile() -> dict[str, str]:
+    """Return display-only Google claims, with the picture URL allow-listed."""
+    claims = _claims()
+    if claims is None:
+        return {"name": "", "picture": "", "subject": ""}
+    name = str(claims.get("name") or "").strip()[:80]
+    subject = str(claims.get("sub") or "")
+    picture = str(claims.get("picture") or "").strip()
+    try:
+        parsed = urlparse(picture)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (
+            host == "googleusercontent.com" or host.endswith(".googleusercontent.com")
+        ):
+            picture = ""
+    except ValueError:
+        picture = ""
+    return {"name": name, "picture": picture[:2048], "subject": subject}
 
 
 def render_sign_in() -> None:

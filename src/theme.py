@@ -262,7 +262,37 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
   font-size:13px; color:var(--muted); line-height:1.5;
 }
 
-/* ── Scanner nav bar (authenticated pages) ───────────────────────────────── */
+/* ── Account header (authenticated pages) ───────────────────────────────── */
+.onnm-header-title {
+  min-height:38px; display:flex; align-items:center; font-size:20px;
+  font-weight:400; letter-spacing:-.02em; color:var(--ink);
+}
+.onnm-account-link {
+  min-height:36px; display:flex; align-items:center; gap:9px; padding:2px 8px;
+  color:var(--ink) !important; text-decoration:none !important;
+  border:1px solid transparent; border-radius:999px; white-space:nowrap;
+}
+.onnm-account-link:hover { background:#eee9e0; border-color:var(--line); }
+.onnm-account-avatar, .onnm-contributor-avatar {
+  width:32px; height:32px; border-radius:50%; object-fit:cover; flex:0 0 32px;
+  border:1px solid #cfc8bb; background:#e8eee9;
+}
+.onnm-account-initials {
+  display:inline-flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-size:11px; font-weight:600; color:var(--green-hv);
+}
+.onnm-account-name {
+  overflow:hidden; text-overflow:ellipsis; font-size:12px; font-weight:600;
+}
+[data-testid="stHorizontalBlock"]:has(.onnm-header-title) {
+  align-items:center; border-bottom:1px solid var(--line); padding-bottom:10px;
+  margin-bottom:18px;
+}
+[data-testid="stHorizontalBlock"]:has(.onnm-header-title) .stButton > button {
+  min-height:36px; padding:5px 10px; font-size:12px;
+}
+
+/* ── Legacy scanner nav bar ──────────────────────────────────────────────── */
 .onnm-appbar {
   display:flex; align-items:center; justify-content:space-between;
   padding:14px 0 14px; border-bottom:1px solid var(--line);
@@ -305,6 +335,27 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
   color:var(--muted); min-width:160px;
 }
 .onnm-profile-val { font-size:15px; color:var(--ink); }
+
+/* ── Public contributors ────────────────────────────────────────────────── */
+.onnm-section-heading {
+  margin:42px 0 16px; padding-top:20px; border-top:1px solid var(--line);
+  display:flex; flex-direction:column; gap:4px;
+}
+.onnm-section-heading span {
+  font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted);
+}
+.onnm-section-heading strong { font-size:20px; font-weight:500; }
+.onnm-contributor-grid {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px;
+}
+.onnm-contributor-card {
+  display:flex; align-items:center; gap:12px; min-height:64px; padding:12px 14px;
+  border:1px solid var(--line); border-radius:10px; background:#f2eee7;
+}
+.onnm-contributor-card > span:last-child { display:flex; flex-direction:column; gap:2px; }
+.onnm-contributor-card strong { font-size:13px; font-weight:600; }
+.onnm-contributor-card small { font-family:var(--mono); font-size:11px; color:var(--muted); }
 
 /* ── Masthead (scanner / internal pages) ─────────────────────────────────── */
 .gd-masthead { border-bottom:1px solid var(--line); margin-bottom:24px; padding-bottom:20px; }
@@ -366,15 +417,25 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
 .onnm-scanner-intro {
   display:grid; grid-template-columns:auto 1fr; gap:6px 18px;
   align-items:baseline; padding:18px 20px; margin:2px 0 20px;
-  border:1px solid var(--line); border-left:5px solid var(--green);
-  border-radius:10px; background:var(--white);
+  border:1px solid var(--line); border-radius:10px; background:#f2eee7;
 }
 .onnm-scanner-intro span {
   grid-row:1 / span 2; font-family:var(--mono); font-size:11px; font-weight:600;
-  letter-spacing:.07em; text-transform:uppercase; color:var(--green);
+  letter-spacing:.07em; text-transform:uppercase; color:var(--muted);
 }
 .onnm-scanner-intro strong { font-size:16px; font-weight:600; color:var(--ink); }
 .onnm-scanner-intro p { margin:0; font-size:13px; color:var(--muted); }
+.onnm-disclaimer {
+  margin:0 0 18px; padding:13px 16px; border:1px solid var(--line);
+  border-left:3px solid #9b5147; border-radius:8px; background:#f4eee9;
+  color:var(--ink); font-size:13px; line-height:1.55;
+}
+.onnm-empty-state {
+  display:flex; flex-direction:column; gap:5px; margin:14px 0 24px; padding:18px 20px;
+  border:1px solid var(--line); border-radius:10px; background:#f2eee7;
+}
+.onnm-empty-state strong { font-size:14px; }
+.onnm-empty-state span { font-size:13px; line-height:1.55; color:var(--muted); }
 .stButton > button:hover, .stDownloadButton > button:hover,
 .stFormSubmitButton > button:hover {
   border-color:var(--ink); background:var(--white); color:var(--ink);
@@ -382,12 +443,12 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
 }
 .stButton > button[kind="primary"],
 [data-testid="stBaseButton-primary"] {
-  min-height:52px; border-color:var(--green); background:var(--green); color:#fff;
+  min-height:52px; border-color:#b9c8bd; background:#e5ece6; color:var(--green-hv);
   padding-inline:28px; font-size:15px;
 }
 .stButton > button[kind="primary"]:hover,
 [data-testid="stBaseButton-primary"]:hover {
-  border-color:var(--green-hv); background:var(--green-hv); color:#fff;
+  border-color:#8da493; background:#d9e5dc; color:var(--green-hv);
 }
 .stFormSubmitButton > button {
   min-height:52px; border:0; background:var(--green); color:#fff;
@@ -405,18 +466,18 @@ h3 { font-size:21px; font-weight:500; letter-spacing:-.01em; }
   border-color:var(--line) !important;
 }
 [data-testid="stFileUploader"] section {
-  border:1px dashed #b9b2a5; border-radius:12px; background:var(--white);
+  border:1px dashed #b9b2a5; border-radius:12px; background:#f2eee7;
   padding:30px 24px; min-height:112px;
 }
 [data-testid="stFileUploader"] section:hover {
-  border-color:var(--green); background:#fbfdfb;
+  border-color:#8da493; background:#eeeae2;
 }
 [data-testid="stFileUploaderDropzone"] button {
-  border-radius:8px; border-color:var(--green); background:var(--green);
-  color:#fff; font-weight:600; min-height:44px; padding-inline:22px;
+  border-radius:8px; border-color:#b9c8bd; background:#e5ece6;
+  color:var(--green-hv); font-weight:600; min-height:44px; padding-inline:22px;
 }
 [data-testid="stFileUploaderDropzone"] button:hover {
-  border-color:var(--green-hv); background:var(--green-hv); color:#fff;
+  border-color:#8da493; background:#d9e5dc; color:var(--green-hv);
 }
 [data-testid="stWidgetLabel"] p { font-size:14px; font-weight:500; }
 [data-testid="stSlider"] [role="slider"] { border-radius:0; }
@@ -504,6 +565,7 @@ hr { border-top:1px solid var(--line-s); }
   .onnm-appbar-email { display: none; }
   .onnm-scanner-intro { grid-template-columns:1fr; }
   .onnm-scanner-intro span { grid-row:auto; }
+  .onnm-account-name { display:none; }
 }
 @media (max-width: 480px) {
   .onnm-metric-grid { grid-template-columns: 1fr; }

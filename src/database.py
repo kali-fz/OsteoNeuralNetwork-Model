@@ -33,6 +33,10 @@ class User:
     tos_accepted_at: str
     auth_provider: str = "password"
     provider_subject: str | None = None
+    is_admin: bool = False
+    display_name: str | None = None
+    profile_picture_url: str | None = None
+    public_contributor_profile: bool = False
 
 
 @dataclass(frozen=True)

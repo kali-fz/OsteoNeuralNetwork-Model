@@ -40,21 +40,12 @@ const MAX_SUBMISSIONS_PER_USER_PER_DAY = 50;
 const MAX_USERS = 500; // a test deployment, not a product launch
 const MAX_PAGE_SIZE = 100;
 
-// --- Disclosure guard -------------------------------------------------------
-// The landing-page globe shows how many people signed up and contributed from
-// each country. A count of 1 is not a statistic, it is a person: combined with
-// a small country it identifies someone who uploaded a radiograph, which is
-// exactly the disclosure the country-only schema exists to prevent.
-//
-// So a country is only ever plotted once it holds at least this many people.
-// Everything below the threshold is summed into a single "elsewhere" figure
-// that names no country at all. Five is the conventional floor for published
-// small-area health statistics, and the cost of being wrong here is not
-// symmetric -- an under-populated globe is a cosmetic problem, a re-identified
-// patient is not.
+// --- Country display rule ---------------------------------------------------
 // Product decision: show a country as soon as one account is recorded there.
-// The endpoint remains country-level only, but a one-account country is no
-// longer anonymous. Keep the response field name for client compatibility.
+// The endpoint remains country-level and never returns coordinates, timestamps,
+// account ids, or diagnoses. A one-account country can still reveal that an
+// account exists there, so this value is a display minimum, not anonymity.
+// Keep the response field name for client compatibility.
 const K_ANONYMITY_MIN = 1;
 
 // The three clinical classes the lesion classifier predicts.
@@ -306,16 +297,19 @@ async function globe(db) {
 
   const { results: contributorRows } = await db
     .prepare(
-      `SELECT origin_country AS country, COUNT(DISTINCT user_id) AS n
-         FROM submissions
-        WHERE review_status = 'approved' AND origin_country IS NOT NULL
-        GROUP BY origin_country`
+      `SELECT COALESCE(s.origin_country, u.signup_country) AS country,
+              COUNT(DISTINCT s.user_id) AS n
+         FROM submissions s
+         JOIN users u ON u.user_id = s.user_id
+        WHERE s.review_status = 'approved'
+          AND COALESCE(s.origin_country, u.signup_country) IS NOT NULL
+        GROUP BY COALESCE(s.origin_country, u.signup_country)`
     )
     .all();
 
-  // Rows predating migration 0004 carry NULL and are counted in the totals but
-  // never plotted. They are real users; we simply do not know where they are,
-  // and a guess would be a dot corresponding to nothing.
+  // Rows predating migration 0004 carry NULL. Their approved contributions use
+  // the account country once that account next signs in; until then they stay
+  // in the totals without inventing a location.
   const split = (rows) => {
     const plotted = [];
     let elsewhere = 0;
@@ -371,6 +365,8 @@ async function createUser(db, body, country) {
     is_admin,
     auth_provider,
     provider_subject,
+    display_name,
+    profile_picture_url,
   } = body;
   const provider = auth_provider || "password";
   if (!user_id || !email) return fail(400, "user_id and email are required");
@@ -416,8 +412,9 @@ async function createUser(db, body, country) {
     await db
       .prepare(
         `INSERT INTO users (user_id, email, password_hash, auth_provider, provider_subject,
-                            created_at, tos_accepted_at, is_admin, signup_country)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                            created_at, tos_accepted_at, is_admin, signup_country,
+                            display_name, profile_picture_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         user_id,
@@ -430,7 +427,9 @@ async function createUser(db, body, country) {
         is_admin ? 1 : 0,
         // Never taken from the request body. The client cannot be trusted to
         // report where it is, and does not need to -- the edge already knows.
-        country ?? null
+        country ?? null,
+        provider === "google" ? cleanDisplayName(display_name) : null,
+        provider === "google" ? cleanGooglePicture(profile_picture_url) : null
       )
       .run();
   } catch (err) {
@@ -453,7 +452,8 @@ async function getUserBySubject(db, subject) {
   const row = await db
     .prepare(
       `SELECT user_id, email, password_hash, auth_provider, provider_subject,
-              created_at, tos_accepted_at, is_admin
+              created_at, tos_accepted_at, is_admin, display_name,
+              profile_picture_url, public_contributor_profile
          FROM users WHERE provider_subject = ?`
     )
     .bind(String(subject))
@@ -466,12 +466,93 @@ async function getUserByEmail(db, email) {
   const row = await db
     .prepare(
       `SELECT user_id, email, password_hash, auth_provider, provider_subject,
-              created_at, tos_accepted_at, is_admin
+              created_at, tos_accepted_at, is_admin, display_name,
+              profile_picture_url, public_contributor_profile
        FROM users WHERE email = ? COLLATE NOCASE`
     )
     .bind(String(email).toLowerCase())
     .first();
   return row ? json(row) : fail(404, "no such user");
+}
+
+function cleanDisplayName(value) {
+  const name = String(value || "").trim();
+  return name ? name.slice(0, 80) : null;
+}
+
+function cleanGooglePicture(value) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 2048) return null;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== "https:") return null;
+    if (host !== "googleusercontent.com" && !host.endsWith(".googleusercontent.com")) return null;
+    return parsed.href;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function updateContributorProfile(db, body, country) {
+  const { user_id, provider_subject, display_name, profile_picture_url } = body;
+  if (!user_id || !provider_subject) return fail(400, "user_id and provider_subject are required");
+  const user = await db
+    .prepare("SELECT auth_provider, provider_subject FROM users WHERE user_id = ?")
+    .bind(String(user_id))
+    .first();
+  if (!user) return fail(404, "no such user");
+  if (user.auth_provider !== "google" || !timingSafeEqual(user.provider_subject || "", String(provider_subject))) {
+    return fail(403, "profile identity does not match the Google account");
+  }
+
+  const publicProfile = Object.prototype.hasOwnProperty.call(body, "public_profile")
+    ? (body.public_profile ? 1 : 0)
+    : null;
+  if (publicProfile === null) {
+    await db
+      .prepare("UPDATE users SET signup_country = COALESCE(signup_country, ?) WHERE user_id = ?")
+      .bind(country ?? null, String(user_id))
+      .run();
+    return json({ ok: true });
+  }
+  const storedName = publicProfile === 0 ? null : cleanDisplayName(display_name);
+  const storedPicture = publicProfile === 0 ? null : cleanGooglePicture(profile_picture_url);
+  await db
+    .prepare(
+      `UPDATE users
+          SET display_name = ?, profile_picture_url = ?,
+              public_contributor_profile = ?,
+              signup_country = COALESCE(signup_country, ?)
+        WHERE user_id = ?`
+    )
+    .bind(
+      storedName,
+      storedPicture,
+      publicProfile,
+      country ?? null,
+      String(user_id)
+    )
+    .run();
+  return json({ ok: true, public_contributor_profile: publicProfile });
+}
+
+async function listContributors(db) {
+  const { results } = await db
+    .prepare(
+      `SELECT u.display_name AS name, u.profile_picture_url AS picture,
+              COUNT(s.submission_id) AS approved_contributions
+         FROM users u
+         JOIN submissions s ON s.user_id = u.user_id
+        WHERE u.public_contributor_profile = 1
+          AND u.display_name IS NOT NULL
+          AND s.review_status = 'approved'
+        GROUP BY u.user_id, u.display_name, u.profile_picture_url
+        ORDER BY approved_contributions DESC, u.display_name COLLATE NOCASE ASC
+        LIMIT 24`
+    )
+    .all();
+  return json({ contributors: results ?? [] });
 }
 
 async function createSubmission(db, body, country) {
@@ -907,6 +988,7 @@ export default {
       // renders the result, so the browser never talks to this Worker and the
       // key never leaves the server. See cloudflare/README.md, "The globe".
       if (method === "GET" && path === "/globe") return await globe(db);
+      if (method === "GET" && path === "/contributors") return await listContributors(db);
 
       if (method === "POST" && path === "/users") {
         return await createUser(db, await readJson(request), countryOf(request));
@@ -916,6 +998,9 @@ export default {
       }
       if (method === "GET" && path === "/users/by-subject") {
         return await getUserBySubject(db, url.searchParams.get("subject"));
+      }
+      if (method === "POST" && path === "/users/profile") {
+        return await updateContributorProfile(db, await readJson(request), countryOf(request));
       }
 
       if (method === "POST" && path === "/submissions") {

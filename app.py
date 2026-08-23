@@ -74,6 +74,7 @@ from database import (  # noqa: E402
 )
 from legal import COOKIE_NOTICE, MEDICAL_DISCLAIMER, PRIVACY_POLICY, TERMS_OF_SERVICE  # noqa: E402
 from oauth import (  # noqa: E402
+    identity_profile,
     is_signed_in,
     oidc_configured,
     render_sign_in,
@@ -146,6 +147,12 @@ def globe_data() -> dict:
     return build_markers(get_client().globe())
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def contributor_data() -> list[dict]:
+    """Fetch explicitly public contributor profiles without blocking the page."""
+    return get_client().contributors() if using_community() else []
+
+
 @st.cache_data(show_spinner=False, max_entries=64)
 def inspect_upload(payload: bytes, filename: str):
     """Validate an unchanged upload once rather than on every widget rerun."""
@@ -157,33 +164,45 @@ def inspect_upload(payload: bytes, filename: str):
 
 def navigate_to(page: str) -> None:
     st.session_state["current_page"] = page
+    st.query_params["page"] = page
     st.rerun()
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def render_account_header(page_title: str, *, profile_page: bool = False) -> None:
+def render_account_header(page_title: str, *, active_page: str) -> None:
     """One account/navigation row for every authenticated page.
 
     Keep identity and account actions together. Duplicating them in the sidebar
     made the redesigned scanner show two competing logout controls and left the
     visible header with no indication of which account was active.
     """
-    title_col, identity_col, nav_col, signout_col = st.columns([4, 2, 1, 1])
+    title_col, nav_col, identity_col, signout_col = st.columns([5, 1, 1.75, 0.8])
     with title_col:
         st.markdown(
-            f'<h2 style="font-weight:300;letter-spacing:-.02em;">{page_title}</h2>',
+            f'<div class="onnm-header-title">{html.escape(page_title)}</div>',
             unsafe_allow_html=True,
         )
-    with identity_col:
-        st.caption("Signed in as")
-        st.text(st.session_state.get("user_email") or "Unknown account")
     with nav_col:
-        if profile_page:
-            if st.button("← Scanner", key="account_to_scanner", use_container_width=True):
-                navigate_to("scanner")
-        elif st.button("My Profile", key="account_to_profile", use_container_width=True):
-            navigate_to("profile")
+        target = "scanner" if active_page == "landing" else "landing"
+        label = "Scanner" if active_page == "landing" else "← Home"
+        if st.button(label, key=f"account_nav_{active_page}", use_container_width=True):
+            navigate_to(target)
+    with identity_col:
+        name = str(st.session_state.get("user_name") or "My profile")
+        picture = str(st.session_state.get("user_picture") or "")
+        safe_name = html.escape(name)
+        if picture:
+            safe_picture = html.escape(picture, quote=True)
+            avatar = f'<img class="onnm-account-avatar" src="{safe_picture}" alt="">'
+        else:
+            initials = html.escape("".join(part[:1] for part in name.split()[:2]).upper() or "U")
+            avatar = f'<span class="onnm-account-avatar onnm-account-initials">{initials}</span>'
+        st.markdown(
+            f'<a class="onnm-account-link" href="?page=profile" target="_self">'
+            f'{avatar}<span class="onnm-account-name">{safe_name}</span></a>',
+            unsafe_allow_html=True,
+        )
     with signout_col:
         if st.button("Sign Out", key="account_signout", use_container_width=True):
             _do_logout()
@@ -294,7 +313,7 @@ def render_landing() -> None:
     hero_style = f'style="--hero-img:url(\'{hero_img}\')"' if hero_img else ""
 
     if authenticated:
-        render_account_header("OsteoNeuralNetwork Model")
+        render_account_header("OsteoNeuralNetwork Model", active_page="landing")
     else:
         brand_col, signin_col = st.columns([5, 1])
         with brand_col:
@@ -374,6 +393,28 @@ def render_landing() -> None:
                 "Drag to rotate. Markers show aggregated countries, never precise locations."
             )
 
+        from geo import COUNTRY_CENTROIDS
+        signup_counts = {
+            marker.get("country"): int(marker.get("count", 0))
+            for marker in markers if marker.get("layer") == "signup"
+        }
+        contribution_counts = {
+            marker.get("country"): int(marker.get("count", 0))
+            for marker in markers if marker.get("layer") == "contributor"
+        }
+        country_rows = [
+            {
+                "Country": name,
+                "Users": signup_counts.get(code, 0),
+                "Approved contributors": contribution_counts.get(code, 0),
+            }
+            for code, (name, _, _) in sorted(
+                COUNTRY_CENTROIDS.items(), key=lambda item: item[1][0]
+            )
+        ]
+        st.caption("Country totals · countries without activity show 0")
+        st.dataframe(country_rows, hide_index=True, use_container_width=True, height=210)
+
     totals = data.get("totals", {})
     n_users = totals.get("users", 0)
     n_contributors = totals.get("contributors", 0)
@@ -441,6 +482,48 @@ def render_landing() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    contributors = contributor_data()
+    st.markdown(
+        '<div class="onnm-section-heading"><span>Contributors</span>'
+        '<strong>People helping improve the research dataset</strong></div>',
+        unsafe_allow_html=True,
+    )
+    if contributors:
+        cards = []
+        for contributor in contributors:
+            name = str(contributor.get("name") or "Contributor")
+            picture = str(contributor.get("picture") or "")
+            count = max(0, int(contributor.get("approved_contributions") or 0))
+            safe_name = html.escape(name)
+            if picture:
+                avatar = (
+                    f'<img class="onnm-contributor-avatar" '
+                    f'src="{html.escape(picture, quote=True)}" alt="">'
+                )
+            else:
+                initials = html.escape(
+                    "".join(part[:1] for part in name.split()[:2]).upper() or "C"
+                )
+                avatar = (
+                    f'<span class="onnm-contributor-avatar onnm-account-initials">'
+                    f'{initials}</span>'
+                )
+            noun = "contribution" if count == 1 else "contributions"
+            cards.append(
+                f'<div class="onnm-contributor-card">{avatar}'
+                f'<span><strong>{safe_name}</strong>'
+                f'<small>{count:,} approved {noun}</small></span></div>'
+            )
+        st.markdown(
+            f'<div class="onnm-contributor-grid">{"".join(cards)}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption(
+            "Approved contributors can choose to show their Google name and photo here "
+            "from My Profile. No account is published automatically."
+        )
 
     st.markdown(
         f"""
@@ -573,7 +656,7 @@ def render_scanner() -> None:
         if selected != pinned:
             st.caption("You are previewing a different checkpoint than the one being served.")
 
-    render_account_header("Bone lesion scanner")
+    render_account_header("Bone lesion scanner", active_page="scanner")
     st.markdown(
         f"""
         <div class="onnm-scanner-intro">
@@ -585,7 +668,13 @@ def render_scanner() -> None:
         unsafe_allow_html=True,
     )
 
-    st.error(DISCLAIMER_SUMMARY)
+    st.markdown(
+        '<div class="onnm-disclaimer"><strong>Research tool — not a medical device, '
+        'and not medical advice.</strong> This unvalidated prototype has no FDA, CE, '
+        'or MHRA clearance. Never use its output for patient-care decisions; every '
+        'radiograph requires review by a qualified clinician.</div>',
+        unsafe_allow_html=True,
+    )
 
     with st.sidebar:
         _status = community_status()
@@ -734,10 +823,11 @@ def render_scanner() -> None:
     SHARE_CONSENT = render_share_consent("upload")
 
     if not uploads:
-        st.info(
-            "Upload an X-ray to begin — or several at once to review a series. "
-            "The model classifies each film, reports a confidence score, and renders "
-            "a Grad-CAM heatmap showing which region drove the call."
+        st.markdown(
+            '<div class="onnm-empty-state"><strong>Ready when you are.</strong>'
+            '<span>Upload one X-ray or a series. Each film gets a classification, '
+            'confidence score, and Grad-CAM heatmap.</span></div>',
+            unsafe_allow_html=True,
         )
         render_legal_footer()
         return
@@ -1013,7 +1103,7 @@ def render_scanner() -> None:
 # ── Page: profile ──────────────────────────────────────────────────────────────
 
 def render_profile() -> None:
-    render_account_header("My Profile", profile_page=True)
+    render_account_header("My Profile", active_page="profile")
 
     user_id = st.session_state.get("user_id", "")
     email = st.session_state.get("user_email", "")
@@ -1043,6 +1133,36 @@ def render_profile() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    if using_community() and oidc_configured():
+        st.subheader("Contributor profile")
+        st.caption(
+            "Your Google name and photo are private by default. Turn this on to show them "
+            "on the homepage only when you have at least one approved contribution."
+        )
+        current_public = bool(st.session_state.get("public_contributor_profile", False))
+        public_profile = st.toggle(
+            "Show me in the public contributors section",
+            value=current_public,
+            key="public_contributor_toggle",
+        )
+        if public_profile != current_public:
+            updated = get_client().update_contributor_profile(
+                user_id,
+                str(st.session_state.get("user_subject") or ""),
+                display_name=st.session_state.get("user_name"),
+                profile_picture_url=st.session_state.get("user_picture"),
+                public_profile=public_profile,
+            )
+            if updated:
+                st.session_state["public_contributor_profile"] = public_profile
+                contributor_data.clear()
+                st.success("Contributor visibility updated.")
+            else:
+                st.error("Contributor visibility could not be updated. Please try again.")
+
+    if st.button("Open scanner →", key="profile_open_scanner"):
+        navigate_to("scanner")
 
     st.subheader("My Scan History")
     _render_scan_history(user_id)
@@ -1109,6 +1229,7 @@ def _render_scan_history(user_id: str) -> None:
 
 def _do_logout() -> None:
     logout_session(st.session_state)
+    st.query_params["page"] = "landing"
     if is_signed_in():
         sign_out()
     else:
@@ -1135,8 +1256,37 @@ USING_GOOGLE = oidc_configured()
 if USING_GOOGLE:
     _account = resolve_account()
     if _account is not None:
-        login_session(st.session_state, _account)
+        _identity = identity_profile()
+        login_session(
+            st.session_state,
+            _account,
+            display_name=_identity.get("name"),
+            picture=_identity.get("picture"),
+            subject=_identity.get("subject"),
+        )
+        _sync_key = (
+            _account.user_id,
+            _identity.get("name"),
+            _identity.get("picture"),
+        )
+        if (
+            using_community()
+            and st.session_state.get("profile_sync_key") != _sync_key
+            and get_client().update_contributor_profile(
+                _account.user_id,
+                _identity.get("subject") or "",
+                display_name=_identity.get("name"),
+                profile_picture_url=_identity.get("picture"),
+                public_profile=(
+                    True if st.session_state.get("public_contributor_profile") else None
+                ),
+            )
+        ):
+            st.session_state["profile_sync_key"] = _sync_key
 
+_query_page = st.query_params.get("page")
+if _query_page in {"landing", "auth", "scanner", "profile"}:
+    st.session_state["current_page"] = _query_page
 page = st.session_state.get("current_page", "landing")
 
 if page == "landing":
@@ -1155,14 +1305,12 @@ elif page == "auth":
         render_auth()
 elif page == "scanner":
     if not st.session_state.get("authenticated"):
-        st.session_state["current_page"] = "auth"
-        st.rerun()
+        navigate_to("auth")
     else:
         render_scanner()
 elif page == "profile":
     if not st.session_state.get("authenticated"):
-        st.session_state["current_page"] = "auth"
-        st.rerun()
+        navigate_to("auth")
     else:
         render_profile()
 else:

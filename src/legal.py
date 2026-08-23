@@ -82,7 +82,7 @@ repository's published contact channels.
 PRIVACY_POLICY = """
 ## Privacy Policy
 
-**Effective date: 22 August 2026**
+**Effective date: 24 August 2026**
 
 ### Scope and roles
 ONNM runs in one of two configurations, and which one you are using changes where your
@@ -104,17 +104,23 @@ Running this software does **not** itself create compliance with any such regime
 The Service stores: your normalized email address; account and Terms-acceptance
 timestamps; a random user UUID; uploaded radiograph pixels; the original filename in
 private scan history; a random on-disk filename; upload time; model verdict; and
-confidence score. Streamlit also keeps transient session state needed to keep you
-logged in during the browser session.
+confidence score. In the hosted deployment it also stores the two-letter country code
+Cloudflare supplies at account creation or submission time. No IP address or location
+finer than country is stored. Country-level aggregate counts can appear on the public
+homepage from the first recorded account. Streamlit also keeps transient session state
+needed to keep you logged in during the browser session.
 
 How your identity is held depends on how you signed in:
 
 - **Password account** — a salted PBKDF2-HMAC-SHA256 hash is stored. Your plaintext
   password is never stored or transmitted to any storage backend.
 - **Google account** — no password is stored, because none is ever received. Google
-  authenticates you and returns your email address and a stable account identifier
-  (`sub`); those two values are all that is kept. ONNM holds no Google credential,
-  no access token, and no ability to act on your Google account.
+  authenticates you and returns your email address, display name, profile photo, and a
+  stable account identifier (`sub`). Name and photo are used in your private account
+  header. They are stored in Cloudflare D1 and shown in the homepage contributor list
+  only if you explicitly enable that option in My Profile; turning it off removes the
+  stored public name and photo. ONNM holds no Google credential, no access token, and
+  no ability to act on your Google account.
 
 ### Hosted deployment
 When you use the public app rather than a local installation, three third parties are
@@ -124,8 +130,8 @@ involved, each seeing a different slice:
   upload, because inference runs on their server. Images are held in memory for the
   request and are not written to their disk by ONNM.
 - **Google** performs authentication. Google learns that you signed in to this app;
-  ONNM learns your email address and account identifier. Nothing you upload is sent
-  to Google.
+  ONNM learns your email address, account identifier, display name, and profile photo.
+  Nothing you upload is sent to Google.
 - **Cloudflare (Workers and D1)** stores accounts and submission records. A
   submission row always records the model's verdict and probabilities. The
   **256-pixel processed image is stored only if you tick the sharing box**, which is

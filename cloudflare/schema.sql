@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS users (
     signup_country  TEXT
         CHECK (signup_country IS NULL
                OR (length(signup_country) = 2 AND signup_country = upper(signup_country))),
+
+    -- Google profile fields are displayed publicly only after the account
+    -- owner opts in. They are refreshed from signed Google claims on login.
+    display_name TEXT,
+    profile_picture_url TEXT,
+    public_contributor_profile INTEGER NOT NULL DEFAULT 0
+        CHECK (public_contributor_profile IN (0, 1)),
     CHECK (is_admin = 0 OR user_id = 'c2c5a209-4aaa-4eb9-b112-b2929b6dbe12'),
 
     CHECK (
@@ -304,7 +311,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('bytes_stored', '0');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '4');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '5');
 
 -- Per-user, per-day write counter. Bounds one account's ability to consume
 -- the shared free tier, whether by enthusiasm or malice.

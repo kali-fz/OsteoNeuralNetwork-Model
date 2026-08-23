@@ -9,15 +9,14 @@ a user supplied. That is deliberate and it is the whole design:
     this module attaches a coordinate          (here)
 
 No latitude or longitude is ever recorded, transmitted, or derived from a
-person. A dot on the landing-page globe is the centroid of a country that
-contains at least ``k_anonymity_min`` users, nudged by a fixed offset derived
-from the country code itself. It is a picture of a country, not of anybody.
+person. A dot on the landing-page globe is the centroid of a country represented
+in the aggregate response, nudged by a fixed offset derived from the country
+code itself. It is a picture of a country, not a precise location.
 
 WHY THE JITTER EXISTS
 ---------------------
-Two reasons, and neither is privacy theatre -- the privacy work already
-happened upstream, in the schema that cannot hold a coordinate and the endpoint
-that suppresses small counts.
+Two reasons. The privacy boundary is upstream: the schema cannot hold a
+coordinate and the endpoint selects country-level aggregates only.
 
 1. The two layers (signups, contributors) would otherwise draw one dot exactly
    on top of another for every country that appears in both, and the lower
@@ -326,7 +325,7 @@ def build_markers(payload: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "markers": signup_markers + contributor_markers,
         "totals": totals,
-        # People in countries too small to plot without identifying them.
+        # Rows below the Worker's configured display threshold.
         "elsewhere": {
             SIGNUP_LAYER: _nonnegative_int(signups.get("elsewhere")),
             CONTRIBUTOR_LAYER: _nonnegative_int(contributors.get("elsewhere")),

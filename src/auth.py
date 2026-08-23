@@ -130,12 +130,33 @@ def initialize_session(state: MutableMapping[str, Any]) -> None:
     state.setdefault("authenticated", False)
     state.setdefault("user_id", None)
     state.setdefault("user_email", None)
+    state.setdefault("user_name", None)
+    state.setdefault("user_picture", None)
+    state.setdefault("user_subject", None)
+    state.setdefault("public_contributor_profile", False)
 
 
-def login_session(state: MutableMapping[str, Any], user: User) -> None:
+def login_session(
+    state: MutableMapping[str, Any],
+    user: User,
+    *,
+    display_name: str | None = None,
+    picture: str | None = None,
+    subject: str | None = None,
+) -> None:
     state["authenticated"] = True
     state["user_id"] = user.user_id
     state["user_email"] = user.email
+    state["user_name"] = (
+        display_name
+        or getattr(user, "display_name", None)
+        or user.email.split("@", 1)[0]
+    )
+    state["user_picture"] = picture or getattr(user, "profile_picture_url", None)
+    state["user_subject"] = subject or getattr(user, "provider_subject", None)
+    state["public_contributor_profile"] = bool(
+        getattr(user, "public_contributor_profile", False)
+    )
 
 
 def logout_session(state: MutableMapping[str, Any]) -> None:

@@ -71,6 +71,10 @@ def _local(remote) -> User:
         tos_accepted_at=remote.tos_accepted_at,
         auth_provider=remote.auth_provider,
         provider_subject=remote.provider_subject,
+        is_admin=remote.is_admin,
+        display_name=remote.display_name,
+        profile_picture_url=remote.profile_picture_url,
+        public_contributor_profile=remote.public_contributor_profile,
     )
 
 
