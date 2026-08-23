@@ -149,8 +149,8 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
 
 ### Blocking — Grad-CAM is unmeasurable right now
 
-- [ ] **Fix the degenerate Grad-CAM, then re-score localisation.** Run 2026-08-23 on
-      `full-20260822-041653`, test split, 267 annotated images:
+- [ ] **Find out why the CAM is saturated. It is not the target layer.** Run
+      2026-08-23 on `full-20260822-041653`, test split, 267 annotated images:
 
       | metric | value |
       |---|---|
@@ -160,22 +160,77 @@ Worker + D1 **deployed, migrated to schema_version 3, and live**; Streamlit Clou
       | **median pixels tied at the CAM maximum** | **50,176 of 65,536 (77%)** |
 
       The zero was **not** a result about the model. `pointing_game` used `np.argmax`,
-      which returns the *first* maximal element in raster order — so on a CAM where 77%
+      which returns the *first* maximal element in raster order -- so on a CAM where 77%
       of the frame ties at the maximum it reported the plateau's top-left corner every
       time, which is background on essentially every radiograph. **Fixed**: the peak is
       now the centroid of the maximal region, `peak_fraction` is reported, and
       `evaluate_localisation` warns loudly when the CAM is degenerate. Regression tests
       pin all of it.
 
-      What remains is the real problem underneath: **the CAM is saturated** (mean value
-      0.72–0.96 per image) and localises nothing. Prime suspect is
-      `explain.target_layer: features.denseblock4`, which is DenseNet's raw block output
-      — taken *before* `features.norm5` and its ReLU. A layer comparison
-      (`denseblock4` / `norm5` / `features` / `transition3`) was still running when this
-      was written; finish it, pick the layer that gives a non-degenerate CAM, then
-      re-score. **Until then no claim about where the model looks is supported.**
-      Also worth noting: 68.9% of CAM peaks land in the zero-padding band, and excluding
-      padding did not change the score.
+      **The layer comparison is now finished, and it refutes the hypothesis this item
+      used to carry.** Measured 2026-08-23 on the pinned checkpoint, 24 annotated test
+      images, CPU, **a freshly built and freshly loaded model for every layer** (see the
+      methodology warning below -- this matters):
+
+      | target layer | grid | mean CAM | peak % | pointing | IoU | usable? |
+      |---|---|---:|---:|---:|---:|---|
+      | `features.denseblock4` *(current)* | 8x8 | 0.753 | 11.7% | 0.042 | 0.036 | yes |
+      | `features.norm5` | 8x8 | — | — | — | — | **no — raises** |
+      | `features` (whole extractor) | 8x8 | — | — | — | — | **no — raises** |
+      | `features.transition3` | 8x8 | 0.801 | 17.0% | 0.083 | 0.039 | yes |
+      | `features.denseblock3` | 16x16 | 0.870 | 33.0% | 0.042 | 0.040 | yes |
+      | `features.transition2` | 16x16 | 0.896 | 47.8% | 0.000 | 0.043 | yes |
+
+      Lower `peak %` is better -- it is the share of the frame tied at the CAM maximum,
+      so a localising CAM is near zero and a flat one approaches 100%.
+
+      Two conclusions, and the previous plan was wrong on both:
+
+      1. **`features.norm5` cannot be used at all** -- it was the prime suspect *and* the
+         proposed fix. Setting `explain.target_layer: features.norm5` would crash
+         Grad-CAM on every upload in the live app with
+         `RuntimeError: Output 0 of BackwardHookFunctionBackward is a view and is being
+         modified inplace`. The cause is torchvision's own `DenseNet.forward`
+         (v0.24.1), which is four lines long and does
+         `out = F.relu(features, inplace=True)` -- an in-place op on the very tensor a
+         backward hook would need. `features` fails identically, for the same reason.
+         Flipping all 120 `nn.ReLU` modules to `inplace=False` does **not** help: the
+         offending call is functional, not a module. Verified both ways.
+
+      2. **Changing the layer does not fix the saturation.** Every layer that *can* be
+         hooked is saturated, and the earlier ones are worse, not better -- peak
+         fraction climbs 11.7% -> 47.8% going back through the network. There is no
+         "layer that gives a non-degenerate CAM" among the candidates.
+         `features.denseblock4` is currently the least-bad option, not the wrong one,
+         and **it should be left alone until the real cause is known.**
+
+      So the cause is still open. It is not the layer, and it is not the tie-break.
+      Next hypothesis worth testing, cheapest first: inspect the **raw
+      pre-normalisation** CAM values. DenseNet's head is global average pooling into a
+      linear classifier, which makes `d(logit)/d(activation)` almost constant across
+      space; Grad-CAM then degenerates toward plain CAM, and if the weighted sum is
+      positive nearly everywhere the min-max rescale in `compute_cam` stretches an
+      almost-flat map across the full [0, 1] range and manufactures the saturation.
+      That would be a property of the architecture and the normalisation, not of a
+      badly chosen layer -- and it would mean the fix belongs in `compute_cam`, or in
+      switching to a method that does not rely on spatially-varying gradients.
+
+      Also still true and still unexplained: 68.9% of CAM peaks land in the
+      zero-padding band, and excluding padding did not change the score.
+
+      **Until this is resolved no claim about where the model looks is supported**, and
+      the Grad-CAM overlay in the app should be read as decoration, not evidence.
+
+      **Methodology warning for whoever runs the next sweep.** MONAI's `GradCAM`
+      registers forward and backward hooks and **never removes them**. Probing several
+      layers against one model instance leaves every earlier probe's hooks attached, and
+      the later layers then fail for a reason that has nothing to do with the layer. The
+      first attempt at the table above did exactly this and produced confidently wrong
+      results -- including an apparent "`inplace=False` breaks `denseblock4`" that was
+      pure contamination. **Build a fresh model per layer.** The live app is *not*
+      affected: `build_cam` is called once in `RadiographClassifier.__init__`
+      (`src/onnm/inference.py:414`) behind `@st.cache_resource`, so exactly one GradCAM
+      exists per process.
 
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` still has
       **0/7 code cells executed**. Nobody has looked at the preprocessed images.
