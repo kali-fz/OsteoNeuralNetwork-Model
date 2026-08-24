@@ -431,13 +431,13 @@ class CommunityClient:
             self.timeout = previous
         return body if status == 200 else None
 
-    def contributors(self) -> list[dict[str, Any]]:
+    def contributors(self) -> list[dict[str, Any]] | None:
         """Public, explicitly opted-in Google contributor profiles only."""
         status, body = self._request("GET", "/contributors")
         if status != 200:
-            return []
+            return None
         rows = body.get("contributors")
-        return rows if isinstance(rows, list) else []
+        return rows if isinstance(rows, list) else None
 
     # -- accounts (mirrors database.py) ------------------------------------
     def create_user(

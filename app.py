@@ -148,7 +148,7 @@ def globe_data() -> dict:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def contributor_data() -> list[dict]:
+def contributor_data() -> list[dict] | None:
     """Fetch explicitly public contributor profiles without blocking the page."""
     return get_client().contributors() if using_community() else []
 
@@ -332,16 +332,17 @@ def render_landing() -> None:
         st.markdown(
             f"""
             <section class="onnm-home-hero" {hero_style}>
-              <p class="onnm-hero-eyebrow">Explainable bone-lesion triage · Plain radiographs</p>
-              <h1 class="onnm-hero-title">A clearer first look at bone X-rays.</h1>
+              <p class="onnm-hero-eyebrow">Community research model · ONNM v{__version__}</p>
+              <h1 class="onnm-hero-title">Test the model. Help make it better.</h1>
               <p class="onnm-hero-subtitle">
-                Upload a radiograph, review the model's three-class result, and see the
-                Grad-CAM region that influenced it. Free, open-source, and built for research.
+                We have trained the first ONNM model to examine bone X-rays for normal,
+                benign, and malignant patterns. Sign up free, try it on your radiographs,
+                and—with your permission—help us build a better next version.
               </p>
               <div class="onnm-hero-points">
-                <span>Normal · benign · malignant</span>
-                <span>Private by default</span>
-                <span>Human review required</span>
+                <span>Test v{__version__}</span>
+                <span>DICOM · PNG · JPG · BMP · TIFF</span>
+                <span>Sharing is always optional</span>
               </div>
             </section>
             """,
@@ -349,13 +350,13 @@ def render_landing() -> None:
         )
         if authenticated:
             if st.button(
-                "Open the scanner  →", key="hero_scanner_btn", type="primary",
+                f"Test ONNM v{__version__}  →", key="hero_scanner_btn", type="primary",
                 use_container_width=True,
             ):
                 navigate_to("scanner")
         else:
             cta_label = (
-                "Continue with Google  →"
+                "Sign up free with Google  →"
                 if (using_community() or oidc_configured())
                 else "Sign in to scan  →"
             )
@@ -382,7 +383,10 @@ def render_landing() -> None:
                 "People are still included in the totals below."
             )
         elif not data.get("available"):
-            st.caption("Live community totals are reconnecting; the globe remains interactive.")
+            st.caption(
+                "Community map data is temporarily unavailable. The globe will populate "
+                "after the community service update completes."
+            )
         elif hidden:
             st.caption(
                 f"{hidden:,} account(s) are included in totals but hidden from the map "
@@ -392,28 +396,6 @@ def render_landing() -> None:
             st.caption(
                 "Drag to rotate. Markers show aggregated countries, never precise locations."
             )
-
-        from geo import COUNTRY_CENTROIDS
-        signup_counts = {
-            marker.get("country"): int(marker.get("count", 0))
-            for marker in markers if marker.get("layer") == "signup"
-        }
-        contribution_counts = {
-            marker.get("country"): int(marker.get("count", 0))
-            for marker in markers if marker.get("layer") == "contributor"
-        }
-        country_rows = [
-            {
-                "Country": name,
-                "Users": signup_counts.get(code, 0),
-                "Approved contributors": contribution_counts.get(code, 0),
-            }
-            for code, (name, _, _) in sorted(
-                COUNTRY_CENTROIDS.items(), key=lambda item: item[1][0]
-            )
-        ]
-        st.caption("Country totals · countries without activity show 0")
-        st.dataframe(country_rows, hide_index=True, use_container_width=True, height=210)
 
     totals = data.get("totals", {})
     n_users = totals.get("users", 0)
@@ -518,6 +500,11 @@ def render_landing() -> None:
         st.markdown(
             f'<div class="onnm-contributor-grid">{"".join(cards)}</div>',
             unsafe_allow_html=True,
+        )
+    elif contributors is None:
+        st.caption(
+            "Contributor profiles are temporarily unavailable while the community "
+            "service is updated. Your Google profile remains private."
         )
     else:
         st.caption(
@@ -1136,30 +1123,39 @@ def render_profile() -> None:
 
     if using_community() and oidc_configured():
         st.subheader("Contributor profile")
-        st.caption(
-            "Your Google name and photo are private by default. Turn this on to show them "
-            "on the homepage only when you have at least one approved contribution."
-        )
-        current_public = bool(st.session_state.get("public_contributor_profile", False))
-        public_profile = st.toggle(
-            "Show me in the public contributors section",
-            value=current_public,
-            key="public_contributor_toggle",
-        )
-        if public_profile != current_public:
-            updated = get_client().update_contributor_profile(
-                user_id,
-                str(st.session_state.get("user_subject") or ""),
-                display_name=st.session_state.get("user_name"),
-                profile_picture_url=st.session_state.get("user_picture"),
-                public_profile=public_profile,
+        if contributor_data() is None:
+            st.caption(
+                "Contributor profiles are temporarily unavailable while the community "
+                "service is updated. Your Google name and photo remain private."
             )
-            if updated:
-                st.session_state["public_contributor_profile"] = public_profile
-                contributor_data.clear()
-                st.success("Contributor visibility updated.")
-            else:
-                st.error("Contributor visibility could not be updated. Please try again.")
+        else:
+            st.caption(
+                "Your Google name and photo are private by default. Turn this on to show "
+                "them on the homepage only when you have an approved contribution."
+            )
+            current_public = bool(st.session_state.get("public_contributor_profile", False))
+            public_profile = st.toggle(
+                "Show me in the public contributors section",
+                value=current_public,
+                key="public_contributor_toggle",
+            )
+            if public_profile != current_public:
+                updated = get_client().update_contributor_profile(
+                    user_id,
+                    str(st.session_state.get("user_subject") or ""),
+                    display_name=st.session_state.get("user_name"),
+                    profile_picture_url=st.session_state.get("user_picture"),
+                    public_profile=public_profile,
+                )
+                if updated:
+                    st.session_state["public_contributor_profile"] = public_profile
+                    contributor_data.clear()
+                    st.success("Contributor visibility updated.")
+                else:
+                    st.error(
+                        "Contributor visibility could not be updated. The community "
+                        "service may still be deploying; your profile remains private."
+                    )
 
     if st.button("Open scanner →", key="profile_open_scanner"):
         navigate_to("scanner")

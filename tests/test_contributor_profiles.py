@@ -89,7 +89,7 @@ def test_client_profile_toggle_sends_google_identity(monkeypatch) -> None:
     }
 
 
-def test_client_contributor_list_fails_soft(monkeypatch) -> None:
+def test_client_contributor_list_reports_unavailable(monkeypatch) -> None:
     client = community.CommunityClient(base_url="https://example.invalid", api_key="k")
     monkeypatch.setattr(
         community.CommunityClient,
@@ -103,4 +103,4 @@ def test_client_contributor_list_fails_soft(monkeypatch) -> None:
         "_request",
         lambda *_a, **_k: (503, {"error": "offline"}),
     )
-    assert client.contributors() == []
+    assert client.contributors() is None
