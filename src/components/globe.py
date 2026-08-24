@@ -262,6 +262,17 @@ def _build_fallback_html(
 (() => {{
   'use strict';
   const markers = {markers_json};
+  const displayMarkers = Array.from(markers.reduce((groups, marker) => {{
+    const key = marker.label + '|' + marker.lat + '|' + marker.lng;
+    const grouped = groups.get(key) || {{
+      lat: marker.lat, lng: marker.lng, label: marker.label,
+      signupCount: 0, contributorCount: 0,
+    }};
+    if (marker.layer === 'contributor') grouped.contributorCount += marker.count;
+    else grouped.signupCount += marker.count;
+    groups.set(key, grouped);
+    return groups;
+  }}, new Map()).values());
   const canvas = document.getElementById('globe');
   const wrap = document.getElementById('wrap');
   const tip = document.getElementById('tip');
@@ -323,17 +334,16 @@ def _build_fallback_html(
     ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2);
     ctx.strokeStyle='rgba(38,79,68,.28)'; ctx.lineWidth=1.5; ctx.stroke();
     projected=[];
-    for (const layer of ['signup','contributor']) {{
-      for (const m of markers) {{
-        if (m.layer!==layer) continue;
-        const p=point(m.lat,m.lng); if (p.z<0) continue;
-        const r=Math.min(13,3+Math.sqrt(m.count)*1.55);
+    for (const m of displayMarkers) {{
+        const p=point(m.lat,m.lng); if (p.z<=0) continue;
+        const count = m.contributorCount || m.signupCount;
+        const contributor = m.contributorCount > 0;
+        const r=Math.min(13,3+Math.sqrt(count)*1.55);
         ctx.globalAlpha=Math.max(.28,Math.min(1,p.z*2.4));
         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
-        ctx.fillStyle=layer==='signup'?'#e8a850':'#2e6b47'; ctx.fill();
-        ctx.strokeStyle=layer==='signup'?'#ad6c12':'#173b28'; ctx.lineWidth=1.2; ctx.stroke();
+        ctx.fillStyle=contributor?'#2e6b47':'#e8a850'; ctx.fill();
+        ctx.strokeStyle=contributor?'#173b28':'#ad6c12'; ctx.lineWidth=1.2; ctx.stroke();
         projected.push({{...m,x:p.x,y:p.y,r}});
-      }}
     }} ctx.globalAlpha=1;
   }}
   canvas.addEventListener('pointerdown', e => {{
@@ -352,7 +362,15 @@ def _build_fallback_html(
       if (d<distance) {{hit=p;distance=d;}}
     }}
     if (!hit) {{ tip.style.display='none'; return; }}
-    tip.textContent=hit.label+' · '+hit.count.toLocaleString(); tip.style.display='block';
+    const parts=[];
+    if (hit.signupCount) parts.push(
+      hit.signupCount.toLocaleString()+' registered user'+(hit.signupCount===1?'':'s')
+    );
+    if (hit.contributorCount) parts.push(
+      hit.contributorCount.toLocaleString()+' approved contributor'+
+      (hit.contributorCount===1?'':'s')
+    );
+    tip.textContent=hit.label+' · '+parts.join(' · '); tip.style.display='block';
     tip.style.left=Math.min(wrap.clientWidth-tip.offsetWidth-6,e.clientX-rect.left+12)+'px';
     tip.style.top=Math.max(4,e.clientY-rect.top-tip.offsetHeight-8)+'px';
   }});
@@ -468,6 +486,19 @@ def _build_html(
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const MARKERS = {markers_json};
+  // A country may appear in both data layers. Render one marker for that
+  // country, while retaining both counts for its tooltip.
+  const DISPLAY_MARKERS = Array.from(MARKERS.reduce((groups, marker) => {{
+    const key = marker.label + '|' + marker.lat + '|' + marker.lng;
+    const grouped = groups.get(key) || {{
+      lat: marker.lat, lng: marker.lng, label: marker.label,
+      signupCount: 0, contributorCount: 0,
+    }};
+    if (marker.layer === 'contributor') grouped.contributorCount += marker.count;
+    else grouped.signupCount += marker.count;
+    groups.set(key, grouped);
+    return groups;
+  }}, new Map()).values());
   const WORLD   = {world_json};
   const AUTO_ROTATE = {str(auto_rotate).lower()};
 
@@ -535,19 +566,6 @@ def _build_html(
       hasContributor: activity.some(marker => marker.layer === 'contributor'),
     }};
   }}).filter(Boolean);
-
-  // ── Precompute marker 3-D unit vectors ────────────────────────────────────
-  // These are fixed; only the rotation matrix changes per frame.
-  const markerVecs = MARKERS.map(m => {{
-    const lam = m.lng * Math.PI / 180;
-    const phi = m.lat * Math.PI / 180;
-    return {{
-      ...m,
-      _x: Math.cos(phi) * Math.cos(lam),
-      _y: Math.cos(phi) * Math.sin(lam),
-      _z: Math.sin(phi),
-    }};
-  }});
 
   // ── Rotation state ────────────────────────────────────────────────────────
   let ROT    = {initial_rotation_json}; // starts on strongest activity
@@ -697,47 +715,33 @@ def _build_html(
     ctx.beginPath(); pathGen(sphere);
     ctx.fillStyle = light; ctx.fill();
 
-    // Markers – signup layer first, then contributor on top
-    drawMarkers('signup',      '#e8a850', '#c8831a', 1.6);
-    drawMarkers('contributor', '#2e6b47', '#1e4830', 1.6);
+    // One marker per country. Contributor countries use the green layer;
+    // registration-only countries use amber.
+    drawMarkers();
   }}
 
-  function drawMarkers(layer, fill, stroke, scale) {{
-    // Compute rotation matrix once (reuse for all markers in this layer)
-    const [l, p, g] = ROT.map(d => d * Math.PI / 180);
-    const cl = Math.cos(-l), sl = Math.sin(-l);
-    const cp = Math.cos(-p), sp = Math.sin(-p);
-    const cg = Math.cos(-g), sg = Math.sin(-g);
-
-    markerVecs.forEach(m => {{
-      if (m.layer !== layer) return;
-
-      // Rotate the precomputed unit vector into camera space
-      // (inverse of the projection rotation)
-      let x = m._x, y = m._y, z = m._z;
-      // Apply -gamma rotation (around z-axis)
-      let nx = x * cg - y * sg, ny = x * sg + y * cg; x = nx; y = ny;
-      // Apply -phi rotation (around x-axis)
-      let nz = z * cp - y * sp, ny2 = z * sp + y * cp; z = nz; y = ny2;
-      // Apply -lambda rotation (around z-axis)
-      let nx2 = x * cl - y * sl, ny3 = x * sl + y * cl; x = nx2; y = ny3;
-
-      // z < 0 means marker is on the far hemisphere (not visible)
-      if (z < -0.05) return;
-
+  function visibleMarkerPoint(m) {{
+      const centre = projection.invert([SIZE / 2, SIZE / 2]);
+      if (!centre || d3geo.geoDistance([m.lng, m.lat], centre) >= Math.PI / 2) return null;
       const pt = projection([m.lng, m.lat]);
-      if (!pt || pt[0] === null) return;
+      return pt && pt[0] !== null ? pt : null;
+  }}
 
-      const r = Math.min(3 + Math.sqrt(m.count) * scale, 14);
-      const alpha = z < 0.1 ? (z + 0.05) / 0.15 : 1; // soft edge fade
+  function drawMarkers() {{
+    DISPLAY_MARKERS.forEach(m => {{
+      const pt = visibleMarkerPoint(m);
+      if (!pt) return;
+
+      const count = m.contributorCount || m.signupCount;
+      const contributor = m.contributorCount > 0;
+      const r = Math.min(3 + Math.sqrt(count) * 1.6, 14);
 
       ctx.save();
-      ctx.globalAlpha = alpha;
       ctx.beginPath();
       ctx.arc(pt[0], pt[1], r, 0, Math.PI * 2);
-      ctx.fillStyle   = fill + 'cc';
+      ctx.fillStyle   = contributor ? '#2e6b47cc' : '#e8a850cc';
       ctx.fill();
-      ctx.strokeStyle = stroke;
+      ctx.strokeStyle = contributor ? '#1e4830' : '#c8831a';
       ctx.lineWidth   = 1.2;
       ctx.stroke();
       ctx.restore();
@@ -772,13 +776,13 @@ def _build_html(
     const dLam = (pt[0] - lastPt[0]) / SIZE * 180;
     const dPhi = (pt[1] - lastPt[1]) / SIZE * 180;
 
-    ROT[0]  = ((ROT[0] - dLam + 180) % 360) - 180;
-    ROT[1]  = clampPhi(ROT[1] + dPhi);
+    ROT[0]  = ((ROT[0] + dLam + 180) % 360) - 180;
+    ROT[1]  = clampPhi(ROT[1] - dPhi);
 
     const dtSeg = now - prevPtT;
     if (dtSeg > 8) {{
-      VEL[0] = -(pt[0] - prevPt[0]) / SIZE * 180 / dtSeg;
-      VEL[1] =  (pt[1] - prevPt[1]) / SIZE * 180 / dtSeg;
+      VEL[0] =  (pt[0] - prevPt[0]) / SIZE * 180 / dtSeg;
+      VEL[1] = -(pt[1] - prevPt[1]) / SIZE * 180 / dtSeg;
       prevPt  = lastPt;
       prevPtT = lastPtT;
     }}
@@ -809,17 +813,23 @@ def _build_html(
     let   closest = null;
     let   minDist = 18;  // pixel hit radius
 
-    markerVecs.forEach(m => {{
-      const pt = projection([m.lng, m.lat]);
-      if (!pt || pt[0] === null) return;
+    DISPLAY_MARKERS.forEach(m => {{
+      const pt = visibleMarkerPoint(m);
+      if (!pt) return;
       const dist = Math.hypot(mx - pt[0], my - pt[1]);
       if (dist < minDist) {{ minDist = dist; closest = m; }}
     }});
 
     if (closest) {{
-      tooltip.textContent = closest.label + ' — ' + closest.count +
-        (closest.layer === 'contributor' ? ' contributor' : ' user') +
-        (closest.count === 1 ? '' : 's');
+      const parts = [];
+      if (closest.signupCount) parts.push(
+        closest.signupCount + ' registered user' + (closest.signupCount === 1 ? '' : 's')
+      );
+      if (closest.contributorCount) parts.push(
+        closest.contributorCount + ' approved contributor' +
+        (closest.contributorCount === 1 ? '' : 's')
+      );
+      tooltip.textContent = closest.label + ' — ' + parts.join(' · ');
       tooltip.style.display = 'block';
       // Clamp so tooltip stays inside the wrapper
       const tx = Math.min(mx + 12, SIZE - tooltip.offsetWidth - 4);

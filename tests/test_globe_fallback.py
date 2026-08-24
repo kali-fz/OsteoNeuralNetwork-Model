@@ -195,6 +195,24 @@ class TestGlobeFallback:
         assert "rgba(232,168,80,0.76)" in html
         assert "let ROT    = [3.4,-55.4,0];" in html
 
+    def test_detailed_globe_has_natural_drag_and_front_hemisphere_markers(self):
+        from components.globe import _build_html
+
+        html = _build_html(
+            d3_script="/* d3 */",
+            topojson_script="/* topo */",
+            world_json="null",
+            markers_json="[]",
+            auto_rotate=False,
+            height=320,
+        )
+
+        assert "ROT[0] + dLam" in html
+        assert "clampPhi(ROT[1] - dPhi)" in html
+        assert "d3geo.geoDistance([m.lng, m.lat], centre) >= Math.PI / 2" in html
+        assert "DISPLAY_MARKERS" in html
+        assert "signupCount: 0, contributorCount: 0" in html
+
     def test_fallback_globe_also_starts_facing_activity(self):
         from components.globe import _build_fallback_html, _json_for_script
 
@@ -212,6 +230,8 @@ class TestGlobeFallback:
             height=320,
         )
         assert "yaw=3.4, pitch=55.4;" in html
+        assert "const displayMarkers" in html
+        assert "if (p.z<=0) continue" in html
 
     def test_markers_json_injected_safely(self):
         """markers_json must appear in the HTML without executing arbitrary code."""
