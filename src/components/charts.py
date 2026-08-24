@@ -17,9 +17,6 @@ stay coherent with whichever palette is active.
 
 from __future__ import annotations
 
-import json
-from typing import Optional
-
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -63,6 +60,19 @@ def render_probability_chart(
         bar_width = f"{min(pct, 100):.1f}%"
         # Ensure label contrast: dark background needs white text, light needs dark.
         text_color = "#ffffff" if pct > 25 else "#1c1a17"
+        inside_label = ""
+        outside_label = ""
+        if pct >= 12:
+            inside_label = (
+                f'<span style="font-size:12px;font-weight:700;color:{text_color};'
+                f'font-family:monospace;">{pct:.1f}%</span>'
+            )
+        else:
+            outside_label = (
+                f'<span style="position:absolute;left:{bar_width};top:50%;'
+                "transform:translateY(-50%) translateX(6px);font-size:12px;"
+                f'font-weight:700;color:#1c1a17;font-family:monospace;">{pct:.1f}%</span>'
+            )
         rows_html += f"""
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <div style="min-width:80px;font-size:13px;font-weight:600;color:#1c1a17;
@@ -74,9 +84,9 @@ def render_probability_chart(
             <div style="width:{bar_width};height:100%;background:{color};
                         transition:width .4s ease;display:flex;align-items:center;
                         padding-left:8px;box-sizing:border-box;">
-              {"" if pct < 12 else f'<span style="font-size:12px;font-weight:700;color:{text_color};font-family:monospace;">{pct:.1f}%</span>'}
+              {inside_label}
             </div>
-            {"" if pct >= 12 else f'<span style="position:absolute;left:{bar_width};transform:translateX(6px);top:50%;transform:translateY(-50%) translateX(6px);font-size:12px;font-weight:700;color:#1c1a17;font-family:monospace;">{pct:.1f}%</span>'}
+            {outside_label}
           </div>
         </div>
         """

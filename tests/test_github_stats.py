@@ -7,10 +7,7 @@ not raise an exception.
 from __future__ import annotations
 
 import sys
-import unittest.mock
 from pathlib import Path
-
-import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
@@ -19,11 +16,11 @@ if str(SRC) not in sys.path:
 
 def _fresh_fetch():
     """Import fetch_github_stats without the st.cache_data wrapper."""
-    import urllib.request as _ur
-
     # Re-import with the Streamlit cache bypassed.
     import importlib
+
     import github_stats
+
     importlib.reload(github_stats)
     return github_stats.fetch_github_stats
 
@@ -45,7 +42,6 @@ class TestGithubStats:
 
     def test_timeout_returns_none(self, monkeypatch):
         """A timeout is treated as unavailable, not an error."""
-        import urllib.error
         import github_stats
 
         def _timeout(*_, **__):
@@ -57,7 +53,6 @@ class TestGithubStats:
 
     def test_bad_json_returns_none(self, monkeypatch):
         """A malformed API response returns None rather than raising."""
-        import io
         import github_stats
 
         class _Resp:
@@ -71,8 +66,8 @@ class TestGithubStats:
 
     def test_successful_response_has_stars_key(self, monkeypatch):
         """A valid API response returns a dict with 'stars'."""
-        import io
         import json
+
         import github_stats
 
         payload = json.dumps({

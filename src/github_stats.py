@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import urllib.request
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ _REPO_API = "https://api.github.com/repos/kali-fz/OsteoNeuralNetwork-Model"
 _TIMEOUT = 3  # seconds — a star count is not worth blocking a page for
 
 
-def _fetch_uncached() -> Optional[dict]:
+def _fetch_uncached() -> dict | None:
     """Core fetch logic — no Streamlit dependency, callable from tests."""
     try:
         req = urllib.request.Request(
@@ -48,7 +47,7 @@ def _fetch_uncached() -> Optional[dict]:
         return None
 
 
-def fetch_github_stats() -> Optional[dict]:
+def fetch_github_stats() -> dict | None:
     """Return a dict with ``stars``, ``forks``, ``watchers`` or None on any failure.
 
     Cached for 15 minutes when running inside Streamlit; falls back to a plain
