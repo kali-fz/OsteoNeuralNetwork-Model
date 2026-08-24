@@ -988,7 +988,8 @@ def render_scanner() -> None:
                 "grayscale DICOM or PNG and try again."
             )
             render_rejection_dispute(
-                st.session_state[rejection_key], st.session_state["user_id"], key=rejection_key)
+                st.session_state[rejection_key], st.session_state["user_id"],
+                key=rejection_key, shared=SHARE_CONSENT)
 
     for name, message in failed:
         st.error(f"`{name}`: {message}")

@@ -240,7 +240,9 @@ def render_feedback(submission_id: str, user_id: str, key: str) -> None:
                 st.error("We could not send the report. Your scan result is unaffected.")
 
 
-def render_rejection_dispute(submission_id: str, user_id: str, key: str) -> None:
+def render_rejection_dispute(
+    submission_id: str, user_id: str, key: str, *, shared: bool
+) -> None:
     """Let a user say the gate was wrong to reject their image.
 
     This is the only witness to a false rejection. Inference never ran, so there
@@ -250,17 +252,41 @@ def render_rejection_dispute(submission_id: str, user_id: str, key: str) -> None
 
     Pressing it moves the row from ``misc`` to ``contradiction``. It is a signal,
     not a label: the reviewer decides whether the gate or the user was right.
+
+    ``shared`` is required rather than defaulted because getting it wrong is how
+    this function came to lie. Consent governs the pixels: a rejection recorded
+    without the share tick stores no image, and ``pendingReview`` filters on
+    ``shared = 1``, so that row never reaches the queue. The button still said
+    "Sends the image to a human reviewer", which was false in exactly the case
+    where the user most needed to know it -- there was no image to send, and no
+    reviewer would ever see it. The dispute is still recorded either way, because
+    it is a real signal and it counts; only the wording changes, and it now says
+    what actually happened.
     """
     if not submission_id or not get_client().enabled:
         return
 
     state_key = f"dispute_done_{key}"
     if st.session_state.get(state_key):
-        st.caption("Thank you. The image has been flagged for review.")
+        if shared:
+            st.caption("Thank you. The image has been flagged for review.")
+        else:
+            st.caption(
+                "Thank you. Your dispute was recorded, but no copy of the image was "
+                "kept, so a reviewer cannot check this one. To make a rejection "
+                "reviewable, tick the sharing box and upload it again."
+            )
         return
 
+    button_help = (
+        "Sends the image to a human reviewer. It does not run the model."
+        if shared
+        else "Records that the gate was wrong. Because you did not tick the sharing "
+             "box, no copy was kept, so a reviewer cannot look at this image. It does "
+             "not run the model."
+    )
     if st.button("This really is a radiograph", key=f"dispute_{key}",
-                 help="Sends the image to a human reviewer. It does not run the model."):
+                 help=button_help):
         ok = get_client().submit_feedback(
             submission_id, user_id, says_wrong=True, suggested_label=None,
             comment="user disputes the out-of-distribution rejection",
