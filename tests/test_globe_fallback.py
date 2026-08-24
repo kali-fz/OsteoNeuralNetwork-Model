@@ -189,6 +189,8 @@ class TestGlobeFallback:
 
         assert "const activeCountries" in html
         assert "d3geo.geoContains(feature, [marker.lng, marker.lat])" in html
+        assert "d3geo.geoPath(projection).context(ctx)" in html
+        assert "d3geo.geoPath().context(ctx)" not in html
         assert "rgba(46,107,71,0.78)" in html
         assert "rgba(232,168,80,0.76)" in html
         assert "let ROT    = [3.4,-55.4,0];" in html

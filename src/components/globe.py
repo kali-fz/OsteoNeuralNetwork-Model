@@ -503,7 +503,10 @@ def _build_html(
       .clipAngle(90)
       .precision(0.2)
       .rotate([ROT[0], ROT[1], ROT[2]]);
-    pathGen  = d3geo.geoPath().context(ctx);
+    // Bind the canvas path to the orthographic projection. Without this,
+    // GeoJSON Sphere objects are streamed directly to the canvas context,
+    // which has no sphere() method and crashes every animation frame.
+    pathGen  = d3geo.geoPath(projection).context(ctx);
     graticule = d3geo.geoGraticule()();
     sphere    = {{ type: 'Sphere' }};
   }}
@@ -622,7 +625,7 @@ def _build_html(
   function draw(dt) {{
     ctx.clearRect(0, 0, SIZE, SIZE);
     projection.rotate([ROT[0], ROT[1], ROT[2]]);
-    pathGen  = d3geo.geoPath().context(ctx);
+    pathGen  = d3geo.geoPath(projection).context(ctx);
 
     // Ocean sphere with radial gradient for depth
     const grad = ctx.createRadialGradient(
