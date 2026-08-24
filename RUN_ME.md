@@ -1,169 +1,165 @@
-# Finish the ONNM community deployment
+# Repair the two UK account locations
 
-Give this file to the agent working on the Cloudflare account that owns the ONNM
-database. The earlier contributor deployment is complete. This follow-up moves country
-capture from the US-hosted Streamlit server to each signed-in browser and ships the map
-geometry needed to fill active countries.
+Give this file to the agent using the Cloudflare account that owns ONNM. The original
+community deployment has already been completed. This run is only for deploying the
+browser-country fix and replacing the two incorrect US account locations with `GB`.
 
-This deployment fixes the remaining globe faults:
-
-- UK visitors are no longer recorded as US because the browser reaches Cloudflare directly;
-- existing wrong country rows are repaired when each account next signs in;
-- active countries are visibly filled rather than represented only by a dot.
-
-Do not create a replacement database. The existing database contains the community users,
-submissions, reviews, and approved contributions that the globe needs.
+Do not create a new Worker, D1 database, Wrangler profile, API key, or Google OAuth
+credential. Do not change every US row. Reset only the two accounts that their owners
+confirm are in the UK.
 
 ## Production resources
 
-| Resource | Expected value |
+| Resource | Value |
 |---|---|
 | Worker | `onnm-community` |
 | Worker URL | `https://onnm-community.kali-fz.workers.dev` |
-| D1 database name | `onn-model` |
+| D1 database | `onn-model` |
 | D1 database ID | `961f0440-7ff1-466e-88fe-0c2b30f3083b` |
-| Repository schema target | `6` |
+| Required schema version | `6` |
+| Wrangler profile | `onnm` |
 | Streamlit app | `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app` |
 
-The database name is `onn-model`, not `onnm-community`. The latter is the Worker name.
+## 1. Pull the current code and confirm Cloudflare access
 
-## 1. Start from the published code
-
-Run these commands in PowerShell from the repository root:
+From the repository root in PowerShell:
 
 ```powershell
 git status --short
-git pull --ff-only origin main
-cd cloudflare
 ```
 
-If `git status --short` reports local changes, stop and preserve them before pulling.
-
-## 2. Use a separate Wrangler login
-
-Do not replace another person's default Wrangler login. Current Wrangler releases support
-named authentication profiles, so create one for this project:
+If this reports changes that have not been preserved, stop before pulling. Otherwise run:
 
 ```powershell
-npx wrangler auth create onnm
+git pull --ff-only origin main
+Set-Location cloudflare
 npx wrangler whoami --profile onnm
 npx wrangler d1 list --profile onnm
 ```
 
-Complete the browser sign-in with the Cloudflare account that owns the resources above.
-Before continuing, confirm that `d1 list` contains database ID
-`961f0440-7ff1-466e-88fe-0c2b30f3083b`. If Wrangler returns error 7404 or the database is
-missing, the wrong Cloudflare account is active. Stop rather than creating a new database.
+The D1 list must contain database ID `961f0440-7ff1-466e-88fe-0c2b30f3083b`. Error 7404
+or a missing database means the wrong Cloudflare account is active.
 
-Do not paste an API token, Worker secret, Google client secret, or database export into
-the repository or an agent conversation.
-
-## 3. Inspect and back up D1
-
-Read the current schema version:
+## 2. Back up D1 and identify the two UK accounts
 
 ```powershell
-npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT key, value FROM meta WHERE key = 'schema_version';"
-```
-
-Export a recovery copy outside the repository before changing the schema:
-
-```powershell
-$onnmBackup = Join-Path $env:TEMP "onn-model-before-v6.sql"
+$onnmBackup = Join-Path $env:TEMP ("onn-model-before-country-repair-{0}.sql" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
 npx wrangler d1 export onn-model --remote --profile onnm --output=$onnmBackup
 Write-Output $onnmBackup
+
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT key, value FROM meta WHERE key = 'schema_version';"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT user_id, email, display_name, signup_country, country_captured_at FROM users ORDER BY created_at;"
 ```
 
-Keep the exported file private because it contains account and contribution data.
+Keep the backup private. It contains account and contribution data.
 
-## 4. Apply only the missing migrations
+From the second query, identify the two accounts whose owners confirm they are in the UK.
+Copy their exact `user_id` values. In the commands below, replace `<UK_USER_ID_1>` and
+`<UK_USER_ID_2>` with those UUIDs. If the rows are ambiguous, stop and ask the owners;
+do not guess from a name or alter all accounts currently marked `US`.
 
-Migration files use `ALTER TABLE`, so do not rerun one that has already succeeded.
+## 3. Ensure migration 0006 and the current Worker are deployed
 
-- If the schema version is `3`, apply 0004, 0005, and then 0006.
-- If the schema version is `4`, apply 0005 and then 0006.
-- If the schema version is `5`, apply only 0006.
-- If the schema version is `6`, skip the migrations.
-- If the value is missing or lower than `3`, stop and inspect the older migration history
-  before making changes.
-
-Commands for a version 3 database:
+If the schema query returned `5`, run:
 
 ```powershell
-npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0004_geolocation.sql
-npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0005_public_contributor_profiles.sql
 npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0006_browser_country_capture.sql
 ```
 
-For a version 5 database, run only the 0006 command. Confirm the result before deploying
-the Worker:
+If it returned `6`, do not rerun the migration. For any other version, stop and inspect
+the migration history before changing data.
+
+Verify version 6 and the capture columns, then deploy the current Worker:
 
 ```powershell
 npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT key, value FROM meta WHERE key = 'schema_version';"
 npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(users);"
-npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(submissions);"
 npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(location_capture_tokens);"
-npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA quick_check;"
-```
-
-The version must be `6`. The `users` output must include `signup_country`,
-`country_captured_at`, `display_name`, `profile_picture_url`, and
-`public_contributor_profile`. The submissions output must include `origin_country`; the
-token table must contain `token_hash`, `user_id`, `expires_at`, `used_at`, and
-`used_nonce`; and
-`PRAGMA quick_check` must return `ok`.
-
-## 5. Check secrets and deploy the Worker
-
-```powershell
 npx wrangler secret list --profile onnm
 npx wrangler deploy --profile onnm
 ```
 
-The secret list should contain `API_KEY` and `ADMIN_KEY`. Listing secrets does not reveal
-their values. A normal deploy preserves existing secrets. If either name is missing, stop
-and obtain the correct value from the owner; do not generate a replacement without also
-updating the matching Streamlit configuration and local review setup.
+The schema version must be `6`. `users` must contain `country_captured_at`, and
+`location_capture_tokens` must contain `token_hash`, `user_id`, `expires_at`, `used_at`,
+and `used_nonce`. The secret list must still contain `API_KEY` and `ADMIN_KEY`; never
+print or replace their values.
 
-Deploy the Worker only after D1 reaches schema version 6. The new Worker reads the new
-columns, so deploying it first can turn a missing migration into production errors.
+## 4. Clear only the two incorrect derived locations
 
-## 6. Verify the real application
+These fields contain country-level metadata, not uploaded images. The approved scans and
+review decisions remain untouched. Ask both owners to sign out and close the Streamlit app
+before this step. Run each command after replacing both placeholders:
 
-Open the Streamlit app and complete this check with a Google account that has an approved
-contribution:
+```powershell
+npx wrangler d1 execute onn-model --remote --profile onnm --command "DELETE FROM location_capture_tokens WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>');"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "UPDATE submissions SET origin_country = NULL WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>');"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "UPDATE users SET signup_country = NULL, country_captured_at = NULL WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>');"
+```
 
-1. Sign out and sign in again. The browser receives a one-use token and contacts the
-   Worker directly, allowing Cloudflare to resolve the correct country.
-2. Return to the home page (refresh once if it was already open). The globe should fill
-   the account's country and show its marker. The display threshold is one account.
-3. Open the profile by clicking the Google name or photo in the header.
-4. Enable `Show me in the public contributors section` if the account owner wants to be
-   public. This setting is private by default and must not be enabled without consent.
-5. Return home. The contributor card should show the Google name, photo, and approved
-   contribution count. An account with no approved contribution must remain absent even
-   when the toggle is enabled.
-6. Open the scanner, upload a test image, and confirm that the themed uploader and the
-   single account header still work.
+Confirm that exactly two user rows are now waiting for capture:
 
-The first browser capture replaces a country written by the old Streamlit-server path and
-repairs that account's older submission countries. Both contributors must sign in once
-after the v6 deployment for both records to be corrected.
+```powershell
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT user_id, display_name, signup_country, country_captured_at FROM users WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>');"
+```
 
-## Failure guide
+Both rows must show `NULL` for `signup_country` and `country_captured_at`. If they do not,
+stop before asking anyone to sign in.
 
-| Symptom | Meaning and next check |
-|---|---|
-| D1 error 7404 | The Wrangler profile is authenticated to the wrong Cloudflare account. |
-| `no such column` from the Worker | D1 is not at schema version 6. Inspect `meta` and the table columns. |
-| Globe and contributor endpoints return 404 | The updated Worker was not deployed to `onnm-community`. |
-| Globe loads but shows no country | Sign in again, then confirm `users.signup_country` and `users.country_captured_at` are populated. |
-| Globe still shows USA | That account has not completed its first browser capture on v6; sign out, sign in, and refresh home. |
-| Contributor toggle is unavailable | Confirm `/contributors` is live and the Worker can read the version 6 columns. |
-| Toggle works but no card appears | The account is private or has no approved contribution. This is expected privacy behaviour. |
+## 5. Capture both accounts from the UK
 
-Wrangler's profile, D1 execute, export, and deploy syntax is documented by Cloudflare:
+Complete these steps separately for each account owner:
 
-- <https://developers.cloudflare.com/workers/wrangler/commands/general/>
-- <https://developers.cloudflare.com/d1/wrangler-commands/>
-- <https://developers.cloudflare.com/d1/best-practices/import-export-data/>
+1. Use a normal UK internet connection. Disable any VPN, browser VPN, proxy, or remote
+   browser session that exits through another country.
+2. Open the Streamlit app and sign out completely.
+3. Sign back in with the correct Google account.
+4. Stay on the home page for several seconds, then refresh it once.
+5. Sign out before repeating the process with the second Google account.
+
+The signed-in browser sends a short-lived one-use token directly to Cloudflare. Cloudflare
+records only its two-letter country code. No IP address or precise location is stored.
+
+## 6. Prove the repair in D1
+
+After both owners have signed in, run:
+
+```powershell
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT user_id, display_name, signup_country, country_captured_at FROM users WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>');"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT user_id, origin_country, COUNT(*) AS submissions FROM submissions WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>') GROUP BY user_id, origin_country;"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT user_id, expires_at, used_at FROM location_capture_tokens WHERE user_id IN ('<UK_USER_ID_1>', '<UK_USER_ID_2>') ORDER BY expires_at DESC;"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA quick_check;"
+```
+
+Required result:
+
+- both user rows have `signup_country = GB` and a non-null `country_captured_at`;
+- both users' historical submission rows have `origin_country = GB`;
+- each account has a recent capture token with a non-null `used_at`;
+- `PRAGMA quick_check` returns `ok`.
+
+Finally, refresh the Streamlit home page. The globe may retain an old aggregate for up to
+five minutes. After that, it must show one combined UK marker and fill the United Kingdom.
+The United States must disappear unless a different, genuinely US account is recorded.
+
+## If it still reports the United States
+
+- No capture-token row: confirm the Streamlit app is running current `main` and redeploy
+  `onnm-community` from the current `cloudflare` directory.
+- Token exists but `used_at` is null: inspect the browser console for a failed
+  `/location/capture` request and confirm the current Worker was deployed after migration
+  0006.
+- Token was used but the result is `US`: Cloudflare saw a US network exit. Disable the VPN,
+  proxy, Brave VPN, or remote browser; repeat steps 4–6 for only that account.
+- D1 says `GB` but the globe says `US`: wait five minutes for the Streamlit aggregate cache,
+  then restart or refresh the app.
+
+Do not hardcode the globe to the UK. The D1 verification above is the source of truth and
+keeps future contributors in their real countries.
+
+## Recovery
+
+If the wrong account was reset, do not import the full backup over a live database. No
+uploads or review decisions were changed; ask that account owner to sign in once from
+their normal connection so Cloudflare can restore the correct country. Keep the private
+backup until both intended accounts have passed the D1 checks, then follow the owner's
+normal secure-backup retention process.
