@@ -180,6 +180,30 @@ def _normalise_markers(markers: list[dict]) -> list[dict]:
     return clean
 
 
+def _merge_country_markers(markers: list[dict]) -> list[dict]:
+    """Collapse registration and contributor layers into one country marker."""
+    countries: dict[str, dict] = {}
+    for marker in markers:
+        key = str(marker["label"]).casefold()
+        country = countries.setdefault(
+            key,
+            {
+                "lat": marker["lat"],
+                "lng": marker["lng"],
+                "label": marker["label"],
+                "signupCount": 0,
+                "contributorCount": 0,
+            },
+        )
+        count_key = (
+            "contributorCount"
+            if marker["layer"] == "contributor"
+            else "signupCount"
+        )
+        country[count_key] += marker["count"]
+    return list(countries.values())
+
+
 def _json_for_script(value: object) -> str:
     """Encode JSON without permitting an embedded ``</script>`` boundary."""
     return (
@@ -224,6 +248,7 @@ def _build_fallback_html(
         marker_values if isinstance(marker_values, list) else []
     )
     markers_json = _json_for_script(clean_markers)
+    display_markers_json = _json_for_script(_merge_country_markers(clean_markers))
     focus = _initial_focus(clean_markers)
     initial_yaw = -float(focus["lng"]) if focus else -15.0
     initial_pitch = float(focus["lat"]) if focus else -12.0
@@ -262,17 +287,7 @@ def _build_fallback_html(
 (() => {{
   'use strict';
   const markers = {markers_json};
-  const displayMarkers = Array.from(markers.reduce((groups, marker) => {{
-    const key = marker.label + '|' + marker.lat + '|' + marker.lng;
-    const grouped = groups.get(key) || {{
-      lat: marker.lat, lng: marker.lng, label: marker.label,
-      signupCount: 0, contributorCount: 0,
-    }};
-    if (marker.layer === 'contributor') grouped.contributorCount += marker.count;
-    else grouped.signupCount += marker.count;
-    groups.set(key, grouped);
-    return groups;
-  }}, new Map()).values());
+  const displayMarkers = {display_markers_json};
   const canvas = document.getElementById('globe');
   const wrap = document.getElementById('wrap');
   const tip = document.getElementById('tip');
@@ -418,6 +433,7 @@ def _build_html(
         marker_values = []
     clean_markers = _normalise_markers(marker_values)
     markers_json = _json_for_script(clean_markers)
+    display_markers_json = _json_for_script(_merge_country_markers(clean_markers))
     focus = _initial_focus(clean_markers)
     initial_rotation = (
         [-float(focus["lng"]), -float(focus["lat"]), 0]
@@ -488,17 +504,7 @@ def _build_html(
   const MARKERS = {markers_json};
   // A country may appear in both data layers. Render one marker for that
   // country, while retaining both counts for its tooltip.
-  const DISPLAY_MARKERS = Array.from(MARKERS.reduce((groups, marker) => {{
-    const key = marker.label + '|' + marker.lat + '|' + marker.lng;
-    const grouped = groups.get(key) || {{
-      lat: marker.lat, lng: marker.lng, label: marker.label,
-      signupCount: 0, contributorCount: 0,
-    }};
-    if (marker.layer === 'contributor') grouped.contributorCount += marker.count;
-    else grouped.signupCount += marker.count;
-    groups.set(key, grouped);
-    return groups;
-  }}, new Map()).values());
+  const DISPLAY_MARKERS = {display_markers_json};
   const WORLD   = {world_json};
   const AUTO_ROTATE = {str(auto_rotate).lower()};
 

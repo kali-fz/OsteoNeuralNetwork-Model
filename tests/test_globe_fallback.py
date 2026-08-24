@@ -92,6 +92,34 @@ class TestGlobeFallback:
             present = forbidden_keys & set(marker.keys())
             assert not present, f"Marker has forbidden keys {present}: {marker}"
 
+    def test_country_layers_merge_even_when_centres_differ(self):
+        from components.globe import _merge_country_markers
+
+        merged = _merge_country_markers([
+            {
+                "lat": 40.456,
+                "lng": -99.835,
+                "label": "United States",
+                "count": 2,
+                "layer": "signup",
+            },
+            {
+                "lat": 39.059,
+                "lng": -99.482,
+                "label": "United States",
+                "count": 2,
+                "layer": "contributor",
+            },
+        ])
+
+        assert merged == [{
+            "lat": 40.456,
+            "lng": -99.835,
+            "label": "United States",
+            "signupCount": 2,
+            "contributorCount": 2,
+        }]
+
     def test_ensure_assets_returns_false_on_network_failure(self, monkeypatch, tmp_path):
         """_ensure_assets must return False (not raise) on network failure."""
         import components.globe as globe_mod
@@ -210,8 +238,7 @@ class TestGlobeFallback:
         assert "ROT[0] + dLam" in html
         assert "clampPhi(ROT[1] - dPhi)" in html
         assert "d3geo.geoDistance([m.lng, m.lat], centre) >= Math.PI / 2" in html
-        assert "DISPLAY_MARKERS" in html
-        assert "signupCount: 0, contributorCount: 0" in html
+        assert "const DISPLAY_MARKERS = [];" in html
 
     def test_fallback_globe_also_starts_facing_activity(self):
         from components.globe import _build_fallback_html, _json_for_script
