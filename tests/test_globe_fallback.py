@@ -19,6 +19,24 @@ if str(SRC) not in sys.path:
 
 
 class TestGlobeFallback:
+    def test_initial_focus_uses_the_largest_populated_country(self):
+        from components.globe import _initial_focus
+
+        focus = _initial_focus([
+            {"lat": 55.4, "lng": -3.4, "count": 2, "layer": "contributor"},
+            {"lat": 39.8, "lng": -98.6, "count": 1, "layer": "signup"},
+        ])
+        assert focus and focus["lng"] == -3.4
+
+    def test_contributors_win_an_exact_focus_tie(self):
+        from components.globe import _initial_focus
+
+        focus = _initial_focus([
+            {"lat": 39.8, "lng": -98.6, "count": 2, "layer": "signup"},
+            {"lat": 55.4, "lng": -3.4, "count": 2, "layer": "contributor"},
+        ])
+        assert focus and focus["layer"] == "contributor"
+
     def test_country_map_assets_are_vendored(self):
         """Production should not fall back to a landless sphere."""
         import json
@@ -173,6 +191,25 @@ class TestGlobeFallback:
         assert "d3geo.geoContains(feature, [marker.lng, marker.lat])" in html
         assert "rgba(46,107,71,0.78)" in html
         assert "rgba(232,168,80,0.76)" in html
+        assert "let ROT    = [3.4,-55.4,0];" in html
+
+    def test_fallback_globe_also_starts_facing_activity(self):
+        from components.globe import _build_fallback_html, _json_for_script
+
+        html = _build_fallback_html(
+            _json_for_script([
+                {
+                    "lat": 55.4,
+                    "lng": -3.4,
+                    "label": "United Kingdom",
+                    "count": 2,
+                    "layer": "contributor",
+                }
+            ]),
+            auto_rotate=False,
+            height=320,
+        )
+        assert "yaw=3.4, pitch=55.4;" in html
 
     def test_markers_json_injected_safely(self):
         """markers_json must appear in the HTML without executing arbitrary code."""

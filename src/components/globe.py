@@ -9,6 +9,7 @@ Renders a D3-geo canvas globe embedded via streamlit.components.v1.html with:
   - Keyboard arrow-key nudge when canvas has focus
   - Country-level markers with tooltips (country name + count)
   - Two distinct visual layers: signup and contributor
+  - Initial view centred on the strongest country-level activity
   - Square-root scaled marker area
   - Visibility and IntersectionObserver pausing (zero CPU in background)
   - devicePixelRatio capped at 2
@@ -191,12 +192,41 @@ def _json_for_script(value: object) -> str:
     )
 
 
+def _initial_focus(markers: list[dict]) -> dict | None:
+    """Choose a populated country for the globe's first visible hemisphere.
+
+    The largest marker wins. An approved-contributor marker wins an exact tie,
+    which keeps the more meaningful activity visible without hiding a larger
+    registered-user community.
+    """
+    if not markers:
+        return None
+    return max(
+        markers,
+        key=lambda marker: (
+            int(marker.get("count") or 0),
+            marker.get("layer") == "contributor",
+        ),
+    )
+
+
 def _build_fallback_html(
     markers_json: str,
     auto_rotate: bool,
     height: int,
 ) -> str:
     """Build a self-contained canvas globe with no CDN or map dependency."""
+    try:
+        marker_values = json.loads(markers_json)
+    except (TypeError, ValueError):
+        marker_values = []
+    clean_markers = _normalise_markers(
+        marker_values if isinstance(marker_values, list) else []
+    )
+    markers_json = _json_for_script(clean_markers)
+    focus = _initial_focus(clean_markers)
+    initial_yaw = -float(focus["lng"]) if focus else -15.0
+    initial_pitch = float(focus["lat"]) if focus else -12.0
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -238,7 +268,8 @@ def _build_fallback_html(
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const shouldRotate = {str(auto_rotate).lower()} && !reduceMotion;
   const dpr = Math.min(devicePixelRatio || 1, 2);
-  let size=0, radius=0, cx=0, cy=0, yaw=-15, pitch=-12;
+  let size=0, radius=0, cx=0, cy=0,
+      yaw={initial_yaw}, pitch={initial_pitch};
   let dragging=false, lastX=0, lastY=0, visible=true, lastFrame=0;
   let projected=[];
 
@@ -367,7 +398,15 @@ def _build_html(
         marker_values = []
     if not isinstance(marker_values, list):
         marker_values = []
-    markers_json = _json_for_script(_normalise_markers(marker_values))
+    clean_markers = _normalise_markers(marker_values)
+    markers_json = _json_for_script(clean_markers)
+    focus = _initial_focus(clean_markers)
+    initial_rotation = (
+        [-float(focus["lng"]), -float(focus["lat"]), 0]
+        if focus
+        else [0.0, -20.0, 0]
+    )
+    initial_rotation_json = _json_for_script(initial_rotation)
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -508,7 +547,7 @@ def _build_html(
   }});
 
   // ── Rotation state ────────────────────────────────────────────────────────
-  let ROT    = [0, -20, 0];   // [lambda, phi, gamma] degrees
+  let ROT    = {initial_rotation_json}; // starts on strongest activity
   let VEL    = [0, 0];        // [dLambda/ms, dPhi/ms]
   const INERTIA_DECAY = 0.94; // per frame at 60fps ≈ 0.94^60 ≈ 0.025 after 1 s
 
