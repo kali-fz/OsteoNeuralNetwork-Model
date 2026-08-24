@@ -18,6 +18,47 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+#: Environment variables that switch the account backend from local SQLite to
+#: the live Cloudflare Worker. See ``_local_backend_only``.
+COMMUNITY_ENV_VARS = ("ONNM_COMMUNITY_URL", "ONNM_COMMUNITY_KEY", "ONNM_ADMIN_KEY")
+
+
+@pytest.fixture(autouse=True)
+def _local_backend_only(monkeypatch):
+    """Force every test onto the local SQLite backend.
+
+    THIS IS NOT A CONVENIENCE. Without it the suite writes to production.
+
+    ``backend.create_user`` dispatches on ``using_community()``, and when the
+    community client is configured it calls Cloudflare and **discards the
+    ``path`` argument entirely**. A test that carefully builds a throwaway
+    database under ``tmp_path`` and passes it in therefore does not use it: the
+    temp file is never created and the account is registered against live D1.
+
+    That is not hypothetical. Three ``@example.com`` accounts reached the
+    production database this way before anyone noticed, and the way it surfaced
+    was the account tests starting to fail on a duplicate-email error -- the
+    second run colliding with what the first run had written. The dangerous
+    state was the run before that, when they passed.
+
+    The three variables are set at the OS level on at least one development
+    machine, so they are present in any shell without a ``.env`` being loaded.
+    Clearing them per-test is the only reliable guard.
+
+    ``community._client`` is reset either side because ``get_client`` memoises
+    the client process-wide on first use. Clearing the environment alone would
+    leave an already-configured client cached from an earlier import, and the
+    dispatch would still choose Cloudflare.
+    """
+    import community
+
+    for name in COMMUNITY_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    community._client = None
+    yield
+    community._client = None
+
+
 # Deliberately non-square: a square phantom would hide any aspect-ratio bug in
 # the resize/pad stage, which is exactly what we want these tests to catch.
 PHANTOM_H, PHANTOM_W = 96, 64
