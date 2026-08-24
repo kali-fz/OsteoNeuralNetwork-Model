@@ -52,9 +52,7 @@ from community_ui import community_status, render_admin_review  # noqa: E402
 st.set_page_config(page_title="ONNM review console", page_icon="🦴", layout="wide")
 
 st.title("ONNM review console")
-st.caption(
-    "Local only. Nothing here is deployed, and the admin key never leaves this machine."
-)
+st.caption("This console runs locally. The admin key stays on this machine.")
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +72,7 @@ if not client.enabled:
 if not client.admin_enabled:
     st.error("`ONNM_ADMIN_KEY` is not set, so the review endpoints are unreachable.")
     st.caption(
-        "It is deliberately absent from the hosted app — a leak of the app's key must "
+        "It is deliberately absent from the hosted app. A leak of the app's key must "
         "not be able to approve its own training data."
     )
     st.stop()
@@ -103,9 +101,8 @@ with st.sidebar:
 
     st.subheader("Push to training")
     st.caption(
-        "Claims everything you have approved, writes the images, and rebuilds "
-        "`configs/controls_manifest.csv` — which `base.yaml` already reads, so "
-        "there is no config to edit afterwards."
+        "Claims the approved rows, writes their images, and rebuilds "
+        "`configs/controls_manifest.csv`. The base configuration already reads that file."
     )
     store = st.text_input(
         "Store directory",
@@ -115,25 +112,28 @@ with st.sidebar:
              "that is about to be wiped.",
     )
     dry_run = st.checkbox("Dry run (claim nothing)", value=True)
-    if st.button("Sync approved → training", type="primary", width="stretch"):
+    if st.button("Sync approved rows to training", type="primary", width="stretch"):
         command = [
             sys.executable, str(REPO_ROOT / "scripts" / "sync_community.py"),
             "--store", store,
         ]
         if dry_run:
             command.append("--dry-run")
-        with st.spinner("Talking to Cloudflare…"):
+        with st.spinner("Connecting to Cloudflare..."):
             finished = subprocess.run(  # noqa: S603 - fixed argv, no shell
                 command, cwd=REPO_ROOT, capture_output=True, text=True,
                 env={**os.environ}, check=False,
             )
         st.code(finished.stdout or "(no output)", language="text")
         if finished.returncode != 0:
-            st.error("sync failed")
+            st.error("The sync failed.")
             if finished.stderr:
                 st.code(finished.stderr, language="text")
         else:
-            st.success("Done." if not dry_run else "Dry run complete — nothing claimed.")
+            success_message = (
+                "Sync complete." if not dry_run else "Dry run complete. Nothing was claimed."
+            )
+            st.success(success_message)
             community_status.clear()
 
     st.divider()

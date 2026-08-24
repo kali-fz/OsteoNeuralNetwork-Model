@@ -59,7 +59,7 @@
 -- tests assert that it does.
 --
 -- Apply with:
---   npx wrangler d1 execute onnm-community --remote --file=./migrations/0004_geolocation.sql
+--   npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0004_geolocation.sql
 
 -- ---------------------------------------------------------------------------
 -- users: where the account was created.

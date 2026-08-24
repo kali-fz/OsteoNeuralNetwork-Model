@@ -15,6 +15,23 @@ ground-truth lesion boxes* rather than merely displayed.
 libraries only (MIT/Apache-2.0). No cloud compute, no paid APIs, no telemetry. Kaggle's
 free tier is the only permitted fallback.
 
+## Current application experience
+
+The public application has been rebuilt around four views: home, Google sign-in,
+scanner, and profile. Navigation is stored in the `page` query parameter so links to the
+profile and scanner survive a Streamlit rerun. Authenticated views share one compact
+header containing the current user's Google photo and name, a link to the profile, a
+single sign-out action, and a back-to-home action where it is needed. The home header does
+not repeat the scanner link because the main `Test ONNM v0.1.0` button already provides it.
+
+The home page explains that v0.1.0 is the first trained model and asks people to test it
+or contribute a processed image for human review. It also contains the self-contained
+country globe and the opt-in contributor roll. The scanner has a themed uploader, a clear
+empty state, a concise research disclaimer, and optional model controls in the sidebar.
+The profile contains account details, private scan history, and the public-contributor
+toggle. User-facing copy uses British English and avoids claiming that hosted data stays
+on the user's machine.
+
 ---
 
 ## Dataset — BTXRD
@@ -114,6 +131,14 @@ src/                 app-layer modules (not part of the onnm package):
   legal.py           ToS, Privacy Policy, Medical Disclaimer, Cookie Notice text
   report.py          torch-free per-case HTML report builder (print-to-PDF ready)
   ood_validator.py   shim -> onnm.ood (as inference.py is for onnm.inference)
+  backend.py         selects hosted D1 or local SQLite persistence
+  community.py       authenticated Worker client; submissions, globe, contributors
+  community_ui.py    sharing consent, user feedback, and the admin review interface
+  geo.py             validates country aggregates and builds coarse globe markers
+  theme.py           shared Streamlit theme and account/uploader component styling
+  components/
+    globe.py         self-contained canvas globe; no runtime CDN dependency
+    charts.py        HTML/SVG charts used by the scanner
 scripts/             download, verify_data, verify_env, make_splits, train,
                      calibrate, evaluate, gradcam_report, overfit_check,
                      stratified_report (per-anatomy/subtype errors), ablate_tta
@@ -123,6 +148,8 @@ configs/             base.yaml + overrides: densenet121_3class, full_run,
 notebooks/           01_data_sanity, kaggle_train, colab_train
 tests/               311 tests, synthetic fixtures, no dataset required
 app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
+review_app.py        local-only community review and training-sync console
+cloudflare/          Worker, D1 schema, migrations, and Wrangler deployment config
 MODEL_CARD.md        intended use, training data, measured limits, failure modes
 .github/workflows/   ci.yml — ruff + torch-free fast tests + full suite on CPU torch
 ```
@@ -131,12 +158,18 @@ MODEL_CARD.md        intended use, training data, measured limits, failure modes
 
 ## App layer — auth, storage, OOD gate
 
-**Two sign-in paths, chosen by configuration, never both at once.** `oidc_configured()`
-returns true when secrets carry an `[auth]` block with a Google client; the app then shows
-only "Continue with Google" and `st.login("google")` drives Streamlit's native OIDC. With
-no such block — the normal state of a local checkout — the password forms render instead.
-The fallback is not a second door into the same deployment; it is what lets a clone run
-without a Google client of its own.
+**Two sign-in paths are supported, but never in the same deployment.** A hosted community
+deployment requires Google OIDC and fails closed with a configuration message when the
+OAuth secrets are incomplete. It must not expose password registration as a fallback.
+A local checkout with no community URL and no Google client may use the password forms so
+the model can still run without an external account. `oauth._oidc_target()` accepts both
+Streamlit's named `[auth.google]` layout and its single-provider `[auth]` layout.
+
+Google supplies the display name and profile photo used in the authenticated header.
+Photo URLs are accepted only from HTTPS `googleusercontent.com` hosts. The name and photo
+can be stored with the D1 user row, but they are never returned by the public contributors
+endpoint unless the user has explicitly enabled the profile and has at least one approved
+contribution.
 
 **Federated accounts store no password, and the schema enforces it.** `users` carries
 `auth_provider` ('password' | 'google') and `provider_subject`, with a CHECK constraint
@@ -286,20 +319,33 @@ Google Sign-In --OIDC--> Streamlit Cloud (app.py) --HTTPS+key--> Cloudflare Work
                                                          --> ood_manifest.csv --> OOD hardening
 ```
 
-Live endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 `onnm-community`
-(id `961f0440-7ff1-466e-88fe-0c2b30f3083b`, 5 tables, schema_version 3), app
-`https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`.
+Configured endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 database
+`onn-model` (id `961f0440-7ff1-466e-88fe-0c2b30f3083b`), and Streamlit app
+`https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`. The repository
+schema target is version 5.
+
+**Deployment handoff, 24 August 2026:** the Streamlit redesign is on `main`, but the
+current local Wrangler login does not own the D1 database above. Migrations 0004 and 0005
+and the matching Worker must be deployed from the Cloudflare account that owns it. Until
+that happens, the frontend deliberately treats `/globe`, `/contributors`, and
+`/users/profile` as unavailable rather than showing invented data. `RUN_ME.md` contains
+the exact account-safe handoff and verification sequence.
 
 - `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
   deploy README. Migrations are applied by hand:
-  `npx wrangler d1 execute onnm-community --remote --file=./migrations/NNNN_*.sql`.
+  `npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/NNNN_*.sql`.
   `0002_google_oauth.sql` rebuilds `users` (SQLite cannot relax NOT NULL in place) and
-  preserves existing rows as password accounts.
+  preserves existing rows as password accounts. `0003_triage_buckets.sql` introduces the
+  review buckets. `0004_geolocation.sql` adds country-only origin fields and indexes.
+  `0005_public_contributor_profiles.sql` adds the private-by-default public profile fields.
 - `src/community.py` — client; **fails soft** so a dead API never blocks inference.
 - `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
   SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
 - `src/community_ui.py` — consent checkbox, feedback widget, rejection dispute,
   three-tab admin review queue.
+- `src/geo.py` and `src/components/globe.py` — validate Worker aggregates and render a
+  rotating globe from local code. The home page no longer downloads globe libraries or
+  world geometry from a CDN during a Streamlit render.
 - `review_app.py` — **the review console**, and where approving actually happens:
   `python -m streamlit run review_app.py --server.port 8502`. Local only, never deployed,
   so the review path is not present in the process strangers talk to. `app.py` keeps a
@@ -313,6 +359,23 @@ Live endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 `onnm-co
 **Free tier only: Workers + D1, no R2, no payment method.** Shared images are the 256px
 preprocessed PNG as base64 in D1 (~30 KB each), capped at 200 MB in the Worker. With no
 card on the account, overage cannot bill — it fails closed.
+
+**The globe stores country codes, not browser locations.** The Worker records
+Cloudflare's two-letter `request.cf.country` value when an account is first touched and on
+each submission. It does not store an IP address, latitude, longitude, city, or postcode.
+Approved contributions use the submission country, with the account country as a fallback
+for older rows. The current display minimum is one account, so the protection comes from
+country-level aggregation rather than a claim of strong anonymity. Existing accounts gain
+a country on their next Google sign-in; historical submissions with no country remain
+unknown unless the account fallback is available.
+
+**The contributor roll is opt-in.** `/contributors` returns a Google display name, an
+allow-listed Google photo URL, and an approved-contribution count only when
+`public_contributor_profile = 1` and the count is at least one. `/users/profile` updates
+that choice. Sharing an image or having it approved never publishes the account holder's
+identity on its own. The globe and the contributor roll use the same Worker and D1
+deployment, so both are repaired by the 0004/0005 migration and Worker release described
+in `RUN_ME.md`.
 
 **Invariant 9 — user feedback is a signal, never a label.** `user_says_wrong` and
 `user_suggested_label` are untrusted; only `admin_label`, set during human review, reaches

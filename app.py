@@ -114,7 +114,7 @@ CLASS_COLORS = {
 }
 
 DISCLAIMER_SUMMARY = """
-**Research tool — not a medical device, and not medical advice.** This unvalidated
+**Research tool. This is not a medical device or medical advice.** This unvalidated
 prototype has no FDA, CE, or MHRA clearance. Never use its output for patient-care
 decisions; every radiograph requires review by a qualified clinician.
 """
@@ -177,17 +177,21 @@ def render_account_header(page_title: str, *, active_page: str) -> None:
     made the redesigned scanner show two competing logout controls and left the
     visible header with no indication of which account was active.
     """
-    title_col, nav_col, identity_col, signout_col = st.columns([5, 1, 1.75, 0.8])
+    if active_page == "landing":
+        title_col, identity_col, signout_col = st.columns([6, 1.75, 0.8])
+        nav_col = None
+    else:
+        title_col, nav_col, identity_col, signout_col = st.columns([5, 1, 1.75, 0.8])
     with title_col:
         st.markdown(
             f'<div class="onnm-header-title">{html.escape(page_title)}</div>',
             unsafe_allow_html=True,
         )
-    with nav_col:
-        target = "scanner" if active_page == "landing" else "landing"
-        label = "Scanner" if active_page == "landing" else "← Home"
-        if st.button(label, key=f"account_nav_{active_page}", use_container_width=True):
-            navigate_to(target)
+    if nav_col is not None:
+        with nav_col:
+            if st.button("Back to home", key=f"account_nav_{active_page}",
+                         use_container_width=True):
+                navigate_to("landing")
     with identity_col:
         name = str(st.session_state.get("user_name") or "My profile")
         picture = str(st.session_state.get("user_picture") or "")
@@ -204,7 +208,7 @@ def render_account_header(page_title: str, *, active_page: str) -> None:
             unsafe_allow_html=True,
         )
     with signout_col:
-        if st.button("Sign Out", key="account_signout", use_container_width=True):
+        if st.button("Sign out", key="account_signout", use_container_width=True):
             _do_logout()
 
 def _hero_bg_css() -> str:
@@ -322,7 +326,11 @@ def render_landing() -> None:
                 unsafe_allow_html=True,
             )
         with signin_col:
-            label = "Sign in with Google" if (using_community() or oidc_configured()) else "Sign in"
+            label = (
+                "Google sign-in"
+                if (using_community() or oidc_configured())
+                else "Sign in"
+            )
             if st.button(label, key="home_signin", use_container_width=True):
                 navigate_to("auth")
 
@@ -332,17 +340,18 @@ def render_landing() -> None:
         st.markdown(
             f"""
             <section class="onnm-home-hero" {hero_style}>
-              <p class="onnm-hero-eyebrow">Community research model · ONNM v{__version__}</p>
-              <h1 class="onnm-hero-title">Test the model. Help make it better.</h1>
+              <p class="onnm-hero-eyebrow">Open bone X-ray research · ONNM v{__version__}</p>
+              <h1 class="onnm-hero-title">
+                Test the current model and help us train the next one.
+              </h1>
               <p class="onnm-hero-subtitle">
-                We have trained the first ONNM model to examine bone X-rays for normal,
-                benign, and malignant patterns. Sign up free, try it on your radiographs,
-                and—with your permission—help us build a better next version.
+                ONNM v{__version__} is our first trained model for bone X-rays. Create a
+                free account to test it with DICOM files or standard image formats, then
+                choose whether each radiograph can be reviewed for future training.
               </p>
               <div class="onnm-hero-points">
-                <span>Test v{__version__}</span>
-                <span>DICOM · PNG · JPG · BMP · TIFF</span>
-                <span>Sharing is always optional</span>
+                <span>Free Google account</span>
+                <span>Optional, human-reviewed contributions</span>
               </div>
             </section>
             """,
@@ -350,26 +359,26 @@ def render_landing() -> None:
         )
         if authenticated:
             if st.button(
-                f"Test ONNM v{__version__}  →", key="hero_scanner_btn", type="primary",
+                f"Test ONNM v{__version__}", key="hero_scanner_btn", type="primary",
                 use_container_width=True,
             ):
                 navigate_to("scanner")
         else:
             cta_label = (
-                "Sign up free with Google  →"
+                "Create a free account with Google"
                 if (using_community() or oidc_configured())
-                else "Sign in to scan  →"
+                else "Sign in to test the model"
             )
             if st.button(
                 cta_label, key="hero_google_btn", type="primary", use_container_width=True
             ):
                 navigate_to("auth")
-        st.caption("Research tool only — not a medical device and not medical advice.")
+        st.caption("Research tool only. This is not a medical device or medical advice.")
 
     with globe_col:
         st.markdown(
             '<div class="onnm-globe-heading"><span>Community reach</span>'
-            '<strong>Country-level and privacy protected</strong></div>',
+            '<strong>Country-level activity</strong></div>',
             unsafe_allow_html=True,
         )
         markers = data.get("markers") or []
@@ -389,8 +398,8 @@ def render_landing() -> None:
             )
         elif hidden:
             st.caption(
-                f"{hidden:,} account(s) are included in totals but hidden from the map "
-                f"until their country reaches {privacy_min}."
+                f"{hidden:,} account(s) are included in the totals. Their countries "
+                f"will appear when they reach the {privacy_min}-account threshold."
             )
         else:
             st.caption(
@@ -432,13 +441,13 @@ def render_landing() -> None:
     st.markdown(
         """
         <div class="onnm-metric-band">
-          <h2>What the scanner gives you</h2>
+          <h2>What you receive after a scan</h2>
           <div class="onnm-metric-grid">
             <div class="onnm-metric-item">
               <span class="onnm-metric-num">3-way</span>
               <span class="onnm-metric-ci">Normal · benign · malignant</span>
               <div class="onnm-metric-desc">
-                A calibrated probability breakdown, not a black-box label.
+                Calibrated probabilities for each model class.
               </div>
             </div>
             <div class="onnm-metric-item">
@@ -452,7 +461,7 @@ def render_landing() -> None:
               <span class="onnm-metric-num">Private</span>
               <span class="onnm-metric-ci">Consent before sharing</span>
               <div class="onnm-metric-desc">
-                Your image is not added to community research without consent.
+                You decide whether each processed image can be reviewed for research.
               </div>
             </div>
           </div>
@@ -468,7 +477,7 @@ def render_landing() -> None:
     contributors = contributor_data()
     st.markdown(
         '<div class="onnm-section-heading"><span>Contributors</span>'
-        '<strong>People helping improve the research dataset</strong></div>',
+        '<strong>People who shared approved research images</strong></div>',
         unsafe_allow_html=True,
     )
     if contributors:
@@ -503,8 +512,8 @@ def render_landing() -> None:
         )
     elif contributors is None:
         st.caption(
-            "Contributor profiles are temporarily unavailable while the community "
-            "service is updated. Your Google profile remains private."
+            "Contributor profiles will appear after the community service is updated. "
+            "Your Google profile remains private."
         )
     else:
         st.caption(
@@ -517,7 +526,7 @@ def render_landing() -> None:
         <div class="onnm-footer">
           <span>v{__version__}</span>
           <span class="onnm-footer-disclaimer">
-            Research tool — not a medical device and not medical advice. This unvalidated
+            Research tool. This is not a medical device or medical advice. This unvalidated
             prototype has no FDA, CE, or MHRA clearance. Never use its output for
             patient-care decisions. Every radiograph requires review by a qualified clinician.
           </span>
@@ -531,7 +540,7 @@ def render_landing() -> None:
 # ── Page: auth ────────────────────────────────────────────────────────────────
 
 def render_auth() -> None:
-    if st.button("← Home", key="auth_back_btn"):
+    if st.button("Back to home", key="auth_back_btn"):
         navigate_to("landing")
 
     st.subheader("Secure access")
@@ -547,12 +556,12 @@ def render_auth() -> None:
             "No authentication or storage service is contacted."
         )
 
-    login_tab, create_tab = st.tabs(["Login", "Create Account"])
+    login_tab, create_tab = st.tabs(["Sign in", "Create account"])
     with login_tab:
         with st.form("login_form", clear_on_submit=True):
             email = st.text_input("Email", autocomplete="email")
             password = st.text_input("Password", type="password", autocomplete="current-password")
-            submitted = st.form_submit_button("Login", use_container_width=True)
+            submitted = st.form_submit_button("Sign in", use_container_width=True)
         if submitted:
             lock_until = float(st.session_state.get("login_lock_until", 0.0))
             remaining = int(max(0, lock_until - time.monotonic()))
@@ -588,7 +597,7 @@ def render_auth() -> None:
                 "I agree to the Terms of Service and Privacy Policy, and acknowledge "
                 "this is an unvalidated research prototype."
             )
-            submitted = st.form_submit_button("Create Account", use_container_width=True)
+            submitted = st.form_submit_button("Create account", use_container_width=True)
         if submitted:
             if reg_password != reg_confirm:
                 st.error("Passwords do not match.")
@@ -632,7 +641,7 @@ def render_scanner() -> None:
         if version is None:
             st.warning(
                 "Serving a checkpoint that is not in the version ledger. "
-                f"Fetched from `{info.get('checkpoint_url', 'an unrecorded URL')}` — "
+                f"Fetched from `{info.get('checkpoint_url', 'an unrecorded URL')}`. "
                 "register it or republish a known version."
             )
             return
@@ -648,16 +657,16 @@ def render_scanner() -> None:
         f"""
         <div class="onnm-scanner-intro">
           <span>ONNM v{__version__}</span>
-          <strong>Upload a radiograph and review the result with its visual explanation.</strong>
-          <p>Use the sidebar only when you need to adjust the model threshold or heatmap.</p>
+          <strong>Upload a radiograph to see the model result and its visual explanation.</strong>
+          <p>The sidebar contains optional controls for the decision threshold and heatmap.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div class="onnm-disclaimer"><strong>Research tool — not a medical device, '
-        'and not medical advice.</strong> This unvalidated prototype has no FDA, CE, '
+        '<div class="onnm-disclaimer"><strong>Research tool. This is not a medical device '
+        'or medical advice.</strong> This unvalidated prototype has no FDA, CE, '
         'or MHRA clearance. Never use its output for patient-care decisions; every '
         'radiograph requires review by a qualified clinician.</div>',
         unsafe_allow_html=True,
@@ -710,7 +719,7 @@ def render_scanner() -> None:
             help="Defaults to the run pinned in `reports/PRODUCTION`.",
         )
         if pinned is None:
-            st.caption("No production pin — defaulting to the newest run.")
+            st.caption("No production run is pinned, so the newest run is selected.")
         render_serving_version(selected, pinned)
 
         try:
@@ -801,7 +810,13 @@ def render_scanner() -> None:
             help="Hide CAM values below this threshold.")
         colormap = st.selectbox("Colormap", COLORMAPS, index=0)
         st.divider()
-        st.caption("No data leaves this machine.")
+        if using_community():
+            st.caption(
+                "Inference runs in this app. A processed image is sent to community "
+                "storage only when you enable sharing below."
+            )
+        else:
+            st.caption("This local run does not contact the community service.")
 
     uploads = st.file_uploader(
         "Upload one or more radiographs", type=UPLOAD_TYPES, accept_multiple_files=True,
@@ -811,8 +826,8 @@ def render_scanner() -> None:
 
     if not uploads:
         st.markdown(
-            '<div class="onnm-empty-state"><strong>Ready when you are.</strong>'
-            '<span>Upload one X-ray or a series. Each film gets a classification, '
+            '<div class="onnm-empty-state"><strong>Upload an X-ray to begin.</strong>'
+            '<span>You can upload one image or a series. Each film receives a classification, '
             'confidence score, and Grad-CAM heatmap.</span></div>',
             unsafe_allow_html=True,
         )
@@ -918,7 +933,7 @@ def render_scanner() -> None:
         ready.append((uploaded.name, entry))
 
     for name, validation, payload in rejected:
-        st.error(f"`{name}` — {REJECTION_MESSAGE}")
+        st.error(f"`{name}`: {REJECTION_MESSAGE}")
         rejection_key = (
             f"rejected:{st.session_state['user_id']}:{hashlib.sha256(payload).hexdigest()}"
         )
@@ -927,7 +942,7 @@ def render_scanner() -> None:
                 st.session_state["user_id"], payload, shared=SHARE_CONSENT, filename=name)
         with st.expander(f"Why was {name} rejected?"):
             for check in validation.failures:
-                st.markdown(f"- **{check.name}** — {check.detail}")
+                st.markdown(f"- **{check.name}:** {check.detail}")
             st.caption(
                 "Pre-inference heuristics (channel structure, dynamic range, intensity entropy, "
                 "edge density). If a genuine radiograph is rejected, export it as an uncropped "
@@ -937,14 +952,14 @@ def render_scanner() -> None:
                 st.session_state[rejection_key], st.session_state["user_id"], key=rejection_key)
 
     for name, message in failed:
-        st.error(f"`{name}` — {message}")
+        st.error(f"`{name}`: {message}")
 
     if not ready:
         render_legal_footer()
         return
 
     if len(ready) > 1:
-        st.subheader(f"Series review — {len(ready)} films")
+        st.subheader(f"Series review: {len(ready)} films")
         st.dataframe(
             [{"file": name, "verdict": entry["result"].label,
               "confidence %": round(entry["result"].confidence, 1),
@@ -980,7 +995,7 @@ def render_scanner() -> None:
 
     verdict_card(
         result.label,
-        f"{result.confidence:.1f}% confidence · decided at a "
+        f"{result.confidence:.1f}% confidence at a "
         f"{result.threshold:.2f} lesion threshold",
         accent,
     )
@@ -1002,7 +1017,7 @@ def render_scanner() -> None:
         render_probability_chart(result.class_probabilities)
         st.caption(
             "The network is a 3-way classifier. The Normal / Potential Bone Lesion verdict "
-            "above collapses benign and malignant — read this chart for the distinction "
+            "above combines benign and malignant. Read this chart for the distinction "
             "that changes management."
         )
 
@@ -1027,18 +1042,18 @@ def render_scanner() -> None:
             st.image(
                 preview_uint8(result.original_image),
                 caption=(
-                    f"As uploaded — {result.original_image.shape[1]}×"
+                    f"As uploaded, {result.original_image.shape[1]}×"
                     f"{result.original_image.shape[0]}"
                 ),
                 use_container_width=True,
             )
         with col_b:
             st.image(to_display_uint8(result.preprocessed_image),
-                caption=f"Model input — {result.preprocessed_image.shape[1]}px, padded",
+                caption=f"Model input, {result.preprocessed_image.shape[1]}px, padded",
                 use_container_width=True)
         with col_c:
             st.image(overlay,
-                caption=f'Grad-CAM — attention for "{result.cam_class}"',
+                caption=f'Grad-CAM attention for "{result.cam_class}"',
                 use_container_width=True)
         st.caption(
             "Warm regions are where the model's evidence for the selected class came from. "
@@ -1081,7 +1096,7 @@ def render_scanner() -> None:
 
     st.divider()
     st.caption(
-        "BTXRD is licensed CC BY-NC-ND 4.0 — NoDerivatives covers Grad-CAM overlays, so keep "
+        "BTXRD is licensed CC BY-NC-ND 4.0. NoDerivatives covers Grad-CAM overlays, so keep "
         "downloaded images local rather than redistributing them."
     )
     render_legal_footer()
@@ -1090,7 +1105,7 @@ def render_scanner() -> None:
 # ── Page: profile ──────────────────────────────────────────────────────────────
 
 def render_profile() -> None:
-    render_account_header("My Profile", active_page="profile")
+    render_account_header("My profile", active_page="profile")
 
     user_id = st.session_state.get("user_id", "")
     email = st.session_state.get("user_email", "")
@@ -1098,7 +1113,7 @@ def render_profile() -> None:
     tos_at = st.session_state.get("accepted_terms_at", "")
     safe_email = html.escape(str(email))
     safe_provider = html.escape(provider)
-    safe_tos_at = html.escape(str(tos_at or "—"))
+    safe_tos_at = html.escape(str(tos_at or "Not recorded"))
 
     st.markdown(
         f"""
@@ -1109,7 +1124,7 @@ def render_profile() -> None:
             <span class="onnm-profile-val">{safe_email}</span>
           </div>
           <div class="onnm-profile-row">
-            <span class="onnm-profile-key">Auth provider</span>
+            <span class="onnm-profile-key">Sign-in method</span>
             <span class="onnm-profile-val">{safe_provider}</span>
           </div>
           <div class="onnm-profile-row">
@@ -1125,8 +1140,8 @@ def render_profile() -> None:
         st.subheader("Contributor profile")
         if contributor_data() is None:
             st.caption(
-                "Contributor profiles are temporarily unavailable while the community "
-                "service is updated. Your Google name and photo remain private."
+                "Contributor profiles will be available after the community service "
+                "is updated. Your Google name and photo remain private."
             )
         else:
             st.caption(
@@ -1153,14 +1168,14 @@ def render_profile() -> None:
                     st.success("Contributor visibility updated.")
                 else:
                     st.error(
-                        "Contributor visibility could not be updated. The community "
-                        "service may still be deploying; your profile remains private."
+                        "We could not update your contributor visibility because the "
+                        "community service is not ready. Your profile remains private."
                     )
 
-    if st.button("Open scanner →", key="profile_open_scanner"):
+    if st.button("Open scanner", key="profile_open_scanner"):
         navigate_to("scanner")
 
-    st.subheader("My Scan History")
+    st.subheader("My scan history")
     _render_scan_history(user_id)
     render_legal_footer()
 
@@ -1235,7 +1250,7 @@ def _do_logout() -> None:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="ONNM — Bone Lesion Triage",
+    page_title="ONNM | Bone lesion triage",
     layout="wide",
     initial_sidebar_state="collapsed",
 )

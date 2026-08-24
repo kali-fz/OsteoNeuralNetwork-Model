@@ -24,6 +24,19 @@ def test_account_actions_have_one_sign_out_control() -> None:
     assert 'st.button("Logout"' not in APP_SOURCE
 
 
+def test_home_header_does_not_repeat_the_scanner_action() -> None:
+    header = _function_source("render_account_header", "_hero_bg_css")
+    assert 'if active_page == "landing":' in header
+    assert 'st.button("Scanner"' not in header
+    assert 'st.button("Back to home"' in header
+
+
+def test_hosted_scanner_does_not_make_a_false_local_storage_claim() -> None:
+    scanner = _function_source("render_scanner", "render_profile")
+    assert "No data leaves this machine" not in scanner
+    assert "only when you enable sharing below" in scanner
+
+
 def test_upload_validation_is_cached_before_scanner_reruns() -> None:
     assert "def inspect_upload" in APP_SOURCE
     scanner = _function_source("render_scanner", "render_profile")

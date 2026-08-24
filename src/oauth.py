@@ -133,9 +133,9 @@ def render_sign_in() -> None:
     """Render Google Sign-In, failing closed when hosted secrets are incomplete."""
     st.subheader("Sign in with Google")
     st.caption(
-        "ONNM uses Google Sign-In, so this app never receives or stores your "
-        "password. Only your email address and Google's account identifier are "
-        "kept, to attach your scans to you."
+        "ONNM uses Google Sign-In and never receives your Google password. Your email "
+        "address and Google account identifier link saved scans to your account. Your "
+        "name and photo are not shown publicly unless you choose to appear as a contributor."
     )
 
     configured, provider_name = _oidc_target()
@@ -153,8 +153,8 @@ def render_sign_in() -> None:
         else:
             st.login(provider_name)
     st.caption(
-        "By continuing you accept the Terms of Service and Privacy Policy below, "
-        "and acknowledge that this is an unvalidated research prototype and not "
+        "By continuing, you accept the Terms of Service and Privacy Policy below. "
+        "You also acknowledge that this is an unvalidated research prototype, not "
         "a medical device."
     )
 

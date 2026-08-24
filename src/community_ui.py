@@ -52,8 +52,8 @@ from community import (
 )
 
 SHARE_HELP = (
-    "Stores the 256-pixel processed image (not your original file) so it can be "
-    "reviewed and, if useful, added to future training. Off by default. "
+    "Stores a 256-pixel processed copy, not your original file, so a human can "
+    "review it for possible use in future training. This is off by default. "
     "Never tick this for an identifiable patient radiograph."
 )
 
@@ -76,7 +76,7 @@ BUCKET_PROMPTS = {
     BUCKET_MISC: (
         "The gate rejected these as non-radiographs. Confirming one keeps it as a "
         "negative example for the OOD detector, which currently learns from no "
-        "data at all — only hand-written thresholds."
+        "data and relies on hand-written thresholds."
     ),
     BUCKET_CONTRADICTION: (
         "The system disagreed with itself here: the gate turned away something the "
@@ -120,7 +120,7 @@ def render_share_consent(key: str) -> bool:
     if not get_client().enabled:
         return False
     return st.checkbox(
-        "Share this image to help improve the model",
+        "Share a processed copy to help improve the model",
         value=False,
         key=f"share_{key}",
         help=SHARE_HELP,
@@ -202,15 +202,14 @@ def render_feedback(submission_id: str, user_id: str, key: str) -> None:
 
     state_key = f"feedback_done_{key}"
     if st.session_state.get(state_key):
-        st.success("Thanks — flagged for review.")
+        st.success("Thank you. The result has been flagged for review.")
         return
 
     not_a_radiograph = "This is not a radiograph at all"
     with st.expander("Does this result look wrong?"):
         st.caption(
-            "Your report is a flag for a human reviewer, not a correction applied "
-            "to the model. Nothing you enter here changes future predictions until "
-            "someone has reviewed the image."
+            "This report alerts a human reviewer. It does not change the model or "
+            "future predictions until the image has been reviewed."
         )
         suggestion = st.selectbox(
             "If you know what it actually is, say so (optional)",
@@ -238,7 +237,7 @@ def render_feedback(submission_id: str, user_id: str, key: str) -> None:
                 st.session_state[state_key] = True
                 st.rerun()
             else:
-                st.error("Could not send that just now — your result is unaffected.")
+                st.error("We could not send the report. Your scan result is unaffected.")
 
 
 def render_rejection_dispute(submission_id: str, user_id: str, key: str) -> None:
@@ -257,7 +256,7 @@ def render_rejection_dispute(submission_id: str, user_id: str, key: str) -> None
 
     state_key = f"dispute_done_{key}"
     if st.session_state.get(state_key):
-        st.caption("Thanks — flagged for review.")
+        st.caption("Thank you. The image has been flagged for review.")
         return
 
     if st.button("This really is a radiograph", key=f"dispute_{key}",
@@ -325,7 +324,7 @@ def _render_review_card(item: dict, bucket: str) -> None:
     with right:
         st.caption(f"`{sid}`")
         if item.get("model_label") == "rejected":
-            st.write("**The model never ran** — the gate rejected this upload.")
+            st.write("**The model did not run.** The image check rejected this upload.")
         else:
             st.write(f"Model said **{item.get('model_label')}** · "
                      f"P(lesion) = **{float(item.get('lesion_probability', 0)):.3f}**")
@@ -338,7 +337,7 @@ def _render_review_card(item: dict, bucket: str) -> None:
         if item.get("user_comment"):
             st.info(item["user_comment"])
         st.caption(
-            "The user's suggestion is context, not evidence. Assign the bucket and "
+            "Treat the user's suggestion as context, not evidence. Assign the bucket and "
             "label you can defend from the image."
         )
 
@@ -358,7 +357,7 @@ def _render_review_card(item: dict, bucket: str) -> None:
         )
         choices = BUCKET_LABEL_CHOICES.get(chosen_bucket or bucket, list(VALID_LABELS))
         label = st.selectbox(
-            "Ground truth", ["— choose —", *choices], key=f"lbl_{sid}",
+            "Ground truth", ["Select a label", *choices], key=f"lbl_{sid}",
             help="'misc' means the image is not a bone radiograph at all.",
         )
         note = st.text_input("Reviewer note (optional)", key=f"note_{sid}")
@@ -368,7 +367,7 @@ def _render_review_card(item: dict, bucket: str) -> None:
         if approve.button("Approve for training", key=f"ok_{sid}", type="primary"):
             if chosen_bucket is None:
                 st.error("Confirm which bucket this belongs in before approving.")
-            elif label == "— choose —":
+            elif label == "Select a label":
                 st.error("Choose the ground-truth label before approving.")
             elif not item.get("image_b64"):
                 st.error("There is no image on this row, so there is nothing to train on.")
@@ -407,7 +406,7 @@ def _render_bucket_tab(bucket: str, pending_count: int) -> None:
         st.success(f"Nothing awaiting review in {BUCKET_TITLES[bucket].lower()}.")
         return
     st.caption(
-        f"{len(pending)} of {pending_count} shown — disputed results first, since "
+        f"{len(pending)} of {pending_count} shown. Disputed results appear first because "
         "those carry information the model does not already have."
     )
     for item in pending:
@@ -416,7 +415,7 @@ def _render_bucket_tab(bucket: str, pending_count: int) -> None:
         verdict = (
             "gate rejected it" if model_label == "rejected" else f"model said **{model_label}**"
         )
-        with st.expander(f"{item['submission_id'][:8]} — {verdict}{disputed}"):
+        with st.expander(f"{item['submission_id'][:8]}: {verdict}{disputed}"):
             _render_review_card(item, bucket)
 
 
@@ -446,7 +445,7 @@ def render_admin_review(user_id: str | None = None, email: str | None = None) ->
         st.info(
             f"Signed in as {ADMIN_EMAIL}, but ONNM_ADMIN_KEY is not set in this "
             "deployment. It is deliberately absent from the hosted app, so a leak "
-            "of the app's key cannot approve its own training data — run the app "
+            "of the app's key cannot approve its own training data. Run the app "
             "from a local checkout with the admin key to review."
         )
         return
