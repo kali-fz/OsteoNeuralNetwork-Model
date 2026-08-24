@@ -41,6 +41,9 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 
 # Pinned CDN versions — bump only these two constants to upgrade.
 _ASSETS: dict[str, str] = {
+    "d3-array.min.js": (
+        "https://cdn.jsdelivr.net/npm/d3-array@3.2.4/dist/d3-array.min.js"
+    ),
     "d3-geo.min.js": (
         "https://cdn.jsdelivr.net/npm/d3-geo@3.1.0/dist/d3-geo.min.js"
     ),
@@ -118,7 +121,11 @@ def _load_static_assets() -> tuple[str, str, str] | None:
         if not all(path.is_file() for path in paths):
             return None
         try:
-            d3 = (ASSETS_DIR / "d3-geo.min.js").read_text(encoding="utf-8")
+            # d3-geo's browser bundle expects d3-array on the shared d3 global.
+            # Concatenate them in dependency order before embedding the script.
+            d3_array = (ASSETS_DIR / "d3-array.min.js").read_text(encoding="utf-8")
+            d3_geo = (ASSETS_DIR / "d3-geo.min.js").read_text(encoding="utf-8")
+            d3 = f"{d3_array}\n{d3_geo}"
             topo = (ASSETS_DIR / "topojson-client.min.js").read_text(encoding="utf-8")
             world = (ASSETS_DIR / "countries-110m.json").read_text(encoding="utf-8")
             return d3, topo, world
@@ -463,15 +470,29 @@ def _build_html(
   }}
 
   // ── World geometry ────────────────────────────────────────────────────────
-  let land = null, borders = null;
+  let land = null, borders = null, countries = [];
   if (WORLD && typeof topojson !== 'undefined') {{
     try {{
       land    = topojson.feature(WORLD, WORLD.objects.land);
+      countries = topojson.feature(WORLD, WORLD.objects.countries).features;
       // countries mesh for borders (no shared edges between countries)
       borders = topojson.mesh(WORLD, WORLD.objects.countries,
                               (a, b) => a !== b);
     }} catch(e) {{ console.warn('topojson parse error', e); }}
   }}
+
+  // Resolve each aggregated country marker to its map polygon once. Keeping
+  // this outside draw() avoids repeating geoContains work during animation.
+  const activeCountries = countries.map(feature => {{
+    const activity = MARKERS.filter(marker =>
+      d3geo.geoContains(feature, [marker.lng, marker.lat])
+    );
+    if (!activity.length) return null;
+    return {{
+      feature,
+      hasContributor: activity.some(marker => marker.layer === 'contributor'),
+    }};
+  }}).filter(Boolean);
 
   // ── Precompute marker 3-D unit vectors ────────────────────────────────────
   // These are fixed; only the rotation matrix changes per frame.
@@ -581,6 +602,19 @@ def _build_html(
       ctx.beginPath(); pathGen(land);
       ctx.fillStyle = '#cdbf9e'; ctx.fill();
     }}
+
+    // Fill countries represented in the community data. Contributor activity
+    // takes the green layer; countries with registrations only use amber.
+    activeCountries.forEach(country => {{
+      ctx.beginPath(); pathGen(country.feature);
+      ctx.fillStyle = country.hasContributor
+        ? 'rgba(46,107,71,0.78)'
+        : 'rgba(232,168,80,0.76)';
+      ctx.fill();
+      ctx.strokeStyle = country.hasContributor ? '#1e4830' : '#ad6c12';
+      ctx.lineWidth = 1.15;
+      ctx.stroke();
+    }});
 
     // Graticule (subtle)
     ctx.beginPath(); pathGen(graticule);

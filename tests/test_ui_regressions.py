@@ -37,6 +37,25 @@ def test_hosted_scanner_does_not_make_a_false_local_storage_claim() -> None:
     assert "only when you enable sharing below" in scanner
 
 
+def test_country_capture_refreshes_the_globe_cache() -> None:
+    profile = _function_source("render_profile", "_render_scan_history")
+    assert "contributor_data.clear()" in profile
+    assert "globe_data.clear()" in profile
+
+    capture = _function_source("render_country_capture", "inspect_upload")
+    assert 'get_client().location_token(user_id)' in capture
+    assert 'country_capture_refresh_pending' in capture
+    assert 'country_capture_token_deadline' in capture
+    assert "time.monotonic() + 240.0" in capture
+    assert "globe_data.clear()" in capture
+
+
+def test_empty_globe_copy_does_not_blame_a_one_account_threshold() -> None:
+    landing = _function_source("render_landing", "render_auth")
+    assert "No country has reached" not in landing
+    assert "No displayable country has been recorded yet" in landing
+
+
 def test_upload_validation_is_cached_before_scanner_reruns() -> None:
     assert "def inspect_upload" in APP_SOURCE
     scanner = _function_source("render_scanner", "render_profile")

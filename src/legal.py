@@ -105,10 +105,10 @@ The Service stores: your normalized email address; account and Terms-acceptance
 timestamps; a random user UUID; uploaded radiograph pixels; the original filename in
 private scan history; a random on-disk filename; upload time; model verdict; and
 confidence score. In the hosted deployment it also stores the two-letter country code
-Cloudflare supplies at account creation or submission time. No IP address or location
-finer than country is stored. Country-level aggregate counts can appear on the public
-homepage from the first recorded account. Streamlit also keeps transient session state
-needed to keep you logged in during the browser session.
+Cloudflare supplies when a signed-in browser makes a one-use, token-protected capture
+request. No IP address or location finer than country is stored. Country-level aggregate
+counts can appear on the public homepage from the first recorded account. Streamlit also
+keeps transient session state needed to keep you logged in during the browser session.
 
 How your identity is held depends on how you signed in:
 

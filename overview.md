@@ -322,14 +322,12 @@ Google Sign-In --OIDC--> Streamlit Cloud (app.py) --HTTPS+key--> Cloudflare Work
 Configured endpoints: Worker `https://onnm-community.kali-fz.workers.dev`, D1 database
 `onn-model` (id `961f0440-7ff1-466e-88fe-0c2b30f3083b`), and Streamlit app
 `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app`. The repository
-schema target is version 5.
+schema target is version 6.
 
-**Deployment handoff, 24 August 2026:** the Streamlit redesign is on `main`, but the
-current local Wrangler login does not own the D1 database above. Migrations 0004 and 0005
-and the matching Worker must be deployed from the Cloudflare account that owns it. Until
-that happens, the frontend deliberately treats `/globe`, `/contributors`, and
-`/users/profile` as unavailable rather than showing invented data. `RUN_ME.md` contains
-the exact account-safe handoff and verification sequence.
+**Deployment handoff, 24 August 2026:** migration 0006 and the matching Worker must be
+deployed from the Cloudflare account that owns D1. It corrects the earlier country-capture
+path, which saw the Streamlit server's country instead of the visitor's. `RUN_ME.md`
+contains the account-safe migration, deployment, and verification sequence.
 
 - `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
   deploy README. Migrations are applied by hand:
@@ -338,6 +336,8 @@ the exact account-safe handoff and verification sequence.
   preserves existing rows as password accounts. `0003_triage_buckets.sql` introduces the
   review buckets. `0004_geolocation.sql` adds country-only origin fields and indexes.
   `0005_public_contributor_profiles.sql` adds the private-by-default public profile fields.
+  `0006_browser_country_capture.sql` adds one-use capture tokens and marks countries that
+  were resolved from the signed-in browser rather than from the Streamlit server.
 - `src/community.py` — client; **fails soft** so a dead API never blocks inference.
 - `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
   SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
@@ -360,21 +360,21 @@ the exact account-safe handoff and verification sequence.
 preprocessed PNG as base64 in D1 (~30 KB each), capped at 200 MB in the Worker. With no
 card on the account, overage cannot bill — it fails closed.
 
-**The globe stores country codes, not browser locations.** The Worker records
-Cloudflare's two-letter `request.cf.country` value when an account is first touched and on
-each submission. It does not store an IP address, latitude, longitude, city, or postcode.
-Approved contributions use the submission country, with the account country as a fallback
-for older rows. The current display minimum is one account, so the protection comes from
-country-level aggregation rather than a claim of strong anonymity. Existing accounts gain
-a country on their next Google sign-in; historical submissions with no country remain
-unknown unless the account fallback is available.
+**The globe stores country codes, not precise browser locations.** Streamlit first mints a
+short-lived, one-use token through its private Worker key. The signed-in browser sends only
+that token directly to Cloudflare; the Worker derives its two-letter `request.cf.country`
+value at the edge. The app never supplies a claimed country, and no IP address, latitude,
+longitude, city, or postcode is stored. The first browser capture replaces any country
+incorrectly written by the old server-side path and repairs that account's historical
+submission countries. Later sign-ins cannot move it. The display minimum is one account,
+so the protection is country-level aggregation rather than a claim of strong anonymity.
 
 **The contributor roll is opt-in.** `/contributors` returns a Google display name, an
 allow-listed Google photo URL, and an approved-contribution count only when
 `public_contributor_profile = 1` and the count is at least one. `/users/profile` updates
 that choice. Sharing an image or having it approved never publishes the account holder's
 identity on its own. The globe and the contributor roll use the same Worker and D1
-deployment, so both are repaired by the 0004/0005 migration and Worker release described
+deployment, so both are repaired by the 0004/0005/0006 migrations and Worker release described
 in `RUN_ME.md`.
 
 **Invariant 9 — user feedback is a signal, never a label.** `user_says_wrong` and

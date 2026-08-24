@@ -78,8 +78,8 @@ uv.lock
 # Generated Cloudflare keys (cloudflare/deploy.sh writes this)
 .cloudflare-keys.txt
 
-# Globe assets are fetched once at runtime from a pinned CDN, not vendored
-src/components/assets/
+# Pinned globe assets are vendored so the homepage can draw country geometry
+# without relying on browser or Streamlit-server network access.
 
 # Personal Claude Code permission rules. These pre-approve wrangler commands
 # that write to the production D1 database and Worker, so they belong to one

@@ -431,6 +431,17 @@ class CommunityClient:
             self.timeout = previous
         return body if status == 200 else None
 
+    def location_token(self, user_id: str) -> dict[str, Any] | None:
+        """Mint a short-lived token for direct browser-edge country capture.
+
+        The app API key stays in this server-side request. Only the opaque,
+        one-use token is embedded in the browser component.
+        """
+        status, body = self._request("POST", "/location/token", {"user_id": user_id})
+        if status != 200 or not body.get("token"):
+            return None
+        return body
+
     def contributors(self) -> list[dict[str, Any]] | None:
         """Public, explicitly opted-in Google contributor profiles only."""
         status, body = self._request("GET", "/contributors")

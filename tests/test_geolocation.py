@@ -240,7 +240,8 @@ def test_the_migration_applies_to_a_populated_pre_0004_database() -> None:
     one way a decorative feature damages something that works.
     """
     old_schema = subprocess.run(
-        ["git", "show", "HEAD:cloudflare/schema.sql"],
+        ["git", "-c", f"safe.directory={ROOT.as_posix()}",
+         "show", "HEAD:cloudflare/schema.sql"],
         capture_output=True, text=True, encoding="utf-8", cwd=ROOT, check=True,
     ).stdout
     if "signup_country" in old_schema:

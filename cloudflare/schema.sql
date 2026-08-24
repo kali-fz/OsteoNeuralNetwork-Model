@@ -98,6 +98,10 @@ CREATE TABLE IF NOT EXISTS users (
     signup_country  TEXT
         CHECK (signup_country IS NULL
                OR (length(signup_country) = 2 AND signup_country = upper(signup_country))),
+    -- Set once a signed-in browser reaches the Worker directly. NULL means
+    -- any country value predates the browser-edge capture fix and may be
+    -- replaced by the account's first verified capture.
+    country_captured_at TEXT,
 
     -- Google profile fields are displayed publicly only after the account
     -- owner opts in. They are refreshed from signed Google claims on login.
@@ -125,6 +129,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject
 -- geolocation migration carry NULL and are never counted or guessed at.
 CREATE INDEX IF NOT EXISTS idx_users_country
     ON users(signup_country) WHERE signup_country IS NOT NULL;
+
+-- Short-lived, one-use bearer tokens let a browser ask Cloudflare to record
+-- its country without exposing the app API key or accepting a claimed country.
+-- Only a hash is stored, so a D1 read cannot recover a usable token.
+CREATE TABLE IF NOT EXISTS location_capture_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    used_nonce TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_location_tokens_expiry
+    ON location_capture_tokens(expires_at);
 
 -- ---------------------------------------------------------------------------
 -- Submissions: one row per image a user ran through the model.
@@ -311,7 +330,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('bytes_stored', '0');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '5');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '6');
 
 -- Per-user, per-day write counter. Bounds one account's ability to consume
 -- the shared free tier, whether by enthusiasm or malice.

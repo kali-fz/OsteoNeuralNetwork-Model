@@ -1,14 +1,15 @@
 # Finish the ONNM community deployment
 
 Give this file to the agent working on the Cloudflare account that owns the ONNM
-database. The Streamlit redesign is already on `main`. The remaining production work is
-to migrate the existing D1 database and deploy the matching Worker.
+database. The earlier contributor deployment is complete. This follow-up moves country
+capture from the US-hosted Streamlit server to each signed-in browser and ships the map
+geometry needed to fill active countries.
 
-This one deployment fixes both unfinished home-page features:
+This deployment fixes the remaining globe faults:
 
-- the globe reads approved contribution countries from `GET /globe`;
-- the contributor section reads opted-in profiles from `GET /contributors`, while the
-  profile toggle writes to `POST /users/profile`.
+- UK visitors are no longer recorded as US because the browser reaches Cloudflare directly;
+- existing wrong country rows are repaired when each account next signs in;
+- active countries are visibly filled rather than represented only by a dot.
 
 Do not create a replacement database. The existing database contains the community users,
 submissions, reviews, and approved contributions that the globe needs.
@@ -21,7 +22,7 @@ submissions, reviews, and approved contributions that the globe needs.
 | Worker URL | `https://onnm-community.kali-fz.workers.dev` |
 | D1 database name | `onn-model` |
 | D1 database ID | `961f0440-7ff1-466e-88fe-0c2b30f3083b` |
-| Repository schema target | `5` |
+| Repository schema target | `6` |
 | Streamlit app | `https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app` |
 
 The database name is `onn-model`, not `onnm-community`. The latter is the Worker name.
@@ -68,7 +69,7 @@ npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT key,
 Export a recovery copy outside the repository before changing the schema:
 
 ```powershell
-$onnmBackup = Join-Path $env:TEMP "onn-model-before-v5.sql"
+$onnmBackup = Join-Path $env:TEMP "onn-model-before-v6.sql"
 npx wrangler d1 export onn-model --remote --profile onnm --output=$onnmBackup
 Write-Output $onnmBackup
 ```
@@ -79,9 +80,10 @@ Keep the exported file private because it contains account and contribution data
 
 Migration files use `ALTER TABLE`, so do not rerun one that has already succeeded.
 
-- If the schema version is `3`, apply 0004 and then 0005.
-- If the schema version is `4`, apply only 0005.
-- If the schema version is `5`, skip both migrations.
+- If the schema version is `3`, apply 0004, 0005, and then 0006.
+- If the schema version is `4`, apply 0005 and then 0006.
+- If the schema version is `5`, apply only 0006.
+- If the schema version is `6`, skip the migrations.
 - If the value is missing or lower than `3`, stop and inspect the older migration history
   before making changes.
 
@@ -90,21 +92,26 @@ Commands for a version 3 database:
 ```powershell
 npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0004_geolocation.sql
 npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0005_public_contributor_profiles.sql
+npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/0006_browser_country_capture.sql
 ```
 
-For a version 4 database, run only the second command. Confirm the result before deploying
+For a version 5 database, run only the 0006 command. Confirm the result before deploying
 the Worker:
 
 ```powershell
 npx wrangler d1 execute onn-model --remote --profile onnm --command "SELECT key, value FROM meta WHERE key = 'schema_version';"
 npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(users);"
 npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(submissions);"
+npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA table_info(location_capture_tokens);"
 npx wrangler d1 execute onn-model --remote --profile onnm --command "PRAGMA quick_check;"
 ```
 
-The version must be `5`. The `users` output must include `signup_country`, `display_name`,
-`profile_picture_url`, and `public_contributor_profile`. The `submissions` output must
-include `origin_country`, and `PRAGMA quick_check` must return `ok`.
+The version must be `6`. The `users` output must include `signup_country`,
+`country_captured_at`, `display_name`, `profile_picture_url`, and
+`public_contributor_profile`. The submissions output must include `origin_country`; the
+token table must contain `token_hash`, `user_id`, `expires_at`, `used_at`, and
+`used_nonce`; and
+`PRAGMA quick_check` must return `ok`.
 
 ## 5. Check secrets and deploy the Worker
 
@@ -118,7 +125,7 @@ their values. A normal deploy preserves existing secrets. If either name is miss
 and obtain the correct value from the owner; do not generate a replacement without also
 updating the matching Streamlit configuration and local review setup.
 
-Deploy the Worker only after D1 reaches schema version 5. The new Worker reads the new
+Deploy the Worker only after D1 reaches schema version 6. The new Worker reads the new
 columns, so deploying it first can turn a missing migration into production errors.
 
 ## 6. Verify the real application
@@ -126,11 +133,10 @@ columns, so deploying it first can turn a missing migration into production erro
 Open the Streamlit app and complete this check with a Google account that has an approved
 contribution:
 
-1. Sign out and sign in again. This lets the Worker record the account's country from
-   Cloudflare's country-level request metadata.
-2. Return to the home page. The temporary community-service message should be gone, and
-   the globe should show the account's country. The display threshold is currently one
-   account.
+1. Sign out and sign in again. The browser receives a one-use token and contacts the
+   Worker directly, allowing Cloudflare to resolve the correct country.
+2. Return to the home page (refresh once if it was already open). The globe should fill
+   the account's country and show its marker. The display threshold is one account.
 3. Open the profile by clicking the Google name or photo in the header.
 4. Enable `Show me in the public contributors section` if the account owner wants to be
    public. This setting is private by default and must not be enabled without consent.
@@ -140,19 +146,20 @@ contribution:
 6. Open the scanner, upload a test image, and confirm that the themed uploader and the
    single account header still work.
 
-Older approved submissions may not have their own country. The globe query falls back to
-the user's country after the next sign-in, which is why the first verification step
-matters.
+The first browser capture replaces a country written by the old Streamlit-server path and
+repairs that account's older submission countries. Both contributors must sign in once
+after the v6 deployment for both records to be corrected.
 
 ## Failure guide
 
 | Symptom | Meaning and next check |
 |---|---|
 | D1 error 7404 | The Wrangler profile is authenticated to the wrong Cloudflare account. |
-| `no such column` from the Worker | D1 is not at schema version 5. Inspect `meta` and the table columns. |
+| `no such column` from the Worker | D1 is not at schema version 6. Inspect `meta` and the table columns. |
 | Globe and contributor endpoints return 404 | The updated Worker was not deployed to `onnm-community`. |
-| Globe loads but shows no country | Sign in again, then confirm `users.signup_country` is populated and an approved contribution exists. |
-| Contributor toggle is unavailable | Confirm `/contributors` is live and the Worker can read the version 5 columns. |
+| Globe loads but shows no country | Sign in again, then confirm `users.signup_country` and `users.country_captured_at` are populated. |
+| Globe still shows USA | That account has not completed its first browser capture on v6; sign out, sign in, and refresh home. |
+| Contributor toggle is unavailable | Confirm `/contributors` is live and the Worker can read the version 6 columns. |
 | Toggle works but no card appears | The account is private or has no approved contribution. This is expected privacy behaviour. |
 
 Wrangler's profile, D1 execute, export, and deploy syntax is documented by Cloudflare:

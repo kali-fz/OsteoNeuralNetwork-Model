@@ -46,17 +46,19 @@ def test_worker_contributor_roll_is_opt_in_and_approved_only() -> None:
     assert "u.email" not in handler
 
 
-def test_existing_approved_rows_gain_a_country_after_the_next_sign_in() -> None:
+def test_existing_approved_rows_gain_a_country_after_browser_capture() -> None:
     worker = (ROOT / "cloudflare" / "src" / "worker.js").read_text(encoding="utf-8")
     globe = worker[worker.index("async function globe"):worker.index("async function createUser")]
-    profile = worker[
-        worker.index("async function updateContributorProfile"):
-        worker.index("async function listContributors")
+    capture = worker[
+        worker.index("async function captureBrowserCountry"):
+        worker.index("function cleanDisplayName")
     ]
 
     assert "COALESCE(s.origin_country, u.signup_country)" in globe
-    assert "signup_country = COALESCE(signup_country, ?)" in profile
-    assert "countryOf(request)" in worker
+    assert "SET signup_country = ?, country_captured_at = ?" in capture
+    assert "UPDATE submissions SET origin_country = ?" in capture
+    assert "country_captured_at = ?" in capture
+    assert 'path === "/location/capture"' in worker
 
 
 def test_client_profile_toggle_sends_google_identity(monkeypatch) -> None:

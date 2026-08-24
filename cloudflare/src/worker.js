@@ -4,8 +4,9 @@
  * WHAT THIS IS
  * ------------
  * A thin, guarded data layer. The Streamlit app on Hugging Face Spaces is the
- * only client; it holds a shared secret and does all the interesting work
- * (inference, Grad-CAM, password hashing). This Worker stores rows and enforces
+ * main client; it holds a shared secret and does all the interesting work
+ * (inference, Grad-CAM, password hashing). A signed-in browser makes one
+ * token-scoped country-capture request. This Worker stores rows and enforces
  * two things the client cannot be trusted to enforce on itself:
  *
  *   1. The review gate — user feedback never becomes a training label.
@@ -39,6 +40,7 @@ const MAX_TOTAL_BYTES_STORED = 200_000_000; // 200 MB of images, then refuse
 const MAX_SUBMISSIONS_PER_USER_PER_DAY = 50;
 const MAX_USERS = 500; // a test deployment, not a product launch
 const MAX_PAGE_SIZE = 100;
+const LOCATION_TOKEN_TTL_MS = 5 * 60 * 1000;
 
 // --- Country display rule ---------------------------------------------------
 // Product decision: show a country as soon as one account is recorded there.
@@ -120,7 +122,7 @@ function countryOf(request) {
   const code = request && request.cf && request.cf.country;
   if (typeof code !== "string") return null;
   const upper = code.toUpperCase();
-  return /^[A-Z]{2}$/.test(upper) ? upper : null;
+  return /^[A-Z]{2}$/.test(upper) || upper === "T1" ? upper : null;
 }
 
 function bearer(request) {
@@ -297,13 +299,16 @@ async function globe(db) {
 
   const { results: contributorRows } = await db
     .prepare(
-      `SELECT COALESCE(s.origin_country, u.signup_country) AS country,
+      `SELECT CASE WHEN u.country_captured_at IS NOT NULL THEN u.signup_country
+                   ELSE COALESCE(s.origin_country, u.signup_country) END AS country,
               COUNT(DISTINCT s.user_id) AS n
          FROM submissions s
          JOIN users u ON u.user_id = s.user_id
         WHERE s.review_status = 'approved'
-          AND COALESCE(s.origin_country, u.signup_country) IS NOT NULL
-        GROUP BY COALESCE(s.origin_country, u.signup_country)`
+          AND (CASE WHEN u.country_captured_at IS NOT NULL THEN u.signup_country
+                    ELSE COALESCE(s.origin_country, u.signup_country) END) IS NOT NULL
+        GROUP BY CASE WHEN u.country_captured_at IS NOT NULL THEN u.signup_country
+                      ELSE COALESCE(s.origin_country, u.signup_country) END`
     )
     .all();
 
@@ -356,7 +361,7 @@ async function globe(db) {
   });
 }
 
-async function createUser(db, body, country) {
+async function createUser(db, body) {
   const {
     user_id,
     email,
@@ -425,9 +430,8 @@ async function createUser(db, body, country) {
         created,
         tos_accepted_at || created,
         is_admin ? 1 : 0,
-        // Never taken from the request body. The client cannot be trusted to
-        // report where it is, and does not need to -- the edge already knows.
-        country ?? null,
+        // Filled only after the signed-in browser reaches /location/capture.
+        null,
         provider === "google" ? cleanDisplayName(display_name) : null,
         provider === "google" ? cleanGooglePicture(profile_picture_url) : null
       )
@@ -475,6 +479,120 @@ async function getUserByEmail(db, email) {
   return row ? json(row) : fail(404, "no such user");
 }
 
+function withLocationCors(response) {
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-methods", "POST, OPTIONS");
+  headers.set("access-control-allow-headers", "authorization, content-type");
+  headers.set("access-control-max-age", "600");
+  return new Response(response.body, { status: response.status, headers });
+}
+
+async function tokenHash(token) {
+  const bytes = new TextEncoder().encode(token);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function issueLocationToken(db, body) {
+  const userId = String(body.user_id || "");
+  if (!userId) return fail(400, "user_id is required");
+  const user = await db.prepare("SELECT user_id FROM users WHERE user_id = ?").bind(userId).first();
+  if (!user) return fail(404, "no such user");
+
+  const token = crypto.randomUUID();
+  const hash = await tokenHash(token);
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + LOCATION_TOKEN_TTL_MS)
+    .toISOString();
+  await db.batch([
+    db
+      .prepare("DELETE FROM location_capture_tokens WHERE expires_at < ? OR used_at IS NOT NULL")
+      .bind(issuedAt),
+    db
+      .prepare(
+        `INSERT INTO location_capture_tokens (token_hash, user_id, expires_at)
+         VALUES (?, ?, ?)`
+      )
+      .bind(hash, userId, expiresAt),
+  ]);
+  return json({ ok: true, token, expires_at: expiresAt });
+}
+
+async function captureBrowserCountry(db, request) {
+  const country = countryOf(request);
+  if (!country || country === "XX" || country === "T1") {
+    return withLocationCors(fail(422, "country could not be resolved at the Cloudflare edge"));
+  }
+  const token = bearer(request);
+  if (!token) return withLocationCors(fail(401, "location token required"));
+
+  const hash = await tokenHash(token);
+  const capturedAt = new Date().toISOString();
+  const captureAttempt = crypto.randomUUID();
+  const row = await db
+    .prepare(
+      `SELECT user_id FROM location_capture_tokens
+        WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?`
+    )
+    .bind(hash, capturedAt)
+    .first();
+  if (!row) return withLocationCors(fail(401, "location token is invalid, expired, or used"));
+
+  // The first browser-edge capture is authoritative. It replaces any country
+  // incorrectly written by the old server-to-Worker path, then stays fixed so
+  // travel or a later sign-in cannot rewrite an account's country. The batch
+  // is atomic: a failed repair cannot consume the one-use token by itself.
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE location_capture_tokens SET used_at = ?, used_nonce = ?
+          WHERE token_hash = ? AND used_at IS NULL`
+      )
+      .bind(capturedAt, captureAttempt, hash),
+    db
+      .prepare(
+        `UPDATE users
+            SET signup_country = ?, country_captured_at = ?
+          WHERE user_id = ? AND country_captured_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM location_capture_tokens
+               WHERE token_hash = ? AND used_nonce = ?
+            )`
+      )
+      .bind(country, capturedAt, String(row.user_id), hash, captureAttempt),
+    // Repair historical submissions that inherited the Streamlit server's
+    // country. New submissions copy the already-captured account country.
+    db
+      .prepare(
+        `UPDATE submissions SET origin_country = ?
+          WHERE user_id = ?
+            AND EXISTS (
+              SELECT 1 FROM users
+               WHERE user_id = ? AND country_captured_at = ?
+            )
+            AND EXISTS (
+              SELECT 1 FROM location_capture_tokens
+               WHERE token_hash = ? AND used_nonce = ?
+            )`
+      )
+      .bind(
+        country,
+        String(row.user_id),
+        String(row.user_id),
+        capturedAt,
+        hash,
+        captureAttempt
+      )
+  ]);
+  if (!results[0].meta || results[0].meta.changes !== 1) {
+    return withLocationCors(fail(409, "location token has already been used"));
+  }
+  return withLocationCors(json({ ok: true, country_recorded: true }));
+}
+
 function cleanDisplayName(value) {
   const name = String(value || "").trim();
   return name ? name.slice(0, 80) : null;
@@ -494,7 +612,7 @@ function cleanGooglePicture(value) {
   }
 }
 
-async function updateContributorProfile(db, body, country) {
+async function updateContributorProfile(db, body) {
   const { user_id, provider_subject, display_name, profile_picture_url } = body;
   if (!user_id || !provider_subject) return fail(400, "user_id and provider_subject are required");
   const user = await db
@@ -510,10 +628,6 @@ async function updateContributorProfile(db, body, country) {
     ? (body.public_profile ? 1 : 0)
     : null;
   if (publicProfile === null) {
-    await db
-      .prepare("UPDATE users SET signup_country = COALESCE(signup_country, ?) WHERE user_id = ?")
-      .bind(country ?? null, String(user_id))
-      .run();
     return json({ ok: true });
   }
   const storedName = publicProfile === 0 ? null : cleanDisplayName(display_name);
@@ -522,15 +636,13 @@ async function updateContributorProfile(db, body, country) {
     .prepare(
       `UPDATE users
           SET display_name = ?, profile_picture_url = ?,
-              public_contributor_profile = ?,
-              signup_country = COALESCE(signup_country, ?)
+              public_contributor_profile = ?
         WHERE user_id = ?`
     )
     .bind(
       storedName,
       storedPicture,
       publicProfile,
-      country ?? null,
       String(user_id)
     )
     .run();
@@ -555,7 +667,7 @@ async function listContributors(db) {
   return json({ contributors: results ?? [] });
 }
 
-async function createSubmission(db, body, country) {
+async function createSubmission(db, body) {
   const {
     submission_id,
     user_id,
@@ -575,7 +687,10 @@ async function createSubmission(db, body, country) {
   if (!submission_id || !user_id || !model_label) {
     return fail(400, "submission_id, user_id and model_label are required");
   }
-  const user = await db.prepare("SELECT user_id FROM users WHERE user_id = ?").bind(user_id).first();
+  const user = await db
+    .prepare("SELECT user_id, signup_country FROM users WHERE user_id = ?")
+    .bind(user_id)
+    .first();
   if (!user) return fail(404, "no such user");
 
   // Per-user daily cap.
@@ -649,7 +764,7 @@ async function createSubmission(db, body, country) {
         imageBytes,
         triage.bucket,
         triage.reason,
-        country ?? null
+        user.signup_country ?? null
       ),
     db
       .prepare(
@@ -958,8 +1073,23 @@ export default {
 
     if (!env.DB) return fail(500, "D1 binding 'DB' is not configured");
 
-    // Every route is authenticated. There are no public endpoints: this API
-    // stores health data and must not be readable or writable by strangers.
+    // This is the one browser-facing route. It accepts only a short-lived,
+    // one-use token minted by the authenticated app route below. Cloudflare
+    // can therefore resolve the visitor's country without exposing API_KEY,
+    // accepting a client-claimed country, or storing an IP address.
+    if (path === "/location/capture" && request.method.toUpperCase() === "OPTIONS") {
+      return withLocationCors(new Response(null, { status: 204 }));
+    }
+    if (path === "/location/capture" && request.method.toUpperCase() === "POST") {
+      try {
+        return await captureBrowserCountry(env.DB, request);
+      } catch (_) {
+        return withLocationCors(fail(500, "internal error"));
+      }
+    }
+
+    // Every data route is authenticated. /location/capture above is narrowly
+    // token-gated because it must be called by the browser itself.
     const key = bearer(request);
     const isAdmin = env.ADMIN_KEY ? timingSafeEqual(key, env.ADMIN_KEY) : false;
     const isApp = env.API_KEY ? timingSafeEqual(key, env.API_KEY) : false;
@@ -984,14 +1114,17 @@ export default {
     try {
       if (method === "GET" && path === "/health") return await health(db);
       // Aggregated country counts for the landing-page globe. Still behind the
-      // API key like every other route -- the Streamlit server calls this and
-      // renders the result, so the browser never talks to this Worker and the
-      // key never leaves the server. See cloudflare/README.md, "The globe".
+      // API key like every ordinary data route. The Streamlit server calls it
+      // and renders the result, so the key never leaves the server.
       if (method === "GET" && path === "/globe") return await globe(db);
       if (method === "GET" && path === "/contributors") return await listContributors(db);
 
+      if (method === "POST" && path === "/location/token") {
+        return await issueLocationToken(db, await readJson(request));
+      }
+
       if (method === "POST" && path === "/users") {
-        return await createUser(db, await readJson(request), countryOf(request));
+        return await createUser(db, await readJson(request));
       }
       if (method === "GET" && path === "/users/by-email") {
         return await getUserByEmail(db, url.searchParams.get("email"));
@@ -1000,11 +1133,11 @@ export default {
         return await getUserBySubject(db, url.searchParams.get("subject"));
       }
       if (method === "POST" && path === "/users/profile") {
-        return await updateContributorProfile(db, await readJson(request), countryOf(request));
+        return await updateContributorProfile(db, await readJson(request));
       }
 
       if (method === "POST" && path === "/submissions") {
-        return await createSubmission(db, await readJson(request), countryOf(request));
+        return await createSubmission(db, await readJson(request));
       }
       if (method === "GET" && path === "/submissions") {
         return await listUserSubmissions(db, url.searchParams.get("user_id"), url.searchParams.get("limit"));

@@ -51,12 +51,13 @@ npx wrangler d1 execute onnm-community --remote --file=./migrations/0002_google_
 npx wrangler d1 execute onnm-community --remote --file=./migrations/0003_triage_buckets.sql
 npx wrangler d1 execute onn-model --remote --file=./migrations/0004_geolocation.sql
 npx wrangler d1 execute onn-model --remote --file=./migrations/0005_public_contributor_profiles.sql
+npx wrangler d1 execute onn-model --remote --file=./migrations/0006_browser_country_capture.sql
 ```
 
 `0003` rebuilds `users` and `submissions` — SQLite cannot amend a CHECK
 constraint in place — and preserves every row. It is not idempotent: running it
 twice fails on `CREATE TABLE users_new`, harmlessly, before touching anything.
-`SELECT value FROM meta WHERE key = 'schema_version'` should read `3` afterwards.
+`SELECT value FROM meta WHERE key = 'schema_version'` should read `6` after all migrations.
 
 ### Generate two keys
 
@@ -209,19 +210,21 @@ recognises, merge every row into the three-class training set.
 
 ## API
 
-Every route requires `Authorization: Bearer <key>`. There are no public
-endpoints: this stores health-adjacent data and must not be readable by
-strangers.
+Every data route requires `Authorization: Bearer <key>`. The browser-facing
+capture route accepts only a short-lived, one-use token minted by the app; it
+does not expose stored data.
 
 | method | path | key | purpose |
 |---|---|---|---|
 | GET | `/health` | app | counts, storage used, limits |
 | GET | `/globe` | app | country-level signup and approved-contributor counts |
 | GET | `/contributors` | app | opted-in names, photos, and approved contribution counts |
+| POST | `/location/token` | app | mint a short-lived browser capture token |
+| POST | `/location/capture` | one-use token | record Cloudflare's country code for that account |
 | POST | `/users` | app | create account (hash only, never a password) |
 | GET | `/users/by-email` | app | look up for login |
 | GET | `/users/by-subject` | app | look up a Google account by stable subject |
-| POST | `/users/profile` | app | refresh country and change contributor-profile opt-in |
+| POST | `/users/profile` | app | refresh Google fields and change contributor-profile opt-in |
 | POST | `/submissions` | app | record a prediction |
 | GET | `/submissions?user_id=` | app | a user's history |
 | POST | `/submissions/:id/feedback` | app | user flags a result wrong |

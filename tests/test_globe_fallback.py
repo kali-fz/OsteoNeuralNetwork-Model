@@ -19,6 +19,18 @@ if str(SRC) not in sys.path:
 
 
 class TestGlobeFallback:
+    def test_country_map_assets_are_vendored(self):
+        """Production should not fall back to a landless sphere."""
+        import json
+
+        from components.globe import _ASSETS, ASSETS_DIR
+
+        paths = [ASSETS_DIR / name for name in _ASSETS]
+        assert all(path.is_file() and path.stat().st_size > 1_000 for path in paths)
+
+        world = json.loads((ASSETS_DIR / "countries-110m.json").read_text("utf-8"))
+        assert {"land", "countries"} <= set(world["objects"])
+
     def test_sample_markers_have_required_fields(self):
         """Every sample marker must have lat, lng, label, count, and layer."""
         from components.globe import SAMPLE_MARKERS
@@ -136,6 +148,31 @@ class TestGlobeFallback:
         assert match is None, (
             f"Potential secret found in component HTML: {match.group()!r}"
         )
+
+    def test_detailed_globe_fills_countries_with_activity(self):
+        """The full renderer should colour the country beneath each marker."""
+        from components.globe import _build_html, _json_for_script
+
+        marker = {
+            "lat": 55.4,
+            "lng": -3.4,
+            "label": "United Kingdom",
+            "count": 2,
+            "layer": "contributor",
+        }
+        html = _build_html(
+            d3_script="/* d3 */",
+            topojson_script="/* topo */",
+            world_json='{"objects":{"land":{},"countries":{}}}',
+            markers_json=_json_for_script([marker]),
+            auto_rotate=False,
+            height=320,
+        )
+
+        assert "const activeCountries" in html
+        assert "d3geo.geoContains(feature, [marker.lng, marker.lat])" in html
+        assert "rgba(46,107,71,0.78)" in html
+        assert "rgba(232,168,80,0.76)" in html
 
     def test_markers_json_injected_safely(self):
         """markers_json must appear in the HTML without executing arbitrary code."""

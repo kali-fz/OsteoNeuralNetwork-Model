@@ -66,6 +66,7 @@ from community_ui import (  # noqa: E402
 )
 from components.charts import render_probability_chart, render_roc_chart  # noqa: E402
 from components.globe import render_globe  # noqa: E402
+from components.location_capture import render_location_capture  # noqa: E402
 from database import (  # noqa: E402
     DatabaseError,
     create_upload,
@@ -151,6 +152,44 @@ def globe_data() -> dict:
 def contributor_data() -> list[dict] | None:
     """Fetch explicitly public contributor profiles without blocking the page."""
     return get_client().contributors() if using_community() else []
+
+
+def render_country_capture() -> None:
+    """Let Cloudflare record the signed-in browser's country once."""
+    if not using_community() or not st.session_state.get("authenticated"):
+        return
+    user_id = str(st.session_state.get("user_id") or "")
+    if not user_id:
+        return
+
+    if st.session_state.get("country_capture_user_id") != user_id:
+        st.session_state.pop("country_capture_token", None)
+        st.session_state.pop("country_capture_token_deadline", None)
+        st.session_state.pop("country_capture_refresh_pending", None)
+        st.session_state["country_capture_user_id"] = user_id
+
+    token = st.session_state.get("country_capture_token")
+    deadline = float(st.session_state.get("country_capture_token_deadline") or 0.0)
+    if token and time.monotonic() >= deadline:
+        st.session_state.pop("country_capture_token", None)
+        st.session_state.pop("country_capture_refresh_pending", None)
+        token = None
+    if not token:
+        token_data = get_client().location_token(user_id)
+        if not token_data:
+            return
+        token = str(token_data["token"])
+        st.session_state["country_capture_token"] = token
+        # Worker tokens last five minutes. Rotate after four so a transient
+        # preflight or edge failure cannot strand an expired token in-session.
+        st.session_state["country_capture_token_deadline"] = time.monotonic() + 240.0
+        # The browser POST runs after this server render. On the next ordinary
+        # rerun, refresh the globe once so the repaired country appears.
+        st.session_state["country_capture_refresh_pending"] = True
+    elif st.session_state.pop("country_capture_refresh_pending", False):
+        globe_data.clear()
+
+    render_location_capture(get_client().base_url, str(token))
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
@@ -388,8 +427,8 @@ def render_landing() -> None:
         privacy_min = int(data.get("k_anonymity_min") or 1)
         if data.get("available") and not markers:
             st.caption(
-                f"No country has reached the {privacy_min}-account display threshold yet. "
-                "People are still included in the totals below."
+                "No displayable country has been recorded yet. A signed-in browser "
+                "records country-level activity without sharing a precise location."
             )
         elif not data.get("available"):
             st.caption(
@@ -1165,6 +1204,7 @@ def render_profile() -> None:
                 if updated:
                     st.session_state["public_contributor_profile"] = public_profile
                     contributor_data.clear()
+                    globe_data.clear()
                     st.success("Contributor visibility updated.")
                 else:
                     st.error(
@@ -1294,6 +1334,8 @@ if USING_GOOGLE:
             )
         ):
             st.session_state["profile_sync_key"] = _sync_key
+
+render_country_capture()
 
 _query_page = st.query_params.get("page")
 if _query_page in {"landing", "auth", "scanner", "profile"}:
