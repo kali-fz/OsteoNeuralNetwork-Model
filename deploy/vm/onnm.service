@@ -1,0 +1,88 @@
+[Unit]
+Description=ONNM - explainable bone tumour detection on plain radiographs
+Documentation=https://github.com/kali-fz/OsteoNeuralNetwork-Model
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=onnm
+Group=onnm
+WorkingDirectory=/opt/onnm
+
+# ---------------------------------------------------------------------------
+# THIS is the answer to "I want it up 24/7 without rebooting it myself".
+# ---------------------------------------------------------------------------
+# Streamlit Community Cloud killed the container at its 2.7 GB ceiling and left
+# it dead until a human clicked a button. Here a crash -- OOM, an unhandled
+# exception, anything -- is back in five seconds, unattended, forever.
+# StartLimitIntervalSec=0 disables systemd's default "give up after 5 restarts
+# in 10 seconds", which would otherwise reintroduce exactly the failure mode we
+# are removing: a stopped app waiting on a human.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# WantedBy=multi-user.target below is what brings the app back after a VM
+# reboot, planned or otherwise.
+
+EnvironmentFile=/etc/onnm.env
+
+# ---------------------------------------------------------------------------
+# Streamlit configuration via environment, NOT via .streamlit/config.toml
+# ---------------------------------------------------------------------------
+# The committed config.toml is read by Streamlit Community Cloud, which stays
+# deployed as the rollback target. Its own comments warn that pinning
+# server.address or server.port breaks that platform's proxy -- presenting as a
+# deploy that never comes up, with no useful error. So every VM-specific
+# setting is applied here instead, and no committed file is touched.
+Environment=STREAMLIT_SERVER_ADDRESS=127.0.0.1
+Environment=STREAMLIT_SERVER_PORT=8501
+Environment=STREAMLIT_SERVER_HEADLESS=true
+Environment=STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
+Environment=STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+# "viewer" hides every developer option in the toolbar. The Community Cloud
+# profile avatar, the "Hosted with Streamlit" badge and the GitHub/Fork control
+# are not affected by this setting and do not need to be: they are injected by
+# that platform and simply do not exist off it.
+Environment=STREAMLIT_CLIENT_TOOLBAR_MODE=viewer
+
+# Writable cache locations. matplotlib in particular will emit a warning and
+# fall back to a temp dir if MPLCONFIGDIR is unwritable, and under a hardened
+# unit that fallback can fail outright -- which would surface as a broken
+# Grad-CAM overlay rather than as a config error.
+Environment=HOME=/opt/onnm
+Environment=MPLCONFIGDIR=/opt/onnm/.cache/matplotlib
+Environment=XDG_CACHE_HOME=/opt/onnm/.cache
+Environment=PYTHONUNBUFFERED=1
+
+ExecStartPre=/usr/bin/install -d -m 0755 /opt/onnm/.cache/matplotlib
+ExecStart=/opt/onnm/.venv/bin/streamlit run /opt/onnm/app.py
+
+# Give the first start room: importing torch and MONAI on two ARM cores is slow,
+# and the checkpoint may need fetching before the app answers.
+TimeoutStartSec=300
+
+# A hard ceiling below the box's 8 GB. Without it the kernel OOM killer picks a
+# victim under pressure and may well choose sshd; with it, the app alone dies and
+# Restart=always brings it straight back.
+MemoryMax=6G
+
+# Hardening. ProtectSystem=full (not strict) is deliberate: strict would make
+# /opt read-only and break the venv, the checkpoint cache and user uploads, in
+# ways that are tedious to diagnose for little gain on a single-purpose box.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onnm
+
+[Install]
+WantedBy=multi-user.target

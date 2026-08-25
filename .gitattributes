@@ -1,0 +1,20 @@
+# Line endings.
+#
+# This repository is developed on Windows and deployed to Linux. Git's default
+# on Windows checks files out with CRLF, which is harmless for Python but fatal
+# for anything the Linux kernel has to execute directly: a shell script whose
+# shebang line ends `#!/usr/bin/env bash\r` fails with
+#
+#     /usr/bin/env: 'bash\r': No such file or directory
+#
+# which names neither the file nor the real problem. systemd units and cloud-init
+# YAML are parsed leniently enough that CRLF usually survives, but not reliably,
+# so they are pinned too.
+#
+# These rules apply on checkout regardless of the developer's core.autocrlf.
+*.sh            text eol=lf
+*.service       text eol=lf
+*.timer         text eol=lf
+Caddyfile       text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf

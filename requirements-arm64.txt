@@ -1,0 +1,60 @@
+# Requirements for a self-hosted deployment on ARM64 (aarch64) Linux.
+#
+# This file exists because of exactly ONE incompatibility with the root
+# `requirements.txt`, and is otherwise a faithful copy. Keep them in step.
+#
+#   requirements.txt pins  --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# That index publishes no aarch64 builds. Leaving the line in does not fail
+# loudly -- pip falls back to PyPI and installs anyway -- but it is misleading,
+# and on a slow ARM box it costs a pointless index round-trip per package.
+#
+# On aarch64 the plain PyPI `torch` wheel IS the CPU build: there is no CUDA
+# variant to accidentally pull, because NVIDIA aarch64 wheels were not on PyPI
+# until torch 2.11. So the correct instruction here is simply "install from
+# PyPI", and that is what omitting the index line means.
+#
+#   Install:  pip install -r requirements-arm64.txt
+#   Selected automatically by deploy/vm/setup.sh based on `uname -m`.
+#
+# NOT for local development. AMD/ROCm -> requirements-rocm.txt,
+# NVIDIA -> requirements-cuda.txt.
+
+torch==2.9.1
+torchvision==0.24.1
+
+monai==1.5.2
+pydicom>=2.4
+numpy>=1.26
+pandas>=2.1
+openpyxl>=3.1
+pillow>=10.0
+opencv-python-headless>=4.9
+scikit-image>=0.22
+scikit-learn>=1.4
+# matplotlib is NOT optional and is NOT script-only. `onnm.explainability.overlay_cam`
+# imports `matplotlib.cm` to colour the Grad-CAM heatmap, so removing it breaks the
+# app's primary visual output -- silently, at the moment a user scans an image,
+# rather than at install time. Verified by grep before this file was written.
+matplotlib>=3.8
+# seaborn is used only by `app.probability_chart`, which is dead code superseded by
+# `components.charts.render_probability_chart`. It is kept anyway: it is small, it
+# pulls nothing that matplotlib has not already pulled, and dropping a dependency
+# to save nothing is how a fallback path breaks the one time someone calls it.
+seaborn>=0.13
+pyyaml>=6.0
+tqdm>=4.66
+altair>=5.0
+# 1.42 is the floor for st.login()/st.user, the native OIDC support that
+# Google Sign-In uses. Authlib is what Streamlit builds that flow on and is
+# not pulled in automatically.
+streamlit>=1.42
+Authlib>=1.3.2
+# httpx is NOT optional here despite not appearing in Streamlit's own docs.
+# authlib.integrations.starlette_client imports it, and Authlib does not declare
+# it as a hard dependency, so `pip install Authlib` alone leaves the OIDC login
+# route raising ModuleNotFoundError. That error escapes the route's try/except
+# (which only wraps authorize_redirect), so the user gets a bare HTTP 500
+# "Internal server error" with nothing in the UI to say what is wrong.
+httpx>=0.27
+itsdangerous>=2.1

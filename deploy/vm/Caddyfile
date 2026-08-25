@@ -1,0 +1,57 @@
+# ONNM reverse proxy.
+#
+# Replace REPLACE_WITH_YOUR_DOMAIN with the real hostname, then:
+#     sudo systemctl reload caddy
+#
+# Caddy obtains and renews a Let's Encrypt certificate automatically on first
+# request. That requires the domain's A/AAAA record to already point here and
+# port 80 to be reachable -- the HTTP-01 challenge is served on 80 even though
+# the site ends up on 443.
+
+REPLACE_WITH_YOUR_DOMAIN {
+	encode zstd gzip
+
+	# Streamlit's WebSocket lives at /_stcore/stream. Caddy upgrades it
+	# transparently, which is the whole reason Caddy is here rather than nginx:
+	# the nginx equivalent needs explicit Upgrade/Connection headers plus a
+	# raised proxy_read_timeout, and a subtly wrong config presents as an app
+	# stuck forever on "Please wait..." with nothing useful logged.
+	reverse_proxy 127.0.0.1:8501 {
+		# Long-lived sockets: a visitor reading a report is idle for minutes and
+		# must not be disconnected for it.
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# X-Frame-Options is deliberately NOT set to DENY. app.py renders the
+		# country globe and the charts through st.components.v1.html, which
+		# Streamlit serves in same-origin iframes; DENY breaks them. SAMEORIGIN
+		# keeps clickjacking protection without doing that.
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/onnm.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# NOTE ON CLOUDFLARE
+#
+# Do NOT enable Cloudflare's orange-cloud proxy for this hostname yet.
+# Cloudflare's Free and Pro plans close idle WebSocket connections after 100
+# seconds. Streamlit's socket goes idle whenever a visitor is reading rather
+# than clicking, so proxying produces periodic "Connection error" reconnects --
+# importing a new class of flakiness while removing the old one.
+#
+# Proxying is a Phase 2 decision, and only alongside a sub-100s keepalive and a
+# Cloudflare Origin CA certificate with SSL mode set to Full (Strict).

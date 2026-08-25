@@ -85,3 +85,12 @@ uv.lock
 # that write to the production D1 database and Worker, so they belong to one
 # machine and one operator rather than to everyone who clones a public repo.
 .claude/settings.local.json
+
+# Filled-in deployment secrets. The real files live OUTSIDE the repository
+# (/etc/onnm.env and /opt/onnm/.streamlit/secrets.toml) precisely so that a
+# stray `git add -A` cannot sweep them up. These patterns exist for the case
+# where someone edits a copy in place next to the template and forgets.
+deploy/vm/onnm.env
+deploy/vm/*.env
+!deploy/vm/*.env.example
+deploy/vm/secrets.toml
