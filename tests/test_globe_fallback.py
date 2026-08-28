@@ -267,7 +267,10 @@ class TestGlobeFallback:
         assert "resizeObserver.disconnect()" in generated
         assert 'window.removeEventListener("resize", handleResize)' in generated
         assert "intersectionObserver.disconnect()" in generated
-        assert 'document.removeEventListener("visibilitychange", handleVisibilityChange)' in generated
+        assert (
+            'document.removeEventListener("visibilitychange", handleVisibilityChange)'
+            in generated
+        )
 
     def test_fallback_globe_also_starts_facing_activity(self):
         from components.globe import _build_fallback_html, _json_for_script

@@ -45,8 +45,9 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from onnm.io_radiograph import RadiographReadError, UnsupportedFormatError  # noqa: E402
 from service import ScanService  # noqa: E402
+
+from onnm.io_radiograph import RadiographReadError, UnsupportedFormatError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("onnm.inference")
@@ -100,7 +101,7 @@ def health() -> dict[str, Any]:
 
 @app.post("/infer", dependencies=[Depends(require_key)])
 async def infer(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI dependency declaration
     threshold: float | None = Form(default=None),
     cam_class: str = Form(default="auto"),
     with_heatmap: bool = Form(default=True),

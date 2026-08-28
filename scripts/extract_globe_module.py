@@ -244,7 +244,7 @@ def main() -> int:
     # arguments now. The data block ends at the AUTO_ROTATE line.
     body = "\n".join(body_lines)
     assert body.lstrip().startswith("(function()"), "expected an IIFE"
-    auto_rotate_line = next(l for l in body_lines if "const AUTO_ROTATE" in l)
+    auto_rotate_line = next(line for line in body_lines if "const AUTO_ROTATE" in line)
     body = body.split(auto_rotate_line, 1)[1]
     body = body.rsplit("})();", 1)[0]
 
