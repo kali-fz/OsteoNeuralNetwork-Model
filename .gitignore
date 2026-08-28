@@ -50,6 +50,28 @@ cloudflare/migrations/*.sql
 # wrangler's local state: a local D1 replica, build output and caches.
 cloudflare/.wrangler/
 
+# Community training manifests.
+#
+# These are derived files, rebuilt from data/community/ by
+# scripts/sync_community.py, so nothing is lost by not tracking them. They are
+# ignored because of what a row *is*: one line per radiograph a real person
+# uploaded and consented to share, carrying its content hash and the class a
+# reviewer assigned it. The images themselves are under data/, already ignored;
+# publishing an index of them to a public repository would undo that a column at
+# a time, and it would do so in a file nobody thinks of as patient data because
+# it is only a CSV of paths.
+#
+# Only three things are meant to meet a shared radiograph: the person who
+# uploaded it, the owner reviewing it, and the model being trained. A commit is
+# none of those.
+#
+# paths.controls_manifest in configs/base.yaml points here, and build_records()
+# treats the file as optional -- a checkout without it trains on BTXRD alone,
+# which is exactly the right behaviour for anyone who is not running this
+# deployment.
+configs/controls_manifest.csv
+configs/ood_manifest.csv
+
 # --- Tooling ----------------------------------------------------------------
 .pytest_cache/
 .ruff_cache/
