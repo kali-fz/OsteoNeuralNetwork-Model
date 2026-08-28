@@ -1,0 +1,82 @@
+# The inference image is built with the REPOSITORY ROOT as its context, so that
+# COPY can reach both src/ and inference/model/. That makes this file a security
+# control, not merely a build-speed optimisation: everything not excluded here is
+# uploaded to the Docker daemon and can end up in an image layer.
+#
+# Two categories matter most:
+#   1. Credentials. .env holds a live Cloudflare API token and R2 keys.
+#   2. Bulk. data/ is ~863 MB of BTXRD radiographs and .venv/ is a full ROCm
+#      torch install; neither belongs in a 4 GiB container.
+#
+# Deny-listing is used rather than allow-listing because Docker evaluates the
+# last matching pattern, and the negations at the bottom are easier to audit than
+# a `*` plus a dozen re-inclusions.
+
+# --- Credentials and secrets -------------------------------------------------
+.env
+.env.*
+*.env
+.cloudflare-keys.txt
+.streamlit/secrets.toml
+secrets.toml
+*.pem
+*.key
+
+# --- Version control and tooling state ---------------------------------------
+.git
+.gitignore
+.github
+.claude
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+
+# --- Local environments ------------------------------------------------------
+.venv
+venv
+env
+node_modules
+
+# --- Bulk data that must never enter the image -------------------------------
+# The dataset, user uploads and the local SQLite account database.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# --- Training artefacts ------------------------------------------------------
+# reports/ holds several 27 MB checkpoints plus Grad-CAM galleries. The ONE
+# checkpoint the container needs is staged into inference/model/ by
+# scripts/stage_inference_model.py and is re-included at the bottom.
+reports/
+dist/
+notebooks/
+wandb/
+
+# --- The old Streamlit application -------------------------------------------
+# None of this is imported by the inference service. Excluding it keeps the
+# image honest about what it actually runs.
+app.py
+review_app.py
+run_local.py
+.streamlit/
+assets/
+tests/
+compliance/
+cloudflare/
+web/
+functions/
+deploy/
+configs/
+*.md
+
+# --- Frontend build output ---------------------------------------------------
+web/dist/
+.wrangler/
+
+# --- Re-included on purpose --------------------------------------------------
+# The staged model. inference/model/ is gitignored (weights must never be public)
+# but it is exactly what this image exists to serve.
+!inference/model/

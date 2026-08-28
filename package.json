@@ -1,0 +1,24 @@
+{
+  "name": "onnm-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ONNM web application: one Cloudflare Worker serving the static site, the API, and the inference container.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "vite build",
+    "check": "wrangler deploy --dry-run --outdir=.wrangler/dry-run",
+    "test:auth": "node --test worker/lib/account.test.js",
+    "stage-model": "python scripts/stage_inference_model.py",
+    "deploy": "npm run stage-model && npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.1.1",
+    "d3-geo": "^3.1.1",
+    "topojson-client": "^3.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "wrangler": "^4.125.0"
+  }
+}
