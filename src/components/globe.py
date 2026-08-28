@@ -511,20 +511,23 @@ def _build_html(
   // ── Canvas setup ──────────────────────────────────────────────────────────
   const canvas = document.getElementById('globe');
   const tooltip = document.getElementById('tooltip');
+  const wrap  = document.getElementById('globe-wrap');
   const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-  function resize() {{
-    const wrap  = document.getElementById('globe-wrap');
+  function measureSize() {{
     const avail = Math.min(wrap.clientWidth, {height} - 44);
-    const size  = Math.max(160, avail);
+    return Math.max(160, avail);
+  }}
+
+  function applyCanvasSize(size) {{
     canvas.style.width  = size + 'px';
     canvas.style.height = size + 'px';
     canvas.width  = size * DPR;
     canvas.height = size * DPR;
-    return size;
   }}
 
-  let SIZE = resize();
+  let SIZE = measureSize();
+  applyCanvasSize(SIZE);
   const ctx = canvas.getContext('2d');
   ctx.scale(DPR, DPR);
 
@@ -862,16 +865,37 @@ def _build_html(
   }});
 
   // ── Visibility & Intersection pausing ────────────────────────────────────
-  document.addEventListener('visibilitychange', () => {{
+  function handleVisibilityChange() {{
     visible = document.visibilityState !== 'hidden';
     if (visible && lastTime !== null) lastTime = null;
-  }});
+  }}
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 
+  let intersectionObserver = null;
   if (window.IntersectionObserver) {{
-    new IntersectionObserver(entries => {{
+    intersectionObserver = new IntersectionObserver(entries => {{
       visible = entries[0].isIntersecting;
       if (visible && lastTime !== null) lastTime = null;
-    }}, {{ threshold: 0.1 }}).observe(canvas);
+    }}, {{ threshold: 0.1 }});
+    intersectionObserver.observe(canvas);
+  }}
+
+  function handleResize() {{
+    const nextSize = measureSize();
+    if (nextSize === SIZE) return;
+    SIZE = nextSize;
+    applyCanvasSize(SIZE);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    initProjection();
+    draw(0);
+  }}
+
+  let resizeObserver = null;
+  if (window.ResizeObserver) {{
+    resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(wrap);
+  }} else {{
+    window.addEventListener('resize', handleResize);
   }}
 
   // ── Helpers ───────────────────────────────────────────────────────────────

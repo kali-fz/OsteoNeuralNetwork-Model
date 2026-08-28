@@ -41,6 +41,9 @@ export const getGlobe = () => get("/api/globe");
 /** Headline counts for the landing page. Public. */
 export const getStats = () => get("/api/stats");
 
+/** Opted-in people whose shared radiographs passed human review. Public. */
+export const getContributors = () => get("/api/contributors");
+
 /** This account's scan history. The user id comes from the cookie, not from here. */
 export const getSubmissions = () => get("/api/submissions");
 

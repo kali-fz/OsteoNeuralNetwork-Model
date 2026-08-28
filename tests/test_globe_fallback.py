@@ -240,6 +240,35 @@ class TestGlobeFallback:
         assert "d3geo.geoDistance([m.lng, m.lat], centre) >= Math.PI / 2" in html
         assert "const DISPLAY_MARKERS = [];" in html
 
+    def test_detailed_globe_tracks_container_resize(self):
+        """The canvas follows responsive layout changes without listener leaks."""
+        from pathlib import Path
+
+        from components.globe import _build_html
+
+        html = _build_html(
+            d3_script="/* d3 */",
+            topojson_script="/* topo */",
+            world_json="null",
+            markers_json="[]",
+            auto_rotate=False,
+            height=320,
+        )
+
+        assert "function measureSize()" in html
+        assert "function handleResize()" in html
+        assert "resizeObserver.observe(wrap)" in html
+        assert "window.addEventListener('resize', handleResize)" in html
+        assert "ctx.setTransform(DPR, 0, 0, DPR, 0, 0)" in html
+
+        generated = (
+            Path(__file__).resolve().parents[1] / "web" / "src" / "globe" / "globe.js"
+        ).read_text(encoding="utf-8")
+        assert "resizeObserver.disconnect()" in generated
+        assert 'window.removeEventListener("resize", handleResize)' in generated
+        assert "intersectionObserver.disconnect()" in generated
+        assert 'document.removeEventListener("visibilitychange", handleVisibilityChange)' in generated
+
     def test_fallback_globe_also_starts_facing_activity(self):
         from components.globe import _build_fallback_html, _json_for_script
 

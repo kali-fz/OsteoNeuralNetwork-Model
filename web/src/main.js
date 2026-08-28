@@ -31,21 +31,48 @@ const ROUTES = {
   "/profile": renderProfile,
 };
 
+const ROUTE_TITLES = {
+  "/": "ONNM — Open bone X-ray research",
+  "/scanner": "Scanner — ONNM",
+  "/profile": "My profile — ONNM",
+};
+
 /** Shared application state. Deliberately small and explicitly passed. */
 const state = {
   session: null,
   teardown: null,
+  focusMainOnRender: false,
 };
 
 /** Navigate without a page load. */
 export function navigate(path) {
   if (window.location.pathname === path) return;
   window.history.pushState({}, "", path);
+  state.focusMainOnRender = true;
   render();
 }
 
 function signInHref() {
   return "/api/auth/google/start";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ],
+  );
+}
+
+function safeImageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? escapeHtml(url.href) : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -72,42 +99,78 @@ function renderHeader(session) {
   const signedIn = Boolean(session?.signed_in);
   const user = session?.user;
 
+  const picture = safeImageUrl(user?.picture);
+  const accountLabel = String(user?.name || user?.email || "My profile");
+  const accountName = escapeHtml(accountLabel);
+  const accountInitial = escapeHtml(accountLabel.trim().slice(0, 1).toUpperCase() || "A");
+
   const nav = signedIn
     ? `
-      <a class="onnm-navlink" href="/scanner" data-link>Scanner</a>
-      <a class="onnm-navlink" href="/profile" data-link>Profile</a>
-      <button class="onnm-navlink onnm-linkbutton" type="button" data-signout>Sign out</button>
-      ${
-        user?.picture
-          ? `<img class="onnm-avatar" src="${user.picture}" alt="" width="28" height="28" referrerpolicy="no-referrer" />`
-          : ""
-      }`
+      <a class="onnm-site-navlink" href="/scanner" data-link>Scanner</a>
+      <a class="onnm-account-chip" href="/profile" data-link>
+        ${
+          picture
+            ? `<img class="onnm-account-chip-avatar" src="${picture}" alt="" width="32" height="32" referrerpolicy="no-referrer" />`
+            : `<span class="onnm-account-chip-avatar onnm-account-chip-initials" aria-hidden="true">${accountInitial}</span>`
+        }
+        <span>${accountName}</span>
+      </a>
+      <button class="onnm-site-navlink onnm-site-linkbutton" type="button" data-signout>Sign out</button>`
     : `<a class="onnm-btn onnm-btn-primary" href="${signInHref()}">Sign in with Google</a>`;
 
   return `
     <header class="onnm-header">
       <a class="onnm-wordmark" href="/" data-link>
-        <span class="onnm-wordmark-main">ONNM</span>
-        <span class="onnm-wordmark-sub">Osteosarcoma Neural Network Model</span>
+        <span class="onnm-wordmark-main">OsteoNeuralNetwork Model</span>
+        <span class="onnm-wordmark-sub">Open research prototype · ONNM</span>
       </a>
-      <nav class="onnm-nav">${nav}</nav>
+      <nav class="onnm-site-nav" aria-label="Primary navigation">${nav}</nav>
     </header>`;
 }
 
 function renderFooter() {
   return `
-    <footer class="onnm-footer">
-      <p class="onnm-footer-warning">
+    <footer class="onnm-site-footer" id="legal">
+      <p class="onnm-site-footer-warning">
         <strong>Research demonstration only.</strong> ONNM is not a medical
         device and has not been clinically validated. It must not be used to
         make, confirm or delay any clinical decision. If you have a health
         concern, speak to a qualified clinician.
       </p>
-      <p class="onnm-footer-meta">
+      <p class="onnm-site-footer-meta">
         Model weights are licensed CC BY-NC 4.0. Uploaded images are never shared
         unless you explicitly consent per image. Location is recorded only at
         country level, and no IP address is stored.
       </p>
+      <p class="onnm-legal-status">
+        <strong>Legal and privacy overview.</strong> These are concise research-use
+        notices, not the complete deployment-specific Terms or Privacy Policy.
+        Publication still requires review of the full notices for this Cloudflare deployment.
+      </p>
+      <nav class="onnm-legal-links" aria-label="Legal and privacy information">
+        <a href="#legal-terms">Research-use terms summary</a>
+        <a href="#legal-privacy">Privacy summary</a>
+        <a href="#legal-medical">Medical notice</a>
+        <a href="#legal-cookies">Session notice</a>
+      </nav>
+      <div class="onnm-legal-summaries">
+        <details id="legal-terms">
+          <summary>Research-use terms summary</summary>
+          <p>Use ONNM only for research and education. Do not use its output to diagnose, treat, or delay care, and only upload images you are authorised to use.</p>
+        </details>
+        <details id="legal-privacy">
+          <summary>Privacy summary</summary>
+          <p>Your account identifies your own saved scans. Images are retained for research review only when you explicitly consent for that image; public map data is aggregated at country level.</p>
+        </details>
+        <details id="legal-medical">
+          <summary>Medical notice</summary>
+          <p>This unvalidated prototype has no FDA, CE, or MHRA clearance. Every radiograph requires review by a qualified clinician.</p>
+        </details>
+        <details id="legal-cookies">
+          <summary>Session notice</summary>
+          <p>ONNM uses a secure, HTTP-only session cookie to keep you signed in. It is not used for advertising or cross-site tracking.</p>
+        </details>
+      </div>
     </footer>`;
 }
 
@@ -143,10 +206,17 @@ async function render() {
 
   const path = window.location.pathname;
   const route = ROUTES[path] || ROUTES["/"];
+  document.title = ROUTE_TITLES[path] || ROUTE_TITLES["/"];
 
-  app.innerHTML = `${renderHeader(state.session)}<main id="onnm-main" class="onnm-main"></main>${renderFooter()}`;
+  app.innerHTML = `<a class="onnm-skip-link" href="#onnm-main">Skip to main content</a>${renderHeader(state.session)}<main id="onnm-main" class="onnm-main" tabindex="-1"></main>${renderFooter()}`;
   const main = app.querySelector("#onnm-main");
   showBanner(main);
+
+  const focusRouteMain = () => {
+    if (!state.focusMainOnRender) return;
+    state.focusMainOnRender = false;
+    requestAnimationFrame(() => main.focus({ preventScroll: true }));
+  };
 
   // A signed-out visitor cannot reach the scanner or the profile. This mirrors
   // the page guards in app.py; it is a usability measure, not the security
@@ -163,10 +233,13 @@ async function render() {
          <p><a class="onnm-btn onnm-btn-primary" href="${signInHref()}">Sign in with Google</a></p>
        </section>`,
     );
+    focusRouteMain();
     return;
   }
 
-  state.teardown = await route(main, state);
+  const routeResult = route(main, state);
+  focusRouteMain();
+  state.teardown = await routeResult;
 }
 
 function wireGlobalHandlers() {
@@ -190,7 +263,10 @@ function wireGlobalHandlers() {
     }
   });
 
-  window.addEventListener("popstate", render);
+  window.addEventListener("popstate", () => {
+    state.focusMainOnRender = true;
+    render();
+  });
 }
 
 async function start() {

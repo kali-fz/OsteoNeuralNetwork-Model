@@ -52,7 +52,7 @@ export async function renderProfile(main, state) {
             : ""
         }
         <div>
-          <div class="onnm-account-name">${escapeHtml(user.name || "Signed in")}</div>
+          <div class="onnm-profile-account-name">${escapeHtml(user.name || "Signed in")}</div>
           <div class="onnm-muted">${escapeHtml(user.email || "")}</div>
         </div>
       </div>

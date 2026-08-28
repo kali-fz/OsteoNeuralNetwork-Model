@@ -119,6 +119,9 @@ export function mountGlobe(root, options = {}) {
   const WORLD = options.world || null;
   const AUTO_ROTATE = options.autoRotate !== false;
   const height = options.height || 460;
+  root.style.height = height + "px";
+  const rootWrap = root.querySelector("#globe-wrap");
+  if (rootWrap) rootWrap.style.height = height + "px";
 
 '''
 
@@ -126,6 +129,10 @@ FOOTER = '''
   return function teardown() {
     if (rafId) cancelAnimationFrame(rafId);
     if (idleTimer) clearTimeout(idleTimer);
+    if (resizeObserver) resizeObserver.disconnect();
+    else window.removeEventListener("resize", handleResize);
+    if (intersectionObserver) intersectionObserver.disconnect();
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }
 '''
@@ -163,6 +170,23 @@ SUBSTITUTIONS = [
     ),
 ]
 
+# The source HTML is rendered inside an isolated Streamlit component iframe,
+# where document-level selectors are safe. The Vite build mounts the same
+# markup in the application document, so every selector must be constrained to
+# the host or regeneration would once again lock the whole page to 460 px and
+# reset unrelated canvas, legend and layout styles.
+CSS_SELECTOR_SUBSTITUTIONS = [
+    ("* {", ".onnm-globe-host,\n.onnm-globe-host * {"),
+    ("html, body {", ".onnm-globe-host {"),
+    ("#globe-wrap {", ".onnm-globe-host #globe-wrap {"),
+    ("canvas {", ".onnm-globe-host canvas {"),
+    ("canvas:active {", ".onnm-globe-host canvas:active {"),
+    ("#tooltip {", ".onnm-globe-host #tooltip {"),
+    ("#legend {", ".onnm-globe-host #legend {"),
+    (".legend-item {", ".onnm-globe-host .legend-item {"),
+    (".legend-dot {", ".onnm-globe-host .legend-dot {"),
+]
+
 
 def load_globe_module():
     spec = importlib.util.spec_from_file_location(
@@ -191,7 +215,11 @@ def main() -> int:
         end = next(i for i, line in enumerate(lines) if close_tag in line and i > start)
         return lines[start + 1 : end]
 
-    css = slice_between("<style>", "</style>")
+    css = "\n".join(slice_between("<style>", "</style>")).strip()
+    for old, new in CSS_SELECTOR_SUBSTITUTIONS:
+        count = css.count(old)
+        assert count == 1, f"expected exactly one CSS selector {old!r}, found {count}"
+        css = css.replace(old, new, 1)
     # The app script is the LAST <script> block; the two before it are vendored.
     script_starts = [i for i, line in enumerate(lines) if line.strip().startswith("<script>")]
     app_start = script_starts[-1]
@@ -227,11 +255,11 @@ def main() -> int:
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(HEADER + body + FOOTER, encoding="utf-8")
-    OUT_CSS.write_text("\n".join(css).strip() + "\n", encoding="utf-8")
+    OUT_CSS.write_text(css + "\n", encoding="utf-8")
     OUT_MARKUP.write_text("\n".join(markup).strip() + "\n", encoding="utf-8")
 
     print(f"wrote {OUT.relative_to(REPO)} ({len((HEADER + body + FOOTER).splitlines())} lines)")
-    print(f"wrote {OUT_CSS.relative_to(REPO)} ({len(css)} lines)")
+    print(f"wrote {OUT_CSS.relative_to(REPO)} ({len(css.splitlines())} lines)")
     print(f"wrote {OUT_MARKUP.relative_to(REPO)} ({len(markup)} lines)")
     return 0
 

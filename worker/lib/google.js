@@ -142,7 +142,7 @@ export function claimsFromIdToken(idToken, clientId) {
   // Mirrors src/oauth.py:resolve_account. An unverified address must not be
   // allowed to claim an account, because anyone can put any address on an
   // unverified Google profile.
-  if (claims.email_verified === false) {
+  if (claims.email_verified !== true) {
     throw new Error("google account email is not verified");
   }
   if (!claims.email) {

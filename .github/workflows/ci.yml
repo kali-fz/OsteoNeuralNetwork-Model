@@ -27,6 +27,24 @@ permissions:
   contents: read
 
 jobs:
+  web-worker:
+    name: web / Worker contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run authentication contracts
+        run: npm run test:auth
+      - name: Build production frontend
+        run: npm run build
+      - name: Validate Worker bundle
+        run: npm run check -- --containers-rollout=none
+
   lint:
     runs-on: ubuntu-latest
     steps:

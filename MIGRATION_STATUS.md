@@ -1,8 +1,8 @@
 # ONNM migration to Cloudflare — status and open issues
 
-**Branch:** `cloudflare-migration` (pushed to `origin`). `main` is untouched at `1fc0320`.
+**Branch:** restoration prepared on `recovery/cloudflare-parity` for publication to `main`.
 **Live:** https://onnm.kali-fz.workers.dev
-**Written:** 2026-08-28. Read this before changing anything.
+**Updated:** 2026-08-28. Read `RESTORATION_PLAN.md` before changing anything.
 
 This document exists so a new agent can continue without re-deriving the work. It is
 honest about what is verified, what is untested, and what is broken.
@@ -99,13 +99,13 @@ the generated output.
 
 ---
 
-## 3. OPEN ISSUE #1 — the homepage looks wrong (NOT FIXED)
+## 3. Homepage restoration — implemented locally, deployment verification pending
 
-**Symptom:** the hero title renders, then roughly 480 px of blank space, and the rest of
-the page is pushed far below the fold.
+**Original symptom, now resolved locally:** the hero title rendered, then roughly 480 px
+of blank space, and the rest of the page was pushed far below the fold.
 
-**Cause — diagnosed, not guessed.** `src/theme.py` already defines classes with the same
-names the new markup uses, but with entirely different structural assumptions. The
+**Original cause — diagnosed, not guessed.** `src/theme.py` already defined classes with
+the same names the first migrated markup used, but with different structural assumptions. The
 generated `web/src/styles/theme.css` therefore contains:
 
 ```css
@@ -117,24 +117,21 @@ generated `web/src/styles/theme.css` therefore contains:
 
 That rule expects child elements `.onnm-hero-bg` and `.onnm-hero-veil` and a CSS variable
 `--hero-img`. **`--hero-img` is used but never defined in the stylesheet** — Streamlit set
-it at runtime. The new markup has none of that structure, so the hero is an empty 480 px
-box.
+it at runtime. The first migrated markup had none of that structure, so the hero became an
+empty 480 px box.
 
-**Full collision set** (classes the new markup uses that `theme.py` also styles):
+**Original collision set** (classes the first migrated markup used that `theme.py` styles):
 
 ```
 onnm-hero          onnm-hero-title    onnm-nav        onnm-footer
 onnm-stat          onnm-stat-label    onnm-stat-value onnm-account-name
 ```
 
-`.onnm-nav` is also a problem: `theme.py` styles it as a full-width flex bar with
-`justify-content: space-between` and a bottom border, but the new markup uses it as a small
-inline group inside `.onnm-header`.
+`.onnm-nav` was also a problem: `theme.py` styles it as a full-width flex bar, while the
+first migrated markup used it as a small inline group inside `.onnm-header`.
 
-**Suggested fix (not applied).** Rename the *new* layout classes so they cannot collide —
-for example `onnm-page-hero`, `onnm-page-nav`, `onnm-metric` — and leave `theme.css`
-untouched, since it is generated and its rules are still wanted for components that do
-match. Renaming the new markup is safer than editing generated output.
+**Applied fix.** The Vite structural classes are now namespaced so they cannot collide,
+while generated `theme.css` remains intact for the components that still use it.
 
 To see the collisions:
 
@@ -143,14 +140,16 @@ used=$(grep -rhoE 'onnm-[a-z0-9-]+' web/src/*.js web/src/pages/*.js | sort -u)
 for c in $used; do grep -q "^\.$c[ ,{]" web/src/styles/theme.css && echo "$c"; done
 ```
 
-**Also note:** the owner said the homepage should "look like what we had before". The
-binding visual spec is `REDESIGN_BRIEF.md` (§3 for the globe, §5 for performance). The new
-landing page was written fresh and does **not** yet reproduce that layout — there is no
-hero image, no contributor roll with avatars, and no GitHub star/fork counts.
+The recovery branch restores the final Streamlit composition and wording: mission card on
+the left, interactive country globe on the right, CTA, live totals, scan-benefit band,
+consented contributor roll, identity treatment, and legal/research footer. Generated globe
+CSS is component-scoped, structural classes are namespaced, and the globe now resizes and
+renders an honest empty state if its API is unavailable. Desktop and fresh 390px local
+reviews passed without horizontal overflow. Four-width deployed screenshots remain open.
 
 ---
 
-## 4. OPEN ISSUE #2 — Google sign-in (FIXED, NEEDS RETESTING)
+## 4. Google sign-in — contract repaired, deployed end-to-end retest still required
 
 **Symptom reported:** "Your account could not be opened. Please try again." after
 returning from Google. That is the `account_failed` branch in `authCallback`.
@@ -161,8 +160,12 @@ returning from Google. That is the `account_failed` branch in `authCallback`.
 hit the `UNIQUE` constraint on `email`, received a 409, and mapped that to
 `account_failed` — for a user whose account was in the database the whole time.
 
-**Fixed in `5593a8b` and deployed.** Two sibling bugs of the same kind were found and
-fixed in the same commit:
+The existing-account payload bug was fixed in `5593a8b`. The recovery branch additionally
+fixes first-time registration by generating and sending the required application `user_id`,
+requires `email_verified === true`, preserves the legacy email fallback, and safely recovers
+the simultaneous-first-login insert race. Ten focused Node contract tests cover these paths.
+
+Two sibling bugs were also fixed in `5593a8b`:
 
 - **`createSubmission` requires `submission_id`** and `/api/scan` never sent one. **Every
   scan would have failed to record with a 400.** Now generated with `crypto.randomUUID()`.
@@ -171,8 +174,9 @@ fixed in the same commit:
   public profile. It was omitted, making the profile sync a silent 400 behind its own
   `.catch()`.
 
-**Not retested.** Sign-in has not been exercised since the fix. That is the first thing to
-do.
+**Not retested end to end on the deployed Worker.** That remains the first post-deployment
+owner check; unit and dry-run success do not prove the Google console, Worker secret, and
+live callback are aligned.
 
 **Lesson for whoever continues:** every call from `worker/index.js` into
 `cloudflare/src/worker.js` is an undocumented contract. Read the handler before calling it.
@@ -202,7 +206,7 @@ Measured, not assumed.
 
 ### Never verified
 
-- That the page **renders correctly in a browser** (it does not — see §3).
+- Four-width visual approval on the newly deployed build.
 - **Sign-in end to end.** Was broken; fixed; untested.
 - **A live scan through the deployed container.** Requires a session, so it has never run.
 - `scripts/check_inference_parity.py` has **not been run** against the deployed container.
@@ -237,7 +241,7 @@ resets monthly with no cron job. **No schema migration was needed or made.**
 
 - Feedback widget and rejection dispute (`src/community_ui.py`)
 - Downloadable HTML report (`src/report.py` — already emits a self-contained document)
-- Contributor roll with Google avatars, and GitHub star/fork counts (`src/github_stats.py`)
+- GitHub star/fork counts (`src/github_stats.py`); the consented contributor roll is ported
 - Full ToS / Privacy / Cookie pages (`src/legal.py`) — only a footer summary exists
 - The ROC / threshold-sweep chart (`src/components/charts.py`)
 - Vitest equivalents for `test_page_guards.py`, `test_globe_fallback.py`,
@@ -319,15 +323,16 @@ unused `onnm.pages.dev` one, and the live `https://onnm.kali-fz.workers.dev/api/
 
 ## 10. Suggested order of work
 
-1. Retest sign-in. If it still fails, check Worker logs — every failure path logs a reason.
-2. Fix the CSS collisions in §3 by renaming the new layout classes.
-3. Rebuild the landing page against `REDESIGN_BRIEF.md` rather than the improvised version.
-4. Run a real scan; confirm a row lands in `submissions` (the `submission_id` fix is
+1. Rotate the disclosed Google client secret, deploy, then retest existing and first-time
+   sign-in. If it fails, check Worker logs — every failure path logs a reason.
+2. Capture and approve the deployed page at 1440, 1024, 768, and 390 pixels.
+3. Run a real scan; confirm a row lands in `submissions` (the `submission_id` fix is
    untested).
-5. Run `scripts/check_inference_parity.py` against the deployed container. It gates
+4. Run `scripts/check_inference_parity.py` against the deployed container. It gates
    hosted-vs-local agreement to 1e-4 including the Grad-CAM peak **location**, and is the
    check that answers "did containerising change the diagnosis".
-6. Port the remaining features in §7.
+5. Exercise the pinned local admin review flow and exported manifests.
+6. Port the remaining scanner/profile features in §7.
 7. Rewrite `System_migration.md`; it currently misinforms.
 
 Do not cut over from Streamlit until 1–5 pass.

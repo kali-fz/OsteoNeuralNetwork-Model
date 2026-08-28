@@ -25,6 +25,7 @@
 import { handleApiRequest } from "../cloudflare/src/worker.js";
 import { InferenceContainer, inferenceStub } from "./container.js";
 import { budgetStatus } from "./lib/breaker.js";
+import { resolveGoogleAccount } from "./lib/account.js";
 import { buildMarkers } from "./lib/geo.js";
 import {
   authorizationUrl,
@@ -213,39 +214,31 @@ async function authCallback(request, env) {
 
   const profile = identityProfile(claims);
 
-  // Look up by Google `sub`, then create. Keying on the subject rather than the
-  // email is what makes an address change at the Google end harmless.
-  const account = await forwardJson(request, env, "/users/by-subject", {
-    method: "GET",
-    search: { subject: profile.subject },
+  // Prefer Google `sub`, then retain the legacy email fallback for accounts
+  // created before a provider subject was stored, and only then create. New
+  // identities still key on the subject, so later Google email changes are safe.
+  const account = await resolveGoogleAccount(profile, {
+    lookupBySubject: (subject) =>
+      forwardJson(request, env, "/users/by-subject", {
+        method: "GET",
+        search: { subject },
+      }),
+    lookupByEmail: (email) =>
+      forwardJson(request, env, "/users/by-email", {
+        method: "GET",
+        search: { email },
+      }),
+    createUser: (body) =>
+      forwardJson(request, env, "/users", {
+        method: "POST",
+        body,
+      }),
   });
-  // getUserBySubject returns the user row itself -- `json(row)` -- not a
-  // wrapper object. Reading `.user` here found undefined for an account that
-  // existed, so sign-in fell through to account creation, hit the UNIQUE
-  // constraint on email, and reported "account could not be opened" to a user
-  // whose account was in the database the whole time.
-  const existing = account.ok ? account.payload : null;
-
-  let userId = existing?.user_id || null;
-  if (!userId) {
-    const created = await forwardJson(request, env, "/users", {
-      method: "POST",
-      body: {
-        email: profile.email,
-        auth_provider: "google",
-        provider_subject: profile.subject,
-        display_name: profile.name,
-        profile_picture_url: profile.picture,
-      },
-    });
-    if (!created.ok) {
-      console.error("oauth: account creation failed", created.status, created.payload);
-      return bounce(created.status === 403 ? "registration_closed" : "account_failed");
-    }
-    userId = created.payload?.user_id || created.payload?.user?.user_id || null;
+  if (!account.ok) {
+    console.error("oauth: account resolution failed", account.status, account.payload);
+    return bounce(account.status === 403 ? "registration_closed" : "account_failed");
   }
-
-  if (!userId) return bounce("account_failed");
+  const userId = account.userId;
 
   // Refresh the display name and avatar on every sign-in, mirroring the
   // profile_sync the Streamlit app did on each rerun.
