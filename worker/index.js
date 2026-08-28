@@ -219,7 +219,12 @@ async function authCallback(request, env) {
     method: "GET",
     search: { subject: profile.subject },
   });
-  const existing = account.ok ? account.payload?.user : null;
+  // getUserBySubject returns the user row itself -- `json(row)` -- not a
+  // wrapper object. Reading `.user` here found undefined for an account that
+  // existed, so sign-in fell through to account creation, hit the UNIQUE
+  // constraint on email, and reported "account could not be opened" to a user
+  // whose account was in the database the whole time.
+  const existing = account.ok ? account.payload : null;
 
   let userId = existing?.user_id || null;
   if (!userId) {
@@ -244,10 +249,15 @@ async function authCallback(request, env) {
 
   // Refresh the display name and avatar on every sign-in, mirroring the
   // profile_sync the Streamlit app did on each rerun.
+  // provider_subject is REQUIRED: updateContributorProfile re-checks it against
+  // the stored subject in constant time, so that holding the API key is not by
+  // itself enough to rewrite somebody else's public profile. Omitting it made
+  // this a silent 400 behind the catch below.
   await forward(request, env, "/users/profile", {
     method: "POST",
     body: {
       user_id: userId,
+      provider_subject: profile.subject,
       display_name: profile.name,
       profile_picture_url: profile.picture,
     },
@@ -367,6 +377,9 @@ async function scan(request, env) {
   const recorded = await forwardJson(request, env, "/submissions", {
     method: "POST",
     body: {
+      // Required by createSubmission, and generated here rather than in the
+      // container so that the id belongs to the record, not to the inference.
+      submission_id: crypto.randomUUID(),
       user_id: session.uid,
       model_label: prediction.label,
       lesion_probability: result.lesion_probability,
