@@ -25,6 +25,7 @@
 import { handleApiRequest } from "../cloudflare/src/worker.js";
 import { InferenceContainer, inferenceStub } from "./container.js";
 import { budgetStatus } from "./lib/breaker.js";
+import { buildMarkers } from "./lib/geo.js";
 import {
   authorizationUrl,
   claimsFromIdToken,
@@ -365,7 +366,14 @@ export default {
       if (method === "GET" && path === "/api/auth/google/callback") {
         return authCallback(request, env);
       }
-      if (method === "GET" && path === "/api/globe") return forward(request, env, "/globe");
+      if (method === "GET" && path === "/api/globe") {
+        // Country codes and counts come from D1; the conversion to coordinates
+        // happens in lib/geo.js so that one function still describes the whole
+        // of what the map is able to reveal.
+        const upstream = await forwardJson(request, env, "/globe");
+        if (!upstream.ok) return json(upstream.payload, upstream.status);
+        return json(await buildMarkers(upstream.payload));
+      }
       if (method === "GET" && path === "/api/contributors") {
         return forward(request, env, "/contributors");
       }
