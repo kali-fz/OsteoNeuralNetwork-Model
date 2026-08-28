@@ -99,6 +99,40 @@ function redirectUriFor(request) {
 }
 
 /**
+ * Mint a one-use location token and immediately spend it on this request.
+ *
+ * Never throws. A country is a decoration on a globe; failing to record one
+ * must not cost somebody their sign-in. Failures are logged, not surfaced.
+ */
+async function captureCountry(request, env, userId) {
+  try {
+    const minted = await forwardJson(request, env, "/location/token", {
+      method: "POST",
+      body: { user_id: userId },
+    });
+    if (!minted.ok || !minted.payload?.token) return;
+
+    const url = new URL(request.url);
+    url.pathname = "/location/capture";
+    url.search = "";
+
+    // The original request's `cf` is passed through deliberately: it is the only
+    // thing in this call that knows the country, and it arrived already reduced
+    // to a two-letter code by Cloudflare.
+    await handleApiRequest(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { authorization: `Bearer ${minted.payload.token}` },
+        cf: request.cf,
+      }),
+      env,
+    );
+  } catch (error) {
+    console.error("country capture failed", error);
+  }
+}
+
+/**
  * Begin sign-in.
  *
  * `state` and the PKCE verifier are carried in a short-lived signed cookie
@@ -218,6 +252,21 @@ async function authCallback(request, env) {
       profile_picture_url: profile.picture,
     },
   }).catch(() => {});
+
+  // Record the country, once, from Cloudflare's edge resolution of THIS request.
+  //
+  // The Streamlit app needed a zero-height iframe and a one-use token for this,
+  // because the page could not be trusted with the API key and the Worker was on
+  // a different origin. Neither is true any more: this Worker is the edge, and
+  // request.cf.country is already resolved and already coarsened to two letters.
+  // No IP address is seen here, and the browser Geolocation API is still never
+  // called.
+  //
+  // The token dance is kept rather than bypassed because captureBrowserCountry
+  // carries the atomicity and the "first capture wins" guarantee that stop an
+  // account's country being rewritten by later travel. Running it on every
+  // sign-in is therefore safe: the second attempt is a no-op by construction.
+  await captureCountry(request, env, userId);
 
   const token = await signSession(
     { uid: userId, sub: profile.subject, email: profile.email, name: profile.name, pic: profile.picture },
