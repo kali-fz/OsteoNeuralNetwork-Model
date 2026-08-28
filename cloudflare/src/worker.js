@@ -80,8 +80,11 @@ const CONFIDENT_PROB = 0.65;
 // bug, a shared deployment, or a future endpoint quietly serving the review
 // queue to the wrong signed-in account.
 // ---------------------------------------------------------------------------
-const ADMIN_USER_ID = "c2c5a209-4aaa-4eb9-b112-b2929b6dbe12";
-const ADMIN_EMAIL = "kzfhero@gmail.com";
+// Exported so worker/index.js can decide whether the *signed-in browser* is the
+// owner without writing the id down a second time. The export adds no authority:
+// knowing the id has never been what grants it, and the checks below still run.
+export const ADMIN_USER_ID = "c2c5a209-4aaa-4eb9-b112-b2929b6dbe12";
+export const ADMIN_EMAIL = "kzfhero@gmail.com";
 
 // --- Small helpers ----------------------------------------------------------
 const json = (data, status = 200) =>

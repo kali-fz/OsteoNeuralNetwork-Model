@@ -24,18 +24,24 @@ import { getSession, signOut } from "./api.js";
 import { renderLanding } from "./pages/landing.js";
 import { renderScanner } from "./pages/scanner.js";
 import { renderProfile } from "./pages/profile.js";
+import { renderAdmin } from "./pages/admin.js";
 
 const ROUTES = {
   "/": renderLanding,
   "/scanner": renderScanner,
   "/profile": renderProfile,
+  "/admin": renderAdmin,
 };
 
 const ROUTE_TITLES = {
   "/": "ONNM — Open bone X-ray research",
   "/scanner": "Scanner — ONNM",
   "/profile": "My profile — ONNM",
+  "/admin": "Review queue — ONNM",
 };
+
+/** Pages a signed-out visitor cannot use. */
+const SIGNED_IN_ROUTES = new Set(["/scanner", "/profile", "/admin"]);
 
 /** Shared application state. Deliberately small and explicitly passed. */
 const state = {
@@ -104,9 +110,18 @@ function renderHeader(session) {
   const accountName = escapeHtml(accountLabel);
   const accountInitial = escapeHtml(accountLabel.trim().slice(0, 1).toUpperCase() || "A");
 
+  // Drawn from the flag the server computes per request, never from anything
+  // stored in the browser. Hiding it is a convenience for everyone else, not a
+  // control: /api/admin/* refuses any account but the owner's whatever the page
+  // happens to be showing.
+  const adminLink = session?.is_admin
+    ? `<a class="onnm-site-navlink" href="/admin" data-link>Admin</a>`
+    : "";
+
   const nav = signedIn
     ? `
       <a class="onnm-site-navlink" href="/scanner" data-link>Scanner</a>
+      ${adminLink}
       <a class="onnm-account-chip" href="/profile" data-link>
         ${
           picture
@@ -222,7 +237,7 @@ async function render() {
   // the page guards in app.py; it is a usability measure, not the security
   // boundary -- every route that touches data re-derives the account from the
   // session cookie server-side.
-  if ((path === "/scanner" || path === "/profile") && !state.session?.signed_in) {
+  if (SIGNED_IN_ROUTES.has(path) && !state.session?.signed_in) {
     main.insertAdjacentHTML(
       "beforeend",
       `<section class="onnm-panel">
@@ -231,6 +246,21 @@ async function render() {
            Scans are saved to your account, so this page needs you signed in.
          </p>
          <p><a class="onnm-btn onnm-btn-primary" href="${signInHref()}">Sign in with Google</a></p>
+       </section>`,
+    );
+    focusRouteMain();
+    return;
+  }
+
+  // A signed-in stranger who types /admin gets the ordinary "no such page"
+  // answer rather than a locked door, which is also what the API returns them.
+  if (path === "/admin" && !state.session?.is_admin) {
+    main.insertAdjacentHTML(
+      "beforeend",
+      `<section class="onnm-panel">
+         <h1>Page not found</h1>
+         <p class="onnm-muted">There is nothing at this address.</p>
+         <p><a class="onnm-btn" href="/" data-link>Back to the home page</a></p>
        </section>`,
     );
     focusRouteMain();

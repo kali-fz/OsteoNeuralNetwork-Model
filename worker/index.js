@@ -22,10 +22,11 @@
  * and the spend guards therefore keep exactly one implementation.
  */
 
-import { handleApiRequest } from "../cloudflare/src/worker.js";
+import { ADMIN_USER_ID, handleApiRequest } from "../cloudflare/src/worker.js";
 import { InferenceContainer, inferenceStub } from "./container.js";
 import { budgetStatus } from "./lib/breaker.js";
 import { resolveGoogleAccount } from "./lib/account.js";
+import { bucketFor, isAdminSession } from "./lib/review.js";
 import { buildMarkers } from "./lib/geo.js";
 import {
   authorizationUrl,
@@ -400,6 +401,103 @@ async function scan(request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// Review (the owner's account only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Call an `/admin/*` route on worker.js with both credentials it demands.
+ *
+ * Two separate questions, deliberately: ADMIN_KEY says the caller is trusted
+ * software, and `x-onnm-admin-user` says which account is asking. Neither
+ * value is reachable from the browser -- the key is a Worker secret and the id
+ * is written here, not read from the request -- so the only way to reach these
+ * routes is to have already passed isAdminSession() in lib/review.js.
+ *
+ * Kept separate from forward() so that no ordinary route can reach /admin/* by
+ * accident: forward() attaches API_KEY, which worker.js refuses there.
+ */
+async function forwardAdmin(request, env, path, { method, body, search } = {}) {
+  const url = new URL(request.url);
+  url.pathname = path;
+  url.search = search ? `?${new URLSearchParams(search).toString()}` : "";
+
+  const headers = new Headers();
+  headers.set("authorization", `Bearer ${env.ADMIN_KEY}`);
+  headers.set("x-onnm-admin-user", ADMIN_USER_ID);
+  if (body !== undefined) headers.set("content-type", "application/json");
+
+  const init = { method: method || request.method, headers, cf: request.cf };
+  if (body !== undefined) init.body = JSON.stringify(body);
+
+  return handleApiRequest(new Request(url.toString(), init), env);
+}
+
+/** The queue, with images, plus the counts that head the page. */
+async function adminQueue(request, env, bucket) {
+  // `bucket` is omitted rather than sent as null when absent: URLSearchParams
+  // would render it as the string "null", which is not one of the three and
+  // would be refused as a bad bucket rather than read as "all of them".
+  const search = { limit: "24", images: "1" };
+  if (bucket) search.bucket = bucket;
+
+  const [counts, queue] = await Promise.all([
+    // The counts come through forward() and the queue through forwardAdmin():
+    // /health is an ordinary route and /admin/pending is not, and each is
+    // called with exactly the credential worker.js demands for it.
+    forwardJson(request, env, "/health"),
+    forwardAdmin(request, env, "/admin/pending", { method: "GET", search }),
+  ]);
+
+  const payload = await queue.json().catch(() => ({}));
+  if (!queue.ok) return json(payload, queue.status);
+  return json({
+    bucket: bucket || null,
+    pending: payload?.pending ?? [],
+    counts: counts.ok ? counts.payload : null,
+  });
+}
+
+/**
+ * Approve or reject one submission.
+ *
+ * `ood_flagged` is read from the row rather than taken from the request, so the
+ * bucket is derived from what the gate actually did and not from what a client
+ * claims it did. The queue response carries the same field only so the page can
+ * show the reviewer where a decision will file the row before they make it.
+ */
+async function adminReview(request, env, submissionId) {
+  const body = await request.json().catch(() => ({}));
+  const decision = body?.decision;
+
+  if (decision === "rejected") {
+    return forwardAdmin(request, env, `/admin/review/${submissionId}`, {
+      method: "POST",
+      body: { decision: "rejected", note: body?.note || null, reviewed_by: ADMIN_USER_ID },
+    });
+  }
+  if (decision !== "approved") return fail(400, "decision must be 'approved' or 'rejected'");
+
+  const label = String(body?.admin_label || "");
+  const row = await env.DB.prepare(
+    "SELECT ood_flagged FROM submissions WHERE submission_id = ?",
+  )
+    .bind(submissionId)
+    .first();
+  if (!row) return fail(404, "no such submission");
+
+  return forwardAdmin(request, env, `/admin/review/${submissionId}`, {
+    method: "POST",
+    body: {
+      decision: "approved",
+      admin_label: label,
+      admin_bucket: bucketFor(label, Number(row.ood_flagged) === 1),
+      note: body?.note || null,
+      reviewed_by: ADMIN_USER_ID,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -442,6 +540,11 @@ export default {
           user: session
             ? { user_id: session.uid, email: session.email, name: session.name, picture: session.pic }
             : null,
+          // Recomputed here on every request rather than carried in the cookie,
+          // so it cannot be forged and cannot drift. The frontend uses it only
+          // to decide whether to draw the Admin link; every /api/admin/* route
+          // re-derives it and would refuse regardless of what the page shows.
+          is_admin: isAdminSession(session),
           budget: await budgetStatus(env.DB),
         });
       }
@@ -471,6 +574,28 @@ export default {
 
       if (method === "POST" && path === "/api/warmup") return warmup(request, env);
       if (method === "POST" && path === "/api/scan") return scan(request, env);
+
+      // -- review, one account --------------------------------------------
+      //
+      // The guard is here, once, in front of every /api/admin/* path, rather
+      // than repeated per route: a route added below this line is closed by
+      // default, which is the failure mode worth having. 404 rather than 403
+      // for a signed-in stranger, so the queue's existence is not confirmed to
+      // an account that may not have it.
+      if (path.startsWith("/api/admin/")) {
+        if (!isAdminSession(session)) {
+          return session ? fail(404, `no route for ${method} ${path}`) : fail(401, "sign in first");
+        }
+        if (!env.ADMIN_KEY) {
+          return fail(503, "ADMIN_KEY is not set on this deployment, so review is unavailable");
+        }
+
+        if (method === "GET" && path === "/api/admin/queue") {
+          return adminQueue(request, env, url.searchParams.get("bucket") || null);
+        }
+        const decide = path.match(/^\/api\/admin\/review\/([^/]+)$/);
+        if (method === "POST" && decide) return adminReview(request, env, decide[1]);
+      }
 
       return fail(404, `no route for ${method} ${path}`);
     } catch (error) {

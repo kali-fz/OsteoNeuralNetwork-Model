@@ -47,6 +47,34 @@ export const getContributors = () => get("/api/contributors");
 /** This account's scan history. The user id comes from the cookie, not from here. */
 export const getSubmissions = () => get("/api/submissions");
 
+/**
+ * The review queue for one bucket, with the stored images attached.
+ *
+ * Reachable only by the owning account: the Worker re-derives that from the
+ * session cookie on every call, so this function existing in a bundle every
+ * visitor downloads grants nothing. A signed-in stranger gets a 404 here.
+ */
+export const getAdminQueue = (bucket) =>
+  get(`/api/admin/queue?bucket=${encodeURIComponent(bucket)}`);
+
+/**
+ * Approve or reject one submission.
+ *
+ * Approving sends a label and never a bucket. Which of the three queues the row
+ * files into follows from the label plus what the gate did with the image, and
+ * the Worker derives it there from the stored row -- see bucketFor() in
+ * worker/index.js. Nothing here could file a row into the wrong one.
+ */
+export const reviewSubmission = async (submissionId, body) =>
+  unwrap(
+    await fetch(`/api/admin/review/${encodeURIComponent(submissionId)}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+
 export async function signOut() {
   return unwrap(
     await fetch("/api/auth/signout", { method: "POST", credentials: "same-origin" }),
