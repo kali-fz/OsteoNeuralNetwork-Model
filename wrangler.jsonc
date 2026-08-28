@@ -106,6 +106,14 @@
     // Non-secret configuration. Secrets (SESSION_SECRET, GOOGLE_CLIENT_SECRET,
     // API_KEY, INFERENCE_KEY) are set with `wrangler secret put` and never
     // appear in this file.
-    "ONNM_CHECKPOINT": "/opt/onnm/best.pt"
+    "ONNM_CHECKPOINT": "/opt/onnm/best.pt",
+
+    // An OAuth client id is public by design -- it travels in the query string
+    // of every authorisation redirect, so every visitor's browser sees it on
+    // every sign-in. It is recorded here for the same reason the D1 database id
+    // is recorded in cloudflare/wrangler.toml: it identifies this deployment,
+    // and hiding it would only make the configuration harder to read. The
+    // matching client SECRET is not here and never will be.
+    "GOOGLE_CLIENT_ID": "998672925281-tvkmfoat9jhn9id47pj7gk8o22gnmjh0.apps.googleusercontent.com"
   }
 }
