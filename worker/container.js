@@ -72,14 +72,16 @@ export class InferenceContainer extends Container {
   /**
    * Secrets reach the container as environment variables at start.
    *
-   * A getter rather than a plain field because `this.env` is only populated once
-   * the Durable Object is constructed, and a class field initialiser would
-   * capture `undefined`.
+   * `Container` creates an own `envVars` field during `super()`. A prototype
+   * getter here would therefore be shadowed and never called, silently leaving
+   * the container with an empty environment. Set that inherited field only
+   * after the Durable Object receives its Worker environment instead.
    */
-  get envVars() {
-    return {
-      INFERENCE_KEY: this.env.INFERENCE_KEY || "",
-      ONNM_CHECKPOINT: this.env.ONNM_CHECKPOINT || "/opt/onnm/best.pt",
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.envVars = {
+      INFERENCE_KEY: env.INFERENCE_KEY || "",
+      ONNM_CHECKPOINT: env.ONNM_CHECKPOINT || "/opt/onnm/best.pt",
     };
   }
 

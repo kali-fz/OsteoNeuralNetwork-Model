@@ -15,6 +15,11 @@
 
 FROM python:3.12-slim
 
+# Bump when the Worker-to-container startup contract changes. Cloudflare only
+# rolls a running container when its image changes; this revision ensures the
+# corrected `envVars` bridge in worker/container.js reaches a fresh process.
+LABEL org.opencontainers.image.revision="inference-env-bridge-v1"
+
 # libgomp1 is torch's OpenMP runtime and is genuinely required; python:*-slim
 # does not ship it and the failure is an obscure load-time error rather than a
 # missing-package message. libglib2.0-0 is opencv-python-headless's one
