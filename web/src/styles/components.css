@@ -727,3 +727,81 @@
   .onnm-review-count { border-right: 0; border-bottom: 1px solid var(--line); }
   .onnm-review-count:last-child { border-bottom: 0; }
 }
+
+/* --- Terms of use (landing) ---------------------------------------------- */
+
+.onnm-terms { margin: 42px 0 0; }
+
+/*
+ * The withdrawal window gets a card of its own rather than a bullet in the
+ * list. It is the one term on this page that a reader has to act on before a
+ * deadline, and burying a deadline in a numbered list is how it goes unread.
+ */
+.onnm-terms-notice {
+  margin: 4px 0 22px;
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--green);
+  border-radius: 10px;
+  background: #f2f7f3;
+}
+.onnm-terms-notice h3 {
+  margin: 0 0 10px;
+  font-size: 1.02rem;
+  font-weight: 650;
+}
+.onnm-terms-notice p {
+  margin: 0 0 10px;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  max-width: 78ch;
+}
+.onnm-terms-notice p:last-child { margin-bottom: 0; }
+.onnm-terms-notice a { color: var(--green-hv); }
+
+.onnm-terms-list {
+  margin: 0;
+  padding-left: 22px;
+  max-width: 84ch;
+}
+.onnm-terms-list li {
+  margin-bottom: 11px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.onnm-terms-list li strong { color: var(--ink); font-weight: 600; }
+.onnm-terms-list li:last-child { margin-bottom: 0; }
+
+/* --- History: withdrawing your own image --------------------------------- */
+
+.onnm-history-action { white-space: nowrap; }
+
+/* A destructive action on a row, so it stays quiet until it is wanted. */
+.onnm-btn-quiet {
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: 6px;
+}
+.onnm-btn-quiet:hover:not(:disabled) {
+  border-color: #8c2f2f;
+  color: #8c2f2f;
+}
+.onnm-btn-quiet:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.onnm-history-locked { font-size: 0.82rem; }
+
+.onnm-history-error {
+  display: block;
+  margin-top: 5px;
+  max-width: 26ch;
+  color: #8c2f2f;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+@media (max-width: 680px) {
+  .onnm-terms-notice { padding: 16px 18px; }
+}

@@ -141,6 +141,71 @@ export async function renderLanding(main, state) {
       </p>
     </section>
 
+    <section class="onnm-terms" id="terms" aria-labelledby="terms-heading">
+      <div class="onnm-section-heading">
+        <span>Terms of use</span>
+        <strong id="terms-heading">What happens to an image you upload</strong>
+      </div>
+
+      <div class="onnm-terms-notice">
+        <h3>You can withdraw a shared image — until it is approved</h3>
+        <p>
+          Sharing is optional and is asked separately for every image. While a
+          shared image is still waiting to be reviewed, you can delete it at any
+          time from <a href="/profile" data-link>your account page</a>, and it
+          leaves the review queue immediately.
+        </p>
+        <p>
+          <strong>That window closes when a reviewer approves the image.</strong>
+          Approval adds it to the research training set, and once a model has
+          been trained on an image there is no way to remove what the model
+          learned from it. We cannot take it back out afterwards, and we will not
+          claim otherwise. Approval is therefore the last point at which the
+          decision is still yours — so if you are unsure, delete it before then.
+        </p>
+      </div>
+
+      <ol class="onnm-terms-list">
+        <li>
+          <strong>Research and education only.</strong> ONNM is not a medical
+          device, has no FDA, CE or MHRA clearance, and has not been clinically
+          validated. Never use its output to make, confirm or delay a clinical
+          decision.
+        </li>
+        <li>
+          <strong>Only upload images you are entitled to use.</strong> Do not
+          upload an identifiable patient radiograph. If an image shows a name, a
+          hospital number or any burned-in identifier, it does not belong here.
+        </li>
+        <li>
+          <strong>Nothing is shared unless you tick the box.</strong> Sharing is
+          off by default and is asked per image, because agreeing once says
+          nothing about the next file you open. An unshared scan is analysed and
+          the image is never written down.
+        </li>
+        <li>
+          <strong>A shared image is stored as a 256-pixel processed copy</strong>
+          — never your original file, and never its metadata. DICOM tags are
+          stripped before anything is stored.
+        </li>
+        <li>
+          <strong>Only three parties ever meet a shared image:</strong> you, the
+          single reviewer account that assigns its label, and the model it is
+          used to train. It is not published, sold or passed to anyone else.
+        </li>
+        <li>
+          <strong>Refused images are deleted automatically.</strong> If a
+          reviewer rejects an upload, its stored copy is erased within seven
+          days.
+        </li>
+        <li>
+          <strong>Location is recorded at country level only.</strong> No IP
+          address is stored, and the map shows aggregated countries rather than
+          places.
+        </li>
+      </ol>
+    </section>
+
     <section class="onnm-home-contributors" aria-labelledby="contributors-heading">
       <div class="onnm-section-heading">
         <span>Contributors</span>

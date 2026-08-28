@@ -50,12 +50,37 @@ const state = {
   focusMainOnRender: false,
 };
 
-/** Navigate without a page load. */
+/**
+ * Navigate without a page load.
+ *
+ * `path` may carry a hash. The pathname decides which page renders and the hash
+ * is applied afterwards by followHash(), once the target element exists -- the
+ * browser cannot do it itself here, because on a cold load nothing is in the
+ * document until the session has resolved and the route has run.
+ */
 export function navigate(path) {
-  if (window.location.pathname === path) return;
+  const [pathname, hash] = String(path).split("#");
+  if (window.location.pathname === pathname && !hash) return;
   window.history.pushState({}, "", path);
   state.focusMainOnRender = true;
   render();
+}
+
+/**
+ * Scroll to whatever the URL's hash names, if anything.
+ *
+ * Wrapped, and silent on failure: a hash that matches no element, or one that
+ * is not a valid selector, must never stop a page rendering.
+ */
+function followHash() {
+  const hash = window.location.hash;
+  if (!hash || hash.length < 2) return;
+  try {
+    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+  } catch {
+    /* an unusable hash is not an error worth showing anyone */
+  }
 }
 
 function signInHref() {
@@ -270,6 +295,7 @@ async function render() {
   const routeResult = route(main, state);
   focusRouteMain();
   state.teardown = await routeResult;
+  followHash();
 }
 
 function wireGlobalHandlers() {

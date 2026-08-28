@@ -27,8 +27,11 @@
  *
  *   1. `max_instances: 1`      - one container can exist, ever.
  *   2. `sleepAfter = "90s"`    - set in worker/container.js.
- *   3. No cron trigger         - a keep-warm heartbeat is the single most
- *                                expensive thing that could be added here.
+ *   3. No cron reaches the     - a keep-warm heartbeat is the single most
+ *      container                 expensive thing that could be added here.
+ *                                There IS one cron below, added for data
+ *                                retention; it touches D1 only and is billed
+ *                                as one request per run. Keep it that way.
  *   4. The D1 runtime meter    - worker/lib/breaker.js, 5 hours/month.
  *
  * `standard-1` costs about $0.074/hour of runtime. Left awake continuously that
@@ -101,6 +104,20 @@
       "new_sqlite_classes": ["InferenceContainer"]
     }
   ],
+
+  // The retention job: delete rejected images a week after rejection.
+  //
+  // Read the BILLING POSTURE note above before assuming this contradicts it. It
+  // says a cron trigger is the most expensive thing that could be added, and
+  // that is true of a cron that reaches the CONTAINER, which bills by runtime
+  // and would never sleep again. The handler this fires (see `scheduled` in
+  // worker/index.js) touches D1 only and cannot wake the container. A scheduled
+  // run costs one request; this is about 30 a month.
+  //
+  // 03:15 UTC daily, an hour nobody is using the site.
+  "triggers": {
+    "crons": ["15 3 * * *"]
+  },
 
   "vars": {
     // Non-secret configuration. Secrets (SESSION_SECRET, GOOGLE_CLIENT_SECRET,

@@ -113,7 +113,12 @@ a five-hour monthly runtime breaker. Do not add a keep-warm cron trigger.
 
 ## 7. If the deployment is unhealthy
 
-Keep the Streamlit deployment available as the rollback path.
+The rollback is a previous Worker version, not a different application. The Streamlit app
+that once served as a fallback has been removed: after the migration it had no route to the
+model, so keeping it implied a safety net that did not exist.
+
+Rolling the Worker back does not roll back the retention job -- a rejected image deleted by an
+earlier run is gone. That is intended, but it means a rollback restores behaviour, not data.
 
 In Cloudflare, open **Workers & Pages → onnm → Deployments**, select the previous healthy
 deployment, and use the dashboard rollback control. Do not change the D1 schema or delete

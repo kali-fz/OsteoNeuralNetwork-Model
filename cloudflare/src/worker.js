@@ -42,6 +42,20 @@ const MAX_USERS = 500; // a test deployment, not a product launch
 const MAX_PAGE_SIZE = 100;
 const LOCATION_TOKEN_TTL_MS = 5 * 60 * 1000;
 
+// --- Retention --------------------------------------------------------------
+// How long a rejected submission keeps its image.
+//
+// A rejected row is one a human looked at and refused: it will never be
+// exported, never trained on and never shown again, so from the moment of
+// rejection the stored radiograph has no purpose and is only exposure. The DPIA
+// scores indefinite retention as a High risk that "must not be accepted", and
+// the ROPA's proposed schedule is the reason this constant exists at all.
+//
+// Seven days rather than immediately, because a rejection can be a mistake --
+// a misclick, or a reviewer changing their mind -- and a week is long enough to
+// notice while still being short enough that nothing lingers.
+const REJECTED_IMAGE_TTL_DAYS = 7;
+
 // --- Country display rule ---------------------------------------------------
 // Product decision: show a country as soon as one account is recorded there.
 // The endpoint remains country-level and never returns coordinates, timestamps,
@@ -887,6 +901,125 @@ async function listUserSubmissions(db, userId, limit) {
   return json({ submissions: results ?? [] });
 }
 
+// --- Retention --------------------------------------------------------------
+
+/**
+ * Recompute `meta.bytes_stored` from what is actually in the table.
+ *
+ * The counter is maintained incrementally on insert, which is correct while
+ * rows only ever arrive. Anything that *removes* an image has to keep it in
+ * step, and a decrement is the fragile way to do that: one interrupted batch
+ * and the meter is permanently wrong, drifting upward until the storage cap
+ * starts refusing shares that there is really room for.
+ *
+ * Recomputing is exact and self-healing, and it repairs any earlier drift as a
+ * side effect. It is a full scan of a table with tens of rows, run only when an
+ * image is deleted, so the cost is irrelevant.
+ */
+async function recomputeBytesStored(db) {
+  await db
+    .prepare(
+      `UPDATE meta
+          SET value = CAST(COALESCE((SELECT SUM(LENGTH(image_b64)) FROM submissions), 0) AS TEXT)
+        WHERE key = 'bytes_stored'`
+    )
+    .run();
+}
+
+/**
+ * Delete the stored image of every rejected submission past its retention.
+ *
+ * Only `image_b64` is cleared; the row itself stays. The row is the record that
+ * a human reviewed this upload and refused it, which is the audit trail for the
+ * review gate and is not personal data once the picture is gone. Deleting the
+ * row instead would lose the evidence and free nothing worth freeing.
+ *
+ * Idempotent by construction -- a second run matches nothing, because the
+ * `image_b64 IS NOT NULL` predicate has already stopped being true.
+ */
+export async function purgeRejectedImages(db, ttlDays = REJECTED_IMAGE_TTL_DAYS) {
+  const cutoff = new Date(Date.now() - ttlDays * 86400 * 1000)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, "Z");
+
+  const { results } = await db
+    .prepare(
+      `SELECT submission_id FROM submissions
+        WHERE review_status = 'rejected'
+          AND image_b64 IS NOT NULL
+          AND COALESCE(reviewed_at, created_at) <= ?`
+    )
+    .bind(cutoff)
+    .all();
+
+  const ids = (results ?? []).map((row) => row.submission_id);
+  if (!ids.length) return { purged: 0, cutoff };
+
+  await db
+    .prepare(
+      `UPDATE submissions SET image_b64 = NULL
+        WHERE review_status = 'rejected'
+          AND image_b64 IS NOT NULL
+          AND COALESCE(reviewed_at, created_at) <= ?`
+    )
+    .bind(cutoff)
+    .run();
+  await recomputeBytesStored(db);
+
+  return { purged: ids.length, cutoff };
+}
+
+/**
+ * A user withdrawing their own shared image, before it has been approved.
+ *
+ * The erasure right the DPIA records as unimplemented (risk R8). It is scoped
+ * to the image rather than the row: the person's own scan history keeps showing
+ * that they ran this scan and what the model said, which is what they came for,
+ * while the copy kept for research review disappears.
+ *
+ * The window closes at approval, and that is a real limit rather than a policy
+ * choice. Once a batch is exported the image is in a training corpus and, after
+ * a run, distributed through weights that cannot be unlearned -- so promising
+ * erasure past that point would be promising something this system cannot do.
+ * The consent copy says so before the upload, which is the honest place to say
+ * it.
+ *
+ * A row belonging to somebody else returns 404 rather than 403, so this cannot
+ * be used to discover which submission ids exist.
+ */
+async function withdrawSubmission(db, submissionId, userId) {
+  if (!userId) return fail(400, "user_id is required");
+
+  const row = await db
+    .prepare(
+      "SELECT user_id, review_status, shared, image_b64 FROM submissions WHERE submission_id = ?"
+    )
+    .bind(submissionId)
+    .first();
+  if (!row || !timingSafeEqual(String(row.user_id), String(userId))) {
+    return fail(404, "no such submission");
+  }
+  if (row.review_status === "approved") {
+    return fail(409, "this image has already been approved and included in the training set, so it can no longer be withdrawn");
+  }
+  if (!row.image_b64 && row.shared !== 1) {
+    // Already withdrawn, or never shared. Succeeding is the honest answer: the
+    // caller asked for the image to be gone and the image is gone.
+    return json({ submission_id: submissionId, withdrawn: true, already: true });
+  }
+
+  await db
+    .prepare(
+      `UPDATE submissions SET image_b64 = NULL, shared = 0, consent_at = NULL
+        WHERE submission_id = ?`
+    )
+    .bind(submissionId)
+    .run();
+  await recomputeBytesStored(db);
+
+  return json({ submission_id: submissionId, withdrawn: true, already: false });
+}
+
 // --- Admin ------------------------------------------------------------------
 
 async function pendingReview(db, limit, includeImages, bucket) {
@@ -1163,6 +1296,15 @@ const worker = {
         return await submitFeedback(db, feedback[1], await readJson(request));
       }
 
+      // The owner of a row asking for their image back. `user_id` arrives in
+      // the body because this layer has no session; the caller establishes it
+      // from the session cookie and this function checks the row against it.
+      const withdraw = path.match(/^\/submissions\/([^/]+)\/withdraw$/);
+      if (method === "POST" && withdraw) {
+        const body = await readJson(request);
+        return await withdrawSubmission(db, withdraw[1], body.user_id);
+      }
+
       if (method === "GET" && path === "/admin/pending") {
         return await pendingReview(
           db,
@@ -1177,6 +1319,12 @@ const worker = {
       }
       if (method === "POST" && path === "/admin/export") {
         return await exportBatch(db, await readJson(request));
+      }
+      // Also runs on a schedule; see the scheduled handler in worker/index.js.
+      // Exposed here as well so it can be triggered by hand after a change to
+      // the retention window, without waiting a day for the cron.
+      if (method === "POST" && path === "/admin/purge") {
+        return json(await purgeRejectedImages(db));
       }
 
       return fail(404, `no route for ${method} ${path}`);

@@ -75,6 +75,21 @@ export const reviewSubmission = async (submissionId, body) =>
     }),
   );
 
+/**
+ * Withdraw your own shared image, before it has been approved.
+ *
+ * The account is not a parameter: the Worker takes it from the session cookie
+ * and the storage layer re-checks the row against it, so this cannot be pointed
+ * at somebody else's submission.
+ */
+export const withdrawSubmission = async (submissionId) =>
+  unwrap(
+    await fetch(`/api/submissions/${encodeURIComponent(submissionId)}/withdraw`, {
+      method: "POST",
+      credentials: "same-origin",
+    }),
+  );
+
 export async function signOut() {
   return unwrap(
     await fetch("/api/auth/signout", { method: "POST", credentials: "same-origin" }),

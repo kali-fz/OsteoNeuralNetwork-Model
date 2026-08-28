@@ -22,7 +22,11 @@
  * and the spend guards therefore keep exactly one implementation.
  */
 
-import { ADMIN_USER_ID, handleApiRequest } from "../cloudflare/src/worker.js";
+import {
+  ADMIN_USER_ID,
+  handleApiRequest,
+  purgeRejectedImages,
+} from "../cloudflare/src/worker.js";
 import { InferenceContainer, inferenceStub } from "./container.js";
 import { budgetStatus } from "./lib/breaker.js";
 import { resolveGoogleAccount } from "./lib/account.js";
@@ -572,6 +576,19 @@ export default {
         );
       }
 
+      // Withdrawing your own shared image. The submission id comes from the
+      // URL but the account does not: it is taken from the session cookie, and
+      // the storage layer re-checks the row against it, so naming somebody
+      // else's submission gets a 404 rather than deleting their image.
+      const withdraw = path.match(/^\/api\/submissions\/([^/]+)\/withdraw$/);
+      if (method === "POST" && withdraw) {
+        if (!session) return fail(401, "sign in first");
+        return forward(request, env, `/submissions/${withdraw[1]}/withdraw`, {
+          method: "POST",
+          body: { user_id: session.uid },
+        });
+      }
+
       if (method === "POST" && path === "/api/warmup") return warmup(request, env);
       if (method === "POST" && path === "/api/scan") return scan(request, env);
 
@@ -602,5 +619,46 @@ export default {
       console.error("unhandled", error);
       return fail(500, "internal error");
     }
+  },
+
+  /**
+   * The retention job. Runs daily; deletes rejected images older than a week.
+   *
+   * WHY A CRON HERE IS NOT THE CRON THIS PROJECT FORBIDS
+   * ----------------------------------------------------
+   * wrangler.jsonc warns that a cron trigger is "the single most expensive
+   * thing that could be added here". That warning is about a *keep-warm*
+   * heartbeat: something that periodically reaches the container, which bills
+   * by wall-clock runtime and would therefore never be allowed to sleep. At
+   * roughly $0.074/hour, a container kept awake by a schedule is about $53 a
+   * month.
+   *
+   * This handler touches D1 and nothing else. It never resolves the container
+   * binding, never calls inferenceStub, and cannot wake anything that bills by
+   * time. A scheduled invocation is charged as one request, so a daily run is
+   * about 30 requests a month against an allowance of millions.
+   *
+   * Keep it that way. If this function ever needs the model, it does not need
+   * the model -- it needs to become a route somebody triggers deliberately.
+   *
+   * Daily rather than weekly, with a seven-day window, so a rejected image is
+   * gone within about a week of rejection rather than up to a fortnight.
+   */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const result = await purgeRejectedImages(env.DB);
+          if (result.purged) {
+            console.log(`retention: deleted ${result.purged} rejected image(s) older than ${result.cutoff}`);
+          }
+        } catch (error) {
+          // Logged, never thrown. A failed purge is worth knowing about, but
+          // retrying it in a minute would not help and the next run is a day
+          // away, which is soon enough for a seven-day window.
+          console.error("retention: purge failed", error);
+        }
+      })(),
+    );
   },
 };

@@ -149,7 +149,7 @@ def main() -> int:
         if pending:
             print(
                 f"\n{pending} submission(s) are waiting for you in the review console:\n"
-                "  .venv\\Scripts\\python.exe -m streamlit run review_app.py --server.port 8502"
+                "  https://onnm.kali-fz.workers.dev/admin"
             )
         return 0
 
