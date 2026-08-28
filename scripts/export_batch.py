@@ -164,15 +164,28 @@ def _lesion_record(row: dict, images_dir: Path) -> dict:
     submission_id = row["submission_id"]
     array, destination = _decode_and_save(row, images_dir)
     encoded = row["image_b64"]
+    digest = hashlib.sha256(base64.b64decode(encoded)).hexdigest()
 
     return {
         "image": manifest_path(destination),
         "image_id": submission_id,
         "label": LABEL_TO_INDEX[row["admin_label"]],
-        # Each community submission is its own patient group. Grouping exists to
-        # stop multiple views of one patient straddling a split; unrelated
-        # uploads share no patient, so one group each is both correct and safe.
-        "patient_id": f"community-{submission_id}",
+        # The group is the IMAGE, not the submission.
+        #
+        # This was the submission id, on the reasoning that unrelated uploads
+        # share no patient, so one group each is correct and safe. That reasoning
+        # has a hole, and it is the common case rather than an exotic one: one
+        # person uploading one file twice produces two submissions, two ids and
+        # therefore two groups -- so make_splits.py, which keeps groups intact
+        # precisely to stop this, is free to put one copy in train and the other
+        # in val. The validation score then partly measures memorisation of an
+        # image the model was trained on, and reports it as generalisation.
+        #
+        # Keying on the content hash closes that: byte-identical images are one
+        # group by construction, whoever sent them and however often. It cannot
+        # group two *different* views of one patient, but nothing in an anonymous
+        # upload could, and over-grouping is the safe direction to be wrong in.
+        "patient_id": f"community-{digest[:16]}",
         "anatomy": "",
         # Always train. Community data must never enter val or test: those sets
         # measure generalisation against BTXRD's held-out patients, and mixing
@@ -181,7 +194,7 @@ def _lesion_record(row: dict, images_dir: Path) -> dict:
         "split": "train",
         "source": "community",
         "license": "user-submitted, consented",
-        "sha256": hashlib.sha256(base64.b64decode(encoded)).hexdigest(),
+        "sha256": digest,
         "width": int(array.shape[1]),
         "height": int(array.shape[0]),
     }

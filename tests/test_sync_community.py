@@ -212,16 +212,83 @@ def test_community_rows_are_pinned_to_the_train_split(store: Path, tmp_path: Pat
     assert {row["split"] for row in rows} == {"train"}
 
 
-def test_each_submission_is_its_own_patient_group(store: Path, tmp_path: Path) -> None:
-    """Grouping stops multiple views of one patient straddling a split.
+def _batch_manifest(store: Path, batch_id: str) -> list[dict]:
+    """The rows exactly as ``write_batch`` wrote them, before any rebuild."""
+    path = store / batch_id / "manifest.csv"
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
 
-    Unrelated uploads share no patient, so one group each is both correct and
-    safe -- and it keeps community rows from ever being grouped with a BTXRD
-    surrogate patient id by collision.
+
+def test_unrelated_uploads_get_different_patient_groups(store: Path, tmp_path: Path) -> None:
+    """Grouping must not collapse unrelated images into one group.
+
+    Two different pictures are two groups, which is what lets make_splits.py
+    distribute them independently, and what keeps community rows from ever
+    colliding with a BTXRD surrogate patient id.
     """
     _write("batch-1", [_row("bone-1", "benign", "valid_bone"),
                        _row("bone-2", "normal", "valid_bone", shade=30)], store)
     rows = _rebuild(store, "manifest.csv", tmp_path / "m.csv", MANIFEST_COLUMNS)
     groups = [row["patient_id"] for row in rows]
-    assert groups == ["community-bone-1", "community-bone-2"]
-    assert len(set(groups)) == len(groups)
+    assert len(set(groups)) == len(groups) == 2
+    assert all(group.startswith("community-") for group in groups)
+
+
+def test_the_same_image_uploaded_twice_is_one_patient_group(store: Path) -> None:
+    """The property that stops a repeat upload inflating the validation score.
+
+    Two submissions of the identical file are two submission ids, and under the
+    previous rule that made them two patient groups -- so make_splits.py, whose
+    entire job is keeping a group on one side of a split, was free to train on
+    one copy and validate on the other. The score then partly measured recall of
+    an image the model had already seen.
+
+    Byte-identical images therefore share a group, and this is asserted against
+    the batch manifest rather than the rebuilt one because the rebuild drops the
+    second copy outright -- a different guarantee, tested below.
+    """
+    _write("batch-1", [_row("first-upload", "malignant", "valid_bone"),
+                       _row("second-upload", "malignant", "valid_bone")], store)
+
+    rows = _batch_manifest(store, "batch-1")
+    assert [row["image_id"] for row in rows] == ["first-upload", "second-upload"]
+    assert rows[0]["sha256"] == rows[1]["sha256"], "fixture should produce one image twice"
+    assert rows[0]["patient_id"] == rows[1]["patient_id"]
+
+
+def test_a_repeat_upload_appears_once_in_the_rebuilt_manifest(
+    store: Path, tmp_path: Path
+) -> None:
+    """One distinct image, one training row, however many times it was sent.
+
+    People test a tool by scanning the same file several times, and each of those
+    scans is a separate submission that can be approved separately. Without this
+    the picture enters the training set three times and counts three times in the
+    loss, silently reweighting whichever class it belongs to.
+    """
+    _write("batch-1", [_row("upload-a", "normal", "valid_bone"),
+                       _row("upload-b", "normal", "valid_bone"),
+                       _row("upload-c", "normal", "valid_bone", shade=30)], store)
+
+    rows = _rebuild(store, "manifest.csv", tmp_path / "m.csv", MANIFEST_COLUMNS)
+    assert len(rows) == 2, "the two identical uploads should collapse to one row"
+    assert len({row["sha256"] for row in rows}) == 2
+    # The first copy is the one kept, so repeated rebuilds agree with each other.
+    assert [row["image_id"] for row in rows] == ["upload-a", "upload-c"]
+
+
+def test_deduplication_is_stable_across_rebuilds(store: Path, tmp_path: Path) -> None:
+    """Idempotency, restated for the dedup path.
+
+    The manifest is a derived file rebuilt on every sync. If dedup picked a
+    different survivor each time, the training set would change without anything
+    being approved, which is exactly the class of silent drift this module's
+    rebuild-don't-append design exists to prevent.
+    """
+    _write("batch-1", [_row("upload-a", "benign", "valid_bone"),
+                       _row("upload-b", "benign", "valid_bone")], store)
+
+    first = _rebuild(store, "manifest.csv", tmp_path / "one.csv", MANIFEST_COLUMNS)
+    second = _rebuild(store, "manifest.csv", tmp_path / "two.csv", MANIFEST_COLUMNS)
+    assert first == second
+    assert tmp_path.joinpath("one.csv").read_bytes() == tmp_path.joinpath("two.csv").read_bytes()

@@ -88,9 +88,21 @@ def _rebuild(store: Path, name: str, target: Path, columns: list[str]) -> list[d
     ``build_records`` to skip with a warning. The difference matters: a warning
     buried in a training log is how a batch silently shrinks, whereas a count
     printed by the command that just claimed the rows is something you notice.
+
+    Repeat copies of one image are dropped too, keeping the first. People test a
+    tool by scanning the same file several times, and each of those scans is a
+    separate submission that can be approved separately -- so without this, one
+    picture enters the training set three times and counts three times in the
+    loss. The first sync from the web review console claimed fourteen rows that
+    were eight distinct images. Grouping (see ``_lesion_record`` in
+    ``export_batch.py``) stops the copies straddling a split; this stops them
+    being over-weighted, and the two together are what make a repeat upload
+    harmless rather than quietly damaging.
     """
     rows: list[dict] = []
     dropped = 0
+    duplicates = 0
+    seen: set[str] = set()
     for batch_manifest in sorted(store.glob(f"*/{name}")):
         with batch_manifest.open(newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
@@ -100,6 +112,14 @@ def _rebuild(store: Path, name: str, target: Path, columns: list[str]) -> list[d
                 if not image.is_file():
                     dropped += 1
                     continue
+                # The sorted glob above makes "the first copy" a stable choice,
+                # so repeated rebuilds produce byte-identical manifests.
+                digest = row.get("sha256") or ""
+                if digest and digest in seen:
+                    duplicates += 1
+                    continue
+                if digest:
+                    seen.add(digest)
                 rows.append({column: row.get(column, "") for column in columns})
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +133,12 @@ def _rebuild(store: Path, name: str, target: Path, columns: list[str]) -> list[d
             "%d row(s) in %s reference images that are no longer on disk and were "
             "left out. If the store is on Drive, check it is mounted.",
             dropped, target.name,
+        )
+    if duplicates:
+        logger.info(
+            "%d repeat upload(s) of an image already present were left out of %s; "
+            "each distinct image appears exactly once.",
+            duplicates, target.name,
         )
     return rows
 
