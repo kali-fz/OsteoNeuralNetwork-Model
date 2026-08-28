@@ -1,0 +1,55 @@
+# Dependencies for the Cloudflare Container that serves inference.
+#
+# HOW THIS LIST WAS DERIVED
+# -------------------------
+# Empirically, not by reading imports. `inference/service.py` was imported in a
+# fully-populated environment and the resulting `sys.modules` was filtered to
+# third-party top-level packages. Everything below was actually loaded; nothing
+# was included on the assumption that it might be needed.
+#
+# WHAT THAT REMOVED, RELATIVE TO THE ROOT requirements.txt
+# --------------------------------------------------------
+#   streamlit, altair, seaborn  - UI, replaced by the Pages frontend
+#   Authlib, httpx, itsdangerous - existed only to support st.login()
+#   scikit-learn                 - used by onnm/metrics.py and reporting, which
+#                                  the serving path never touches
+#   openpyxl                     - reads the BTXRD .xlsx label sheet at training
+#                                  time only
+#
+# WHAT LOOKS REMOVABLE BUT IS NOT
+# -------------------------------
+#   pandas       - onnm/dataset.py imports it at module level, and
+#                  onnm/inference.py imports build_transforms from there.
+#   matplotlib   - render_overlay and explainability use it for the colormap.
+#   scipy, scikit-image, opencv-python-headless, tifffile
+#                - pulled in by monai.transforms. MONAI degrades silently when
+#                  its optional backends are missing, which would surface as a
+#                  wrong preprocessing result rather than an ImportError. Not
+#                  worth the image-size saving.
+#
+# The CPU wheel index is mandatory. The CUDA wheels are ~2.5 GB and there is no
+# GPU in a Cloudflare Container, so installing them would inflate the image and
+# lengthen every cold start for nothing.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.9.1
+torchvision==0.24.1
+monai==1.5.2
+
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-image>=0.22
+opencv-python-headless>=4.9
+tifffile>=2024.1
+
+pydicom>=2.4
+pillow>=10.0
+matplotlib>=3.8
+pyyaml>=6.0
+tqdm>=4.66
+
+# The HTTP shell.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9

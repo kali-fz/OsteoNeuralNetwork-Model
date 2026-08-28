@@ -1065,8 +1065,20 @@ async function exportBatch(db, body) {
 }
 
 // --- Router -----------------------------------------------------------------
+//
+// TWO ENTRY POINTS, ONE IMPLEMENTATION
+// ------------------------------------
+// This object is still the deployed `onnm-community` Worker and its behaviour is
+// unchanged. It is also imported by the Cloudflare Pages Functions layer
+// (`functions/api/[[path]].js`), which serves the same data to the browser from
+// the site's own origin so that a session cookie works and CORS is not needed.
+//
+// The Pages layer does NOT proxy to this transparently -- it exposes a curated,
+// session-scoped subset and calls in here for the storage work. Routing and the
+// review gate therefore have exactly one implementation, which is the point: two
+// routers that must agree forever is the failure this project avoids elsewhere.
 
-export default {
+const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -1171,3 +1183,15 @@ export default {
     }
   },
 };
+
+export default worker;
+
+/**
+ * The router as a plain function, for callers that are not a Worker entry point.
+ *
+ * The Pages Functions layer uses this to reach the same handlers with the same
+ * authentication and the same review gate, after it has established which
+ * signed-in account is asking. It passes the app API key itself, so the key
+ * stays server-side and is never sent to a browser.
+ */
+export const handleApiRequest = (request, env) => worker.fetch(request, env);
