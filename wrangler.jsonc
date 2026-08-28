@@ -1,0 +1,111 @@
+/**
+ * The ONNM web application: one Worker serving the site, the API and the model.
+ *
+ * WHY THIS IS NOT A PAGES PROJECT
+ * -------------------------------
+ * The plan was Cloudflare Pages plus Pages Functions. It cannot be. Cloudflare
+ * Containers are addressed through a Durable Object, and Pages projects cannot
+ * define Durable Object classes -- the documentation is explicit: "You cannot
+ * create and deploy a Durable Object within a Pages project." Container
+ * bindings are not a supported Pages binding either.
+ *
+ * So the site is a single Worker with static assets, which is Cloudflare's
+ * current recommended shape and the only one that can hold all four pieces:
+ * the static frontend, the API, the Durable Object, and the container.
+ *
+ * WHAT THIS DOES NOT TOUCH
+ * ------------------------
+ * `cloudflare/wrangler.toml` still deploys the existing `onnm-community` Worker
+ * against the SAME D1 database bound below. That deployment is left running
+ * throughout the migration so the Streamlit app keeps working as a rollback.
+ * There is no second database, no second API key, and no schema migration.
+ *
+ * BILLING POSTURE -- READ BEFORE ADDING A BINDING
+ * -----------------------------------------------
+ * This account now has a payment method, so overage can bill. It could not
+ * before. The guards are, in order of how much they save you:
+ *
+ *   1. `max_instances: 1`      - one container can exist, ever.
+ *   2. `sleepAfter = "90s"`    - set in worker/container.js.
+ *   3. No cron trigger         - a keep-warm heartbeat is the single most
+ *                                expensive thing that could be added here.
+ *   4. The D1 runtime meter    - worker/lib/breaker.js, 5 hours/month.
+ *
+ * `standard-1` costs about $0.074/hour of runtime. Left awake continuously that
+ * is roughly $53/month; the guards above cap it near $0.37. Do not add R2, KV,
+ * Queues, Hyperdrive or Vectorize. The only Durable Object here is the one the
+ * Containers runtime itself requires.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  "name": "onnm",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+
+  "observability": {
+    "enabled": true,
+    // Matches cloudflare/wrangler.toml. Full logging is not needed and Workers
+    // Logs are billable beyond the included allowance.
+    "head_sampling_rate": 0.1
+  },
+
+  "assets": {
+    "directory": "web/dist",
+    "binding": "ASSETS",
+    // Without this, the SPA fallback below would answer /api/* with index.html
+    // and the API would silently return HTML to every caller.
+    "run_worker_first": ["/api/*"],
+    // The frontend is a client-side router: unknown paths must return the app
+    // shell so a deep link such as /scanner loads rather than 404s.
+    "not_found_handling": "single-page-application"
+  },
+
+  // The SAME database the Streamlit app uses. Not a copy, not a migration.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "onn-model",
+      "database_id": "961f0440-7ff1-466e-88fe-0c2b30f3083b"
+    }
+  ],
+
+  "containers": [
+    {
+      "class_name": "InferenceContainer",
+      "image": "./inference/Dockerfile",
+      // Required. It defaults to the Dockerfile's own directory, but that
+      // Dockerfile copies src/ and inference/model/, which live above it.
+      "image_build_context": ".",
+      // 1/2 vCPU, 4 GiB, 8 GB disk. The smallest instance with enough memory
+      // for torch plus a Grad-CAM backward pass, and the cheapest per hour.
+      "instance_type": "standard-1",
+      // The most important line in this file.
+      "max_instances": 1
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ONNM_INFERENCE",
+        "class_name": "InferenceContainer"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["InferenceContainer"]
+    }
+  ],
+
+  "vars": {
+    // Non-secret configuration. Secrets (SESSION_SECRET, GOOGLE_CLIENT_SECRET,
+    // API_KEY, INFERENCE_KEY) are set with `wrangler secret put` and never
+    // appear in this file.
+    "ONNM_CHECKPOINT": "/opt/onnm/best.pt"
+  }
+}

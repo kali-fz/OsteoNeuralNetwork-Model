@@ -89,3 +89,10 @@ uv.lock
 # Container build context: staged model weights (27 MB, must never be public).
 # Populated by scripts/stage_inference_model.py from reports/PRODUCTION.
 inference/model/
+
+# Node dependencies for the Worker and the Vite frontend.
+node_modules/
+
+# wrangler's local state at the repository root (the Worker that serves the
+# site). cloudflare/.wrangler/ above covers the older onnm-community Worker.
+.wrangler/
