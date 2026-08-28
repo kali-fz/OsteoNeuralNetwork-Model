@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ONNM — Osteosarcoma Neural Network Model</title>
+    <meta
+      name="description"
+      content="A research demonstration that screens bone radiographs for possible lesions and shows what the model looked at. Not a medical device."
+    />
+    <!--
+      No third-party analytics, no tag manager, no font CDN beyond the one
+      stylesheet theme.css imports. Every request this page makes is either to
+      its own origin or to Google's font CDN, which keeps the privacy statement
+      in compliance/DPIA.md true by construction.
+    -->
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <div id="app" class="onnm-shell">
+      <!--
+        Server-rendered nothing: the router paints the first screen. A visitor
+        with JavaScript disabled sees the message below, which is honest about
+        why rather than showing an empty page.
+      -->
+      <noscript>
+        <p style="padding: 48px 0">
+          ONNM needs JavaScript to run. The scanner uploads an image, draws a
+          heat map over it and renders an interactive globe, none of which has a
+          meaningful static fallback.
+        </p>
+      </noscript>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

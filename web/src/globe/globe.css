@@ -1,4 +1,4 @@
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 460px; overflow: hidden;
                 background: transparent; }
   #globe-wrap {

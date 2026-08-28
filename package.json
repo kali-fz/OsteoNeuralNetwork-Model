@@ -12,7 +12,9 @@
     "deploy": "npm run stage-model && npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.1.1"
+    "@cloudflare/containers": "^0.1.1",
+    "d3-geo": "^3.1.1",
+    "topojson-client": "^3.1.0"
   },
   "devDependencies": {
     "vite": "^6.0.0",
