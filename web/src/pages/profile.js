@@ -80,7 +80,8 @@ export async function renderProfile(main, state) {
     return null;
   }
 
-  const rows = payload?.submissions || payload?.rows || [];
+  // listUserSubmissions in cloudflare/src/worker.js returns { submissions: [...] }.
+  const rows = payload?.submissions || [];
   if (!rows.length) {
     host.innerHTML = `<p class="onnm-muted">
       You have not scanned anything yet. Scans you run will be listed here.
