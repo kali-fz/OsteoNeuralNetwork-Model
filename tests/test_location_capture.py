@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import sqlite3
 import sys
 
@@ -78,6 +79,13 @@ def test_capture_is_one_use_and_can_repair_old_server_country() -> None:
 
 
 def test_capture_schema_is_country_only_and_migration_reaches_v6() -> None:
+    """The capture tables hold a country and nothing that could locate a person.
+
+    The schema version assertion is a floor rather than an equality. What this
+    test cares about is that migration 0006 landed; pinning the exact head
+    version made every later migration fail here for no reason, which trains
+    people to edit the expected number rather than read the failure.
+    """
     con = sqlite3.connect(":memory:")
     con.executescript(SCHEMA.read_text(encoding="utf-8"))
     user_columns = {row[1] for row in con.execute("PRAGMA table_info(users)")}
@@ -94,7 +102,11 @@ def test_capture_schema_is_country_only_and_migration_reaches_v6() -> None:
     }
     assert "latitude" not in token_table.lower()
     assert "longitude" not in token_table.lower()
-    assert "schema_version', '6" in schema_source
+
+    match = re.search(r"schema_version', '(\d+)'", schema_source)
+    assert match, "schema.sql must seed a schema_version"
+    assert int(match.group(1)) >= 6, "the geolocation migration must be included"
+
     assert "schema_version = '6'" not in MIGRATION.read_text(encoding="utf-8")
     assert "SET value = '6'" in MIGRATION.read_text(encoding="utf-8")
 

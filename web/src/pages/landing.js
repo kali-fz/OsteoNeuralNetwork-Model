@@ -76,7 +76,7 @@ export async function renderLanding(main, state) {
   const signedIn = Boolean(state.session?.signed_in);
   const cta = signedIn
     ? `<a class="onnm-home-cta onnm-btn onnm-btn-primary" href="/scanner" data-link>Test ONNM v${MODEL_VERSION}</a>`
-    : `<a class="onnm-home-cta onnm-btn onnm-btn-primary" href="/api/auth/google/start">Create a free account with Google</a>`;
+    : `<a class="onnm-home-cta onnm-btn onnm-btn-primary" href="/terms" data-link>Create a free account with Google</a>`;
 
   main.insertAdjacentHTML(
     "beforeend",

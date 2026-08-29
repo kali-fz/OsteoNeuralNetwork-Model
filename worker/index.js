@@ -31,6 +31,15 @@ import { InferenceContainer, inferenceStub } from "./container.js";
 import { budgetStatus } from "./lib/breaker.js";
 import { resolveGoogleAccount } from "./lib/account.js";
 import { bucketFor, isAdminSession } from "./lib/review.js";
+import {
+  acceptedVersionFromToken,
+  clearTermsCookieHeader,
+  hasAcceptedTerms,
+  signTermsToken,
+  TERMS_COOKIE,
+  TERMS_VERSION,
+  termsCookieHeader,
+} from "./lib/terms.js";
 import { buildMarkers } from "./lib/geo.js";
 import {
   authorizationUrl,
@@ -151,6 +160,22 @@ async function authStart(request, env) {
     return fail(503, "Google sign-in is not configured on this deployment");
   }
 
+  // The gate. Without a valid acceptance cookie no account can be created,
+  // whatever the page that sent the visitor here happened to render. Bouncing
+  // back to /terms rather than returning an error page, because this URL is
+  // reached by a top-level navigation and whatever it returns is what is seen.
+  const accepted = await acceptedVersionFromToken(
+    readCookie(request, TERMS_COOKIE),
+    env.SESSION_SECRET,
+  );
+  if (!accepted) {
+    const origin = new URL(request.url).origin;
+    return new Response(null, {
+      status: 302,
+      headers: { location: `${origin}/terms?auth_error=terms_required` },
+    });
+  }
+
   const state = randomToken();
   const verifier = randomToken(48);
   const challenge = await codeChallenge(verifier);
@@ -190,6 +215,11 @@ async function authCallback(request, env) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state) return bounce("missing_code");
+
+  const acceptedVersion = await acceptedVersionFromToken(
+    readCookie(request, TERMS_COOKIE),
+    env.SESSION_SECRET,
+  );
 
   const pending = await verifySession(readCookie(request, OAUTH_COOKIE), env.SESSION_SECRET);
   if (!pending) return bounce("expired");
@@ -236,7 +266,9 @@ async function authCallback(request, env) {
     createUser: (body) =>
       forwardJson(request, env, "/users", {
         method: "POST",
-        body,
+        // The version agreed to on the way in. authStart refused to start this
+        // flow without it, so by here it is known to exist and to be ours.
+        body: { ...body, tos_version: acceptedVersion || TERMS_VERSION },
       }),
   });
   if (!account.ok) {
@@ -286,8 +318,79 @@ async function authCallback(request, env) {
     headers: [
       ["location", `${origin}/`],
       ["set-cookie", clearOauthCookieHeader()],
+      // Spent. It exists only to carry the acceptance across the trip to Google,
+      // and the account row now holds it durably.
+      ["set-cookie", clearTermsCookieHeader()],
       ["set-cookie", sessionCookieHeader(token)],
     ],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The Terms gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The account row behind a session, or null.
+ *
+ * Looked up by Google subject rather than by the `uid` in the cookie, because the
+ * subject is the identity Google vouched for and the one `users` is keyed on for
+ * OAuth accounts.
+ */
+async function accountFor(request, env, session) {
+  if (!session?.sub) return null;
+  const found = await forwardJson(request, env, "/users/by-subject", {
+    method: "GET",
+    search: { subject: session.sub },
+  });
+  return found.ok ? found.payload : null;
+}
+
+/**
+ * Has the acting account accepted the Terms?
+ *
+ * A database read on every call rather than a claim carried in the session
+ * cookie. The cookie is issued for eight hours; if acceptance lived in it, an
+ * account that agreed would keep being asked until it expired, and worse, an
+ * account whose acceptance was withdrawn would keep scanning. The same reasoning
+ * already keeps `is_admin` out of the cookie -- see lib/session.js.
+ */
+async function sessionHasAcceptedTerms(request, env, session) {
+  if (!session) return false;
+  return hasAcceptedTerms(await accountFor(request, env, session));
+}
+
+/**
+ * Record acceptance. Works signed in and signed out; the server decides which.
+ *
+ * Signed in, it writes to the account row. Signed out, there is no row yet, so it
+ * mints the short-lived signed cookie that `authStart` requires -- which is what
+ * makes the tick box on the page consequential rather than decorative.
+ *
+ * The recorded version is always TERMS_VERSION, never the value the client sent.
+ * A client that could choose its own version string could choose to have agreed
+ * to something else.
+ */
+async function acceptTerms(request, env) {
+  if (!env.SESSION_SECRET) return fail(503, "sign-in is not configured on this deployment");
+
+  const session = await currentSession(request, env);
+
+  if (session) {
+    const recorded = await forwardJson(request, env, "/users/terms", {
+      method: "POST",
+      body: { user_id: session.uid, version: TERMS_VERSION },
+    });
+    if (!recorded.ok) {
+      console.error("terms: could not record acceptance", recorded.status, recorded.payload);
+      return fail(502, "your agreement could not be saved; please try again");
+    }
+    return json({ accepted: true, version: TERMS_VERSION, signed_in: true });
+  }
+
+  const token = await signTermsToken(env.SESSION_SECRET);
+  return json({ accepted: true, version: TERMS_VERSION, signed_in: false }, 200, {
+    "set-cookie": termsCookieHeader(token),
   });
 }
 
@@ -307,6 +410,12 @@ async function warmup(request, env) {
   const session = await currentSession(request, env);
   if (!session) return fail(401, "sign in first");
 
+  // Waking a container that bills by the second, for an account that is not
+  // allowed to scan, would be paying for a refusal.
+  if (!(await sessionHasAcceptedTerms(request, env, session))) {
+    return json({ warming: false, reason: "terms_required" }, 200);
+  }
+
   const budget = await budgetStatus(env.DB);
   if (!budget.allowed) return json({ warming: false, budget }, 200);
 
@@ -324,6 +433,14 @@ async function warmup(request, env) {
 async function scan(request, env) {
   const session = await currentSession(request, env);
   if (!session) return fail(401, "sign in first");
+
+  // Routing sends an unaccepted account to /terms, but routing is a convention
+  // any client can ignore. This is the part that holds.
+  if (!(await sessionHasAcceptedTerms(request, env, session))) {
+    return fail(403, "please accept the Terms of use before scanning", {
+      reason: "terms_required",
+    });
+  }
 
   // The spend guard runs before any container work, so an exhausted budget
   // costs nothing to refuse.
@@ -549,8 +666,15 @@ export default {
           // to decide whether to draw the Admin link; every /api/admin/* route
           // re-derives it and would refuse regardless of what the page shows.
           is_admin: isAdminSession(session),
+          // Read from the account row, not from the cookie, so that agreeing
+          // takes effect on the next request rather than the next sign-in.
+          terms_accepted: await sessionHasAcceptedTerms(request, env, session),
+          terms_version: TERMS_VERSION,
           budget: await budgetStatus(env.DB),
         });
+      }
+      if (method === "POST" && path === "/api/terms/accept") {
+        return acceptTerms(request, env);
       }
       if (method === "POST" && path === "/api/auth/signout") {
         return json({ signed_out: true }, 200, { "set-cookie": clearSessionCookieHeader() });

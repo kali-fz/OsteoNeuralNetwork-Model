@@ -384,6 +384,7 @@ async function createUser(db, body) {
     email,
     password_hash,
     tos_accepted_at,
+    tos_version,
     is_admin,
     auth_provider,
     provider_subject,
@@ -434,7 +435,7 @@ async function createUser(db, body) {
     await db
       .prepare(
         `INSERT INTO users (user_id, email, password_hash, auth_provider, provider_subject,
-                            created_at, tos_accepted_at, is_admin, signup_country,
+                            created_at, tos_accepted_at, tos_version, is_admin, signup_country,
                             display_name, profile_picture_url)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
@@ -446,6 +447,7 @@ async function createUser(db, body) {
         provider === "password" ? null : String(provider_subject),
         created,
         tos_accepted_at || created,
+        tos_version || null,
         is_admin ? 1 : 0,
         // Filled only after the signed-in browser reaches /location/capture.
         null,
@@ -473,7 +475,7 @@ async function getUserBySubject(db, subject) {
   const row = await db
     .prepare(
       `SELECT user_id, email, password_hash, auth_provider, provider_subject,
-              created_at, tos_accepted_at, is_admin, display_name,
+              created_at, tos_accepted_at, tos_version, is_admin, display_name,
               profile_picture_url, public_contributor_profile
          FROM users WHERE provider_subject = ?`
     )
@@ -487,7 +489,7 @@ async function getUserByEmail(db, email) {
   const row = await db
     .prepare(
       `SELECT user_id, email, password_hash, auth_provider, provider_subject,
-              created_at, tos_accepted_at, is_admin, display_name,
+              created_at, tos_accepted_at, tos_version, is_admin, display_name,
               profile_picture_url, public_contributor_profile
        FROM users WHERE email = ? COLLATE NOCASE`
     )
@@ -904,6 +906,42 @@ async function listUserSubmissions(db, userId, limit) {
 // --- Retention --------------------------------------------------------------
 
 /**
+ * Record that an existing account has accepted a version of the Terms.
+ *
+ * Separate from createUser because the common case is not a new account: every
+ * account that existed before the Terms gate has `tos_version` NULL, which is an
+ * honest "agreed to something unrecorded, before there was anything to agree to".
+ * This is how those rows catch up.
+ *
+ * `tos_accepted_at` is rewritten at the same time. Until now that column held a
+ * copy of `created_at` for every Google account, because createUser bound
+ * `tos_accepted_at || created` and nothing ever sent the field -- so it recorded
+ * that a row was inserted, not that a person read anything. From here it means
+ * what its name says.
+ */
+async function acceptTerms(db, body) {
+  const { user_id, version } = body;
+  if (!user_id) return fail(400, "user_id is required");
+  if (!version || typeof version !== "string" || version.length > 64) {
+    return fail(400, "version is required");
+  }
+
+  const stamp = nowIso();
+  const result = await db
+    .prepare(
+      `UPDATE users SET tos_accepted_at = ?, tos_version = ? WHERE user_id = ?`
+    )
+    .bind(stamp, version, String(user_id))
+    .run();
+
+  // D1 reports how many rows the statement touched. Zero means the id named an
+  // account that does not exist, which is a 404 rather than a silent success.
+  if (result?.meta && result.meta.changes === 0) return fail(404, "no such user");
+
+  return json({ user_id, tos_version: version, tos_accepted_at: stamp });
+}
+
+/**
  * Recompute `meta.bytes_stored` from what is actually in the table.
  *
  * The counter is maintained incrementally on insert, which is correct while
@@ -1279,6 +1317,9 @@ const worker = {
       }
       if (method === "GET" && path === "/users/by-subject") {
         return await getUserBySubject(db, url.searchParams.get("subject"));
+      }
+      if (method === "POST" && path === "/users/terms") {
+        return await acceptTerms(db, await readJson(request));
       }
       if (method === "POST" && path === "/users/profile") {
         return await updateContributorProfile(db, await readJson(request));

@@ -25,12 +25,14 @@ import { renderLanding } from "./pages/landing.js";
 import { renderScanner } from "./pages/scanner.js";
 import { renderProfile } from "./pages/profile.js";
 import { renderAdmin } from "./pages/admin.js";
+import { renderTerms } from "./pages/terms.js";
 
 const ROUTES = {
   "/": renderLanding,
   "/scanner": renderScanner,
   "/profile": renderProfile,
   "/admin": renderAdmin,
+  "/terms": renderTerms,
 };
 
 const SITE_TITLE = "OsteoNeuralNetwork";
@@ -47,10 +49,25 @@ const ROUTE_TITLES = {
   "/scanner": `Scanner · ${SITE_TITLE}`,
   "/profile": `My profile · ${SITE_TITLE}`,
   "/admin": `Review queue · ${SITE_TITLE}`,
+  "/terms": `Terms of use · ${SITE_TITLE}`,
 };
 
-/** Pages a signed-out visitor cannot use. */
+/**
+ * Pages a signed-out visitor cannot use.
+ *
+ * `/terms` is deliberately absent: it is the page a signed-out visitor has to be
+ * able to read, since agreeing to it is what lets them sign in at all.
+ */
 const SIGNED_IN_ROUTES = new Set(["/scanner", "/profile", "/admin"]);
+
+/**
+ * Pages that need the Terms accepted, beyond merely being signed in.
+ *
+ * `/profile` is not here on purpose. Someone who has not agreed must still be able
+ * to see what is held about them and delete a shared image; locking them out of
+ * their own record would be the opposite of what the Terms promise.
+ */
+const TERMS_GATED_ROUTES = new Set(["/scanner", "/admin"]);
 
 /** Shared application state. Deliberately small and explicitly passed. */
 const state = {
@@ -92,8 +109,20 @@ function followHash() {
   }
 }
 
+/**
+ * Where "sign in" sends someone.
+ *
+ * The Terms page, not Google. Agreeing there is what mints the acceptance the
+ * Worker now demands before it will start an OAuth flow, so sending anyone
+ * straight to Google would only produce a bounce back with `terms_required`.
+ *
+ * Every sign-in affordance must call this rather than writing the URL out. The
+ * hero button on the landing page used to hardcode `/api/auth/google/start`,
+ * which meant one of the three routes into the application quietly bypassed
+ * whatever this function said.
+ */
 function signInHref() {
-  return "/api/auth/google/start";
+  return "/terms";
 }
 
 function escapeHtml(value) {
@@ -133,6 +162,8 @@ const AUTH_ERRORS = {
   registration_closed:
     "This research deployment has reached its account limit, so new sign-ups are closed.",
   account_failed: "Your account could not be opened. Please try again.",
+  terms_required:
+    "Please read and agree to the Terms of use before signing in. Your agreement may also have expired, in which case tick the box again.",
 };
 
 function renderHeader(session) {
@@ -165,7 +196,7 @@ function renderHeader(session) {
         <span>${accountName}</span>
       </a>
       <button class="onnm-site-navlink onnm-site-linkbutton" type="button" data-signout>Sign out</button>`
-    : `<a class="onnm-btn onnm-btn-primary" href="${signInHref()}">Sign in with Google</a>`;
+    : `<a class="onnm-btn onnm-btn-primary" href="${signInHref()}" data-link>Sign in with Google</a>`;
 
   return `
     <header class="onnm-header">
@@ -279,10 +310,25 @@ async function render() {
          <p class="onnm-muted">
            Scans are saved to your account, so this page needs you signed in.
          </p>
-         <p><a class="onnm-btn onnm-btn-primary" href="${signInHref()}">Sign in with Google</a></p>
+         <p><a class="onnm-btn onnm-btn-primary" href="${signInHref()}" data-link>Sign in with Google</a></p>
        </section>`,
     );
     focusRouteMain();
+    return;
+  }
+
+  // An account that predates the Terms, or one that has never agreed, is sent to
+  // read them. Only pages that act on their behalf are gated: /profile stays open
+  // so somebody who has not agreed can still see and delete what is held on them.
+  //
+  // This is routing, not enforcement. /api/scan and /api/warmup refuse the same
+  // account server-side, which is what actually holds if this check is bypassed.
+  if (
+    TERMS_GATED_ROUTES.has(path) &&
+    state.session?.signed_in &&
+    !state.session?.terms_accepted
+  ) {
+    navigate("/terms");
     return;
   }
 

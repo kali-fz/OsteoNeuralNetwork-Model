@@ -90,6 +90,24 @@ export const withdrawSubmission = async (submissionId) =>
     }),
   );
 
+/**
+ * Record that this visitor accepted the Terms.
+ *
+ * Works signed out and signed in, and the server decides which it is. Signed out
+ * it mints a short-lived signed cookie that /api/auth/google/start then requires;
+ * signed in it writes the acceptance onto the account row. Either way the answer
+ * that matters comes back from the server, so nothing here can grant access.
+ */
+export const acceptTerms = async (version) =>
+  unwrap(
+    await fetch("/api/terms/accept", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version }),
+    }),
+  );
+
 export async function signOut() {
   return unwrap(
     await fetch("/api/auth/signout", { method: "POST", credentials: "same-origin" }),

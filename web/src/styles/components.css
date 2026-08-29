@@ -805,3 +805,47 @@
 @media (max-width: 680px) {
   .onnm-terms-notice { padding: 16px 18px; }
 }
+
+/* --- Terms gate page ------------------------------------------------------ */
+/*
+ * Reuses .onnm-terms-notice from the landing page for the summary card, so the
+ * two places the Terms appear look like the same document.
+ */
+
+.onnm-terms-page { max-width: 78ch; }
+
+.onnm-terms-clauses { margin: 26px 0 0; }
+
+.onnm-terms-clause { margin-bottom: 22px; }
+.onnm-terms-clause h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 650;
+}
+.onnm-terms-clause p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.onnm-terms-clause strong { color: var(--ink); }
+
+/*
+ * The tick and the button sit in a bordered block at the end rather than loose
+ * under the last clause, so that the thing being agreed to and the act of
+ * agreeing are visibly separate.
+ */
+.onnm-terms-gate {
+  margin-top: 30px;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f2eee7;
+}
+.onnm-terms-gate .onnm-consent { margin: 0 0 18px; }
+.onnm-terms-gate p { margin: 0; }
+.onnm-terms-gate .onnm-status { margin-top: 10px; }
+
+@media (max-width: 680px) {
+  .onnm-terms-gate { padding: 18px; }
+}

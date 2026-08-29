@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS users (
 
     created_at      TEXT NOT NULL,
     tos_accepted_at TEXT NOT NULL,
+    -- The version string of the Terms that were on screen when the box was
+    -- ticked. NULL means the account predates the Terms gate and has agreed to
+    -- nothing recorded; the application treats that as not-accepted and asks on
+    -- the next visit. Backfilling a value here would be inventing consent.
+    tos_version     TEXT,
 
     -- Admin is one specific person, and the database says so.
     --
@@ -330,7 +335,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('bytes_stored', '0');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '6');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '7');
 
 -- Per-user, per-day write counter. Bounds one account's ability to consume
 -- the shared free tier, whether by enthusiasm or malice.
