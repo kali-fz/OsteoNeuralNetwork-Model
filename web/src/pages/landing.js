@@ -98,16 +98,11 @@ export async function renderLanding(main, state) {
           <p class="onnm-hero-eyebrow">Open bone X-ray research · ONNM v${MODEL_VERSION}</p>
           <h1 class="onnm-hero-title">Test the current model and help us train the next one.</h1>
           <p class="onnm-hero-subtitle">
-            ONNM v${MODEL_VERSION} is a trained model that looks at plain bone X-rays and
-            flags where a lesion might be, and creating an account to use it costs
-            nothing. We built it as a community project, because a public dataset can
-            only take a model so far on its own, and every image someone chooses to
-            share, once a reviewer has checked it, becomes part of what trains the next
-            version, so it keeps improving because the people using it are willing to
-            help teach it. This first version has already been trained and tested end to
-            end, from a raw X-ray to a calibrated probability and a heat map of what it
-            actually looked at, and what we are working towards next is teaching it to
-            tell apart the five main types of bone cancer, and more!
+            ONNM v${MODEL_VERSION} is a trained model that screens bone X-rays for
+            possible lesions, and creating an account to use it is free. It's
+            community-driven: every image someone chooses to share helps train the next
+            version, and what we're working towards next is telling apart the five main
+            types of bone cancer, and more!
           </p>
           <div class="onnm-hero-points" aria-label="Account and contribution highlights">
             <span>Free Google account</span>
