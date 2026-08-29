@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app"><strong>Try the hosted research demo</strong></a>
+  <a href="https://osteoneuralnetwork.com"><strong>osteoneuralnetwork.com</strong></a>
   · <a href="MODEL_CARD.md">Model card</a>
   · <a href="overview.md">Agent overview</a>
 </p>
@@ -25,7 +25,7 @@
 | PyTorch | 2.9.1 + ROCm 7.2.1 | Google OIDC accounts |
 | MONAI | 1.5.2 | Community submissions |
 | Model | DenseNet-121 · 3 classes | `normal / benign / malignant` |
-| Interface | Streamlit `>=1.42` | [Hosted demo](https://osteoneuralnetwork-model-af5ynv9qxg7u8rc5epdprr.streamlit.app) |
+| Interface | Cloudflare Worker + static SPA | [osteoneuralnetwork.com](https://osteoneuralnetwork.com) |
 | Persistence | Cloudflare Worker + D1 | Live count is intentionally read from the protected D1 health tag, not hard-coded here |
 
 ## Contributors
