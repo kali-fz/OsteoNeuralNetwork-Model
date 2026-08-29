@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 950" style="background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <!-- Definitions -->
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.05" flood-color="#000000"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,1 L9,5 L0,9 z" fill="#64748B"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,1 L9,5 L0,9 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,1 L9,5 L0,9 z" fill="#10B981"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="600" y="45" fill="#1E293B" font-size="28" font-weight="bold" text-anchor="middle">OsteoNeuralNetwork-Model (ONNM) System Architecture</text>
+  <text x="600" y="70" fill="#64748B" font-size="16" text-anchor="middle">End-to-end overview of the application, inference gates, community loop, and retraining cycle</text>
+
+  <!-- Global Connections (drawn before boxes so they are underneath) -->
+  <path d="M440 185 L730 185" fill="none" stroke="#64748B" stroke-width="3" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="590" y="175" fill="#475569" font-size="13" font-weight="bold" text-anchor="middle">HTTPS API / Opt-in Share</text>
+  
+  <path d="M850 380 L850 450" fill="none" stroke="#64748B" stroke-width="3" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="860" y="420" fill="#475569" font-size="13" font-weight="bold">scripts/sync_community.py (Pull)</text>
+  
+  <path d="M580 825 L530 825 L530 640 L505 640" fill="none" stroke="#10B981" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <text x="545" y="750" fill="#047857" font-size="13" font-weight="bold" transform="rotate(-90, 545, 750)">Published best.pt</text>
+  
+  <path d="M250 380 L250 450" fill="none" stroke="#3B82F6" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <text x="260" y="420" fill="#1D4ED8" font-size="13" font-weight="bold">predict() call</text>
+
+  <!-- BOX 1: Frontend -->
+  <g id="box-frontend">
+    <rect x="60" y="100" width="380" height="280" rx="8" fill="#FFFFFF" filter="url(#shadow)" stroke="#E2E8F0"/>
+    <path d="M60 108 a8 8 0 0 1 8 -8 h364 a8 8 0 0 1 8 8 v32 h-380 z" fill="#EF4444"/>
+    <text x="250" y="126" fill="#FFFFFF" font-size="16" font-weight="bold" text-anchor="middle">Web Frontend (osteoneuralnetwork.com)</text>
+    
+    <rect x="80" y="160" width="340" height="40" rx="4" fill="#FEE2E2" stroke="#FCA5A5"/>
+    <text x="250" y="185" fill="#991B1B" font-size="14" font-weight="bold" text-anchor="middle">Google OIDC Authentication</text>
+    
+    <rect x="80" y="220" width="340" height="60" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <text x="250" y="243" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">Cloudflare CDN &amp; Workers PaaS</text>
+    <text x="250" y="263" fill="#475569" font-size="13" text-anchor="middle">Web UI (Home | Auth | Scanner | Profile)</text>
+    
+    <rect x="80" y="300" width="340" height="50" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <text x="250" y="320" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">De-identification Layer</text>
+    <text x="250" y="338" fill="#475569" font-size="13" text-anchor="middle">PII Stripping &amp; PNG Conversion</text>
+  </g>
+
+  <!-- BOX 2: Backend -->
+  <g id="box-backend">
+    <rect x="740" y="100" width="400" height="280" rx="8" fill="#FFFFFF" filter="url(#shadow)" stroke="#E2E8F0"/>
+    <path d="M740 108 a8 8 0 0 1 8 -8 h384 a8 8 0 0 1 8 8 v32 h-400 z" fill="#F97316"/>
+    <text x="940" y="126" fill="#FFFFFF" font-size="16" font-weight="bold" text-anchor="middle">Community Backend (Cloudflare Edge)</text>
+    
+    <rect x="770" y="160" width="340" height="50" rx="4" fill="#FFEDD5" stroke="#FDBA74"/>
+    <text x="940" y="180" fill="#9A3412" font-size="14" font-weight="bold" text-anchor="middle">Cloudflare Worker API</text>
+    <text x="940" y="198" fill="#9A3412" font-size="13" text-anchor="middle">Submissions, Feedback, Triage Rules</text>
+    
+    <rect x="770" y="230" width="160" height="120" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <text x="850" y="255" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">D1 Database</text>
+    <text x="850" y="280" fill="#475569" font-size="13" text-anchor="middle">· users</text>
+    <text x="850" y="300" fill="#475569" font-size="13" text-anchor="middle">· submissions</text>
+    <text x="850" y="320" fill="#475569" font-size="13" text-anchor="middle">· feedback</text>
+
+    <rect x="950" y="230" width="160" height="120" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <text x="1030" y="255" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">Telemetry &amp; Roll</text>
+    <text x="1030" y="280" fill="#475569" font-size="13" text-anchor="middle">Country Aggregation</text>
+    <text x="1030" y="300" fill="#475569" font-size="13" text-anchor="middle">Opt-in Public Roll</text>
+    <text x="1030" y="320" fill="#475569" font-size="13" text-anchor="middle">No Precise PII</text>
+  </g>
+
+  <!-- BOX 3: Inference Engine -->
+  <g id="box-inference">
+    <rect x="60" y="460" width="440" height="420" rx="8" fill="#FFFFFF" filter="url(#shadow)" stroke="#E2E8F0"/>
+    <path d="M60 468 a8 8 0 0 1 8 -8 h424 a8 8 0 0 1 8 8 v32 h-440 z" fill="#3B82F6"/>
+    <text x="280" y="486" fill="#FFFFFF" font-size="16" font-weight="bold" text-anchor="middle">Diagnostic Engine (Inference Layer)</text>
+
+    <rect x="100" y="520" width="360" height="60" rx="4" fill="#DBEAFE" stroke="#93C5FD"/>
+    <text x="280" y="545" fill="#1E40AF" font-size="14" font-weight="bold" text-anchor="middle">OOD Gate Stage 1: Pre-inference</text>
+    <text x="280" y="565" fill="#1E3A8A" font-size="13" text-anchor="middle">Heuristics: Entropy ≤ 7.5, Colorfulness, Gradients</text>
+
+    <path d="M280 580 L280 595" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="100" y="600" width="360" height="80" rx="4" fill="#F3E8FF" stroke="#D8B4FE"/>
+    <text x="280" y="625" fill="#6B21A8" font-size="14" font-weight="bold" text-anchor="middle">DenseNet-121 Core Model</text>
+    <text x="280" y="645" fill="#581C87" font-size="13" text-anchor="middle">PyTorch | 3-Class Head (Normal/Benign/Malignant)</text>
+    <text x="280" y="665" fill="#581C87" font-size="13" text-anchor="middle">Generates Softmax Probs + Grad-CAM Heatmaps</text>
+
+    <path d="M280 680 L280 695" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="100" y="700" width="360" height="60" rx="4" fill="#DBEAFE" stroke="#93C5FD"/>
+    <text x="280" y="725" fill="#1E40AF" font-size="14" font-weight="bold" text-anchor="middle">OOD Gate Stage 2: Uncertainty</text>
+    <text x="280" y="745" fill="#1E3A8A" font-size="13" text-anchor="middle">Downgrades if Max Prob &lt; 0.65 or Entropy ≥ 0.90</text>
+
+    <path d="M280 760 L280 775" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="100" y="780" width="360" height="60" rx="4" fill="#D1FAE5" stroke="#6EE7B7"/>
+    <text x="280" y="805" fill="#065F46" font-size="14" font-weight="bold" text-anchor="middle">Final Application Output</text>
+    <text x="280" y="825" fill="#064E3B" font-size="13" text-anchor="middle">Calibrated Diagnosis + Explainable Grad-CAM</text>
+  </g>
+
+  <!-- BOX 4: MLOps -->
+  <g id="box-mlops">
+    <rect x="580" y="460" width="560" height="420" rx="8" fill="#FFFFFF" filter="url(#shadow)" stroke="#E2E8F0"/>
+    <path d="M580 468 a8 8 0 0 1 8 -8 h544 a8 8 0 0 1 8 8 v32 h-560 z" fill="#10B981"/>
+    <text x="860" y="486" fill="#FFFFFF" font-size="16" font-weight="bold" text-anchor="middle">Continuous Evaluation &amp; Retraining Loop (Local / AMD ROCm)</text>
+
+    <rect x="620" y="520" width="220" height="100" rx="4" fill="#ECFDF5" stroke="#A7F3D0"/>
+    <text x="730" y="545" fill="#065F46" font-size="14" font-weight="bold" text-anchor="middle">Admin Review</text>
+    <text x="730" y="565" fill="#047857" font-size="13" text-anchor="middle">Local review_app.py</text>
+    <text x="730" y="585" fill="#047857" font-size="13" text-anchor="middle">Triage: valid_bone / misc</text>
+    <text x="730" y="605" fill="#047857" font-size="13" text-anchor="middle">/ contradiction</text>
+
+    <path d="M840 570 L872 570" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="880" y="520" width="220" height="100" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <text x="990" y="545" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">Data Manifests</text>
+    <text x="990" y="565" fill="#475569" font-size="13" text-anchor="middle">export_batch.py</text>
+    <text x="990" y="585" fill="#475569" font-size="13" text-anchor="middle">manifest.csv (valid)</text>
+    <text x="990" y="605" fill="#475569" font-size="13" text-anchor="middle">ood_manifest.csv (misc)</text>
+
+    <path d="M990 620 L990 642" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="620" y="650" width="480" height="120" rx="4" fill="#F8FAFC" stroke="#94A3B8" stroke-dasharray="4"/>
+    <text x="860" y="675" fill="#334155" font-size="14" font-weight="bold" text-anchor="middle">Daily Cycle Pipeline (scripts/daily_cycle.py)</text>
+
+    <rect x="640" y="690" width="120" height="60" rx="4" fill="#E2E8F0" stroke="#CBD5E1"/>
+    <text x="700" y="720" fill="#1E293B" font-size="13" font-weight="bold" text-anchor="middle">1. Train</text>
+    <text x="700" y="738" fill="#475569" font-size="11" text-anchor="middle">(PyTorch / MONAI)</text>
+
+    <path d="M760 720 L782 720" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="790" y="690" width="120" height="60" rx="4" fill="#E2E8F0" stroke="#CBD5E1"/>
+    <text x="850" y="720" fill="#1E293B" font-size="13" font-weight="bold" text-anchor="middle">2. Calibrate</text>
+    <text x="850" y="738" fill="#475569" font-size="11" text-anchor="middle">(Temp Scaling)</text>
+
+    <path d="M910 720 L932 720" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="940" y="690" width="140" height="60" rx="4" fill="#E2E8F0" stroke="#CBD5E1"/>
+    <text x="1010" y="720" fill="#1E293B" font-size="13" font-weight="bold" text-anchor="middle">3. Evaluate</text>
+    <text x="1010" y="738" fill="#475569" font-size="11" text-anchor="middle">Gate: No Regressions</text>
+
+    <path d="M860 770 L860 792" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="620" y="800" width="480" height="50" rx="4" fill="#FEF3C7" stroke="#FCD34D"/>
+    <text x="860" y="820" fill="#92400E" font-size="14" font-weight="bold" text-anchor="middle">Versioning &amp; Ledger (model_versions.json, ONN.md)</text>
+    <text x="860" y="838" fill="#92400E" font-size="12" text-anchor="middle">publish_model.py updates production weights and calibration</text>
+  </g>
+</svg>
