@@ -229,12 +229,30 @@ function renderFooter() {
         <a href="/terms" data-link>Terms of use</a>
         <a href="/privacy" data-link>Privacy notice</a>
         <a href="#legal-medical">Medical notice</a>
+        <a href="#legal-governance">Governance</a>
         <a href="#legal-cookies">Session notice</a>
       </nav>
       <div class="onnm-legal-summaries">
         <details id="legal-medical">
           <summary>Medical notice</summary>
           <p>This unvalidated prototype has no FDA, CE, or MHRA clearance. Every radiograph requires review by a qualified clinician.</p>
+        </details>
+        <details id="legal-governance">
+          <summary>Governance</summary>
+          <p>
+            ONNM is operated by Khalid Faiz, acting in a personal capacity as an
+            independent researcher, who is the data controller for the processing
+            described in the <a href="/privacy" data-link>Privacy notice</a>.
+          </p>
+          <p>
+            Because the service processes health data, the following records are
+            maintained and reviewed: a Data Protection Impact Assessment under Article
+            35, a Record of Processing Activities under Article 30, a documented
+            retention schedule, and an incident response plan covering personal data
+            breaches, model safety and unlawful content. These are internal
+            accountability records rather than published notices, and are available to
+            a supervisory authority or on reasonable request.
+          </p>
         </details>
         <details id="legal-cookies">
           <summary>Session notice</summary>

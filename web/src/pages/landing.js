@@ -12,7 +12,19 @@ import world from "../globe/countries-110m.json";
 import { mountGlobe } from "../globe/globe.js";
 import { getContributors, getGlobe, getStats } from "../api.js";
 
-const MODEL_VERSION = "0.1.0";
+/**
+ * The public release version, shown in the eyebrow, the lede and the call to action.
+ *
+ * This is the *release* line, not the model ledger. The two are deliberately
+ * separate: `model_versions.json` tracks trained checkpoints and currently serves
+ * `v1.0.0`, promoted only by `scripts/version_model.py` when no guarded metric has
+ * regressed. This number moves when what a visitor gets changes, which includes
+ * changes that touch no weights at all.
+ *
+ * 0.1.1 is the first such move: the model is unchanged, and the release is the
+ * Terms gate, the Privacy notice and the governance work behind them.
+ */
+const MODEL_VERSION = "0.1.1";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(
@@ -86,9 +98,10 @@ export async function renderLanding(main, state) {
           <p class="onnm-hero-eyebrow">Open bone X-ray research · ONNM v${MODEL_VERSION}</p>
           <h1 class="onnm-hero-title">Test the current model and help us train the next one.</h1>
           <p class="onnm-hero-subtitle">
-            ONNM v${MODEL_VERSION} is our first trained model for bone X-rays. Create a
-            free account to test it with DICOM files or standard image formats, then
-            choose whether each radiograph can be reviewed for future training.
+            ONNM v${MODEL_VERSION} is our first trained model for bone X-rays, now with
+            published terms and a full privacy notice. Create a free account to test it
+            with DICOM files or standard image formats, then choose whether each
+            radiograph can be reviewed for future training.
           </p>
           <div class="onnm-hero-points" aria-label="Account and contribution highlights">
             <span>Free Google account</span>

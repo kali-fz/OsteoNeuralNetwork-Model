@@ -81,7 +81,11 @@ export const TERMS_VERSION = "2026-08-30";
 export const OPERATOR = {
   name: "Khalid Faiz",
   capacity: "acting in a personal capacity as an independent researcher",
-  contact: "kzfhero@gmail.com",
+  // The public-facing address, deliberately not the one on the GitHub account.
+  // Both reach the same person; separating them keeps site enquiries out of the
+  // inbox that handles the repository and security reports. `SECURITY.md` keeps
+  // the other address on purpose, so do not "fix" the two to match.
+  contact: "kzfhero6@gmail.com",
 };
 
 /**

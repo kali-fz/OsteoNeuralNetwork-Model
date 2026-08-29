@@ -32,7 +32,7 @@ Related: `DPIA.md`, `INCIDENT_RESPONSE.md`, `TERMS_REVIEW_PACK.md`,
 | Item | Value |
 |---|---|
 | Controller | **Khalid Faiz**, acting in a personal capacity as an independent researcher. Named in the published Terms §1 and Privacy notice §1. This is a description of who decides the purposes and means of the processing, not an appointed role; it would change if ONNM were ever operated under a university or company |
-| Contact for data protection | `kzfhero@gmail.com`, published in the Terms §1 and the Privacy notice §1 as a monitored address |
+| Contact for data protection | `kzfhero6@gmail.com`, published in the Terms §1 and the Privacy notice §1 as a monitored address. Deliberately distinct from the address on the GitHub account, which remains the route for security vulnerability reports under `SECURITY.md` |
 | DPO | Not appointed. Decision recorded in `DPIA.md` §8 |
 | ICO registration | **[CONTROLLER]** assess whether registration and the data protection fee are required |
 

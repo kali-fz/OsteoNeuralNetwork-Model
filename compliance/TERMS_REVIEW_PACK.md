@@ -6,14 +6,21 @@ side is not qualified to give it.
 
 | Field | Value |
 |---|---|
-| Subject | Terms of use v2026-08-30 and Privacy notice v2026-08-30, both written but **not yet deployed** |
-| Currently live | Terms v2026-08-29. No Privacy notice |
+| Subject | Terms of use v2026-08-30 and Privacy notice v2026-08-30 |
+| Status | **Live.** Deployed 2026-08-29, Worker version `f4f0fcae` |
+| Read them at | `osteoneuralnetwork.com/terms` and `osteoneuralnetwork.com/privacy` |
 | Prepared | 2026-08-29 |
 | Prepared by | Engineering |
 | For review by | Yaso-cyber, GRC |
 | Also revised | `DPIA.md` 0.2, `ROPA.md` 0.2, `INCIDENT_RESPONSE.md` 0.2 |
 | Controller | Khalid Faiz, personal capacity |
-| Verification | 452 Python tests and 53 Worker tests pass |
+| Verification | 452 Python tests and 56 Worker tests pass |
+
+> **Why this is live before you have signed it off.** The previous Terms were worse in every
+> respect this pack identifies, and leaving them serving while a better version sat in a
+> branch would have been the wrong trade. Nothing here is hard to change: the text is data in
+> one file, and any correction you make is a redeploy. Reviewing the pages as a visitor
+> actually sees them is also easier than reviewing them as source.
 
 ---
 
@@ -43,9 +50,26 @@ decision or an action for the controller rather than a defect I have left for yo
 | `compliance/ROPA.md` | 0.2 | Architecture corrected; lawful bases revised; retention now specified |
 | `compliance/INCIDENT_RESPONSE.md` | 0.2 | Unlawful content procedure added as §7 |
 
-Nothing is deployed. The live site still serves Terms v2026-08-29 and has no Privacy
-notice. Deploying is a single step once you and the controller are satisfied, and it will
-re-prompt all seven existing accounts to accept the new version.
+**All of this is live.** Read the two published documents as a visitor sees them:
+
+- `https://osteoneuralnetwork.com/terms`
+- `https://osteoneuralnetwork.com/privacy`
+
+The flow to check is the one a new user meets: the site offers **Sign in**, which goes to
+the Terms rather than to Google. Reading and ticking is what unlocks the Google button, and
+that is enforced by the server, not by the page. The Privacy notice is linked from the
+Terms, from the tick box, and from the footer, and is readable without an account.
+
+**The seven existing accounts will be asked to agree again** on their next visit, because
+this revision is a material change. See §4, finding L17.
+
+The DPIA, ROPA and incident response plan are **not** published as site pages, and should
+not be. A ROPA is an Article 30 record produced for a supervisory authority on request, not
+a public notice, and the incident plan currently documents an open credential incident;
+publishing it would tell a reader exactly which tokens may still be unrotated. What the site
+does instead is **declare** that those records exist and are maintained, in a "Governance"
+disclosure in the footer, which is the normal pattern. Tell me if you want that split drawn
+differently.
 
 ---
 
@@ -114,7 +138,8 @@ on. I would keep the choice, but you should know it was made.
 
 ## 4. The legal pass, and what was done about it
 
-Sixteen findings. All sixteen are resolved in the text you are reviewing.
+Sixteen findings from the review, plus one found while deploying. All seventeen are
+resolved in the text and the code you are reviewing.
 
 | ID | Finding | Resolution |
 |---|---|---|
@@ -134,6 +159,7 @@ Sixteen findings. All sixteen are resolved in the text you are reviewing.
 | L14 | No route to complain to the ICO | **Terms §14 and Privacy §13**, with the address and phone number |
 | L15 | No statement that prior versions are kept | **Terms §15**: every version is retained in public source history, identified by the version date |
 | L16 | "Three parties, and no others" was literally untrue | **Terms §9** now says three parties plus the named infrastructure providers who process on our instructions |
+| L17 | **Found while deploying.** Terms §15 promises re-agreement on a material change, but the code accepted any recorded version, so nobody would ever have been re-prompted | **`TERMS_MATERIAL_SINCE` added.** An acceptance now counts only if it names that version or later, so the seven existing accounts are asked again. A non-material wording fix bumps the version alone and disturbs nobody |
 
 ### The one I would look at hardest
 
@@ -255,7 +281,8 @@ I could have done and did not.
 
 **Khalid Faiz, acting in a personal capacity as an independent researcher**, named in
 Terms §1, Privacy notice §1, `DPIA.md` §A, `ROPA.md` §A and as incident lead. The published
-contact is `kzfhero@gmail.com`.
+contact is `kzfhero6@gmail.com`, deliberately a different address from the one on the
+GitHub account, which stays as the security-reporting route in `SECURITY.md`.
 
 Worth being explicit for the record, because the term caused confusion: "controller" is not
 an appointed role. It is a description of whoever decides the purposes and means of the

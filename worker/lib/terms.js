@@ -24,6 +24,25 @@ import { signSession, verifySession } from "./session.js";
 export const TERMS_VERSION = "2026-08-30";
 
 /**
+ * The oldest acceptance still worth anything.
+ *
+ * The Terms promise, in the "Changes" clause, that a *material* change requires
+ * agreeing again. Enforcing that by comparing against TERMS_VERSION would be too
+ * blunt: fixing a typo would bump the version and re-prompt everybody, which
+ * trains people to click through the thing we most want them to read.
+ *
+ * So materiality is stated explicitly. An acceptance counts only if it names this
+ * version or a later one, and moving this date is a deliberate decision that the
+ * text changed enough to need fresh agreement. A wording fix bumps TERMS_VERSION
+ * alone and nobody is disturbed.
+ *
+ * Set to 2026-08-30 because that revision added a minimum age, an indemnity, a
+ * prohibited-use section and a governing law clause. Consent to the previous text
+ * is not consent to those.
+ */
+export const TERMS_MATERIAL_SINCE = "2026-08-30";
+
+/**
  * A short-lived cookie proving the Terms were accepted before any account exists.
  *
  * A signed-out visitor has no row to write to, so the acceptance has to survive
@@ -70,17 +89,24 @@ export async function acceptedVersionFromToken(token, secret) {
 }
 
 /**
- * Has this account agreed to the Terms?
+ * Has this account agreed to the Terms as they currently stand?
  *
  * A row with no `tos_version` has agreed to nothing recorded. That is every
  * account created before this gate existed, and treating it as accepted would
  * defeat the point of adding the column.
  *
- * Deliberately NOT a check that the stored version equals the current one. The
- * owner chose not to re-prompt when the text changes; storing the version keeps
- * that option open without forcing it.
+ * A row whose version predates TERMS_MATERIAL_SINCE agreed to text that has since
+ * changed materially, so it is treated as not accepted and the account is asked
+ * again. This is what makes the "Changes" clause in the Terms true rather than
+ * aspirational: the document promises re-agreement on a material change, and this
+ * is the line that delivers it.
+ *
+ * The comparison is a plain string compare, which is correct because versions are
+ * ISO dates and ISO dates sort lexicographically. That is the whole reason the
+ * version is a date and not a counter.
  */
-export function hasAcceptedTerms(userRow) {
+export function hasAcceptedTerms(userRow, materialSince = TERMS_MATERIAL_SINCE) {
   const version = userRow?.tos_version;
-  return typeof version === "string" && version.length > 0;
+  if (typeof version !== "string" || version.length === 0) return false;
+  return version >= materialSince;
 }

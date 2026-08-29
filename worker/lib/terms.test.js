@@ -17,6 +17,7 @@ import {
   hasAcceptedTerms,
   signTermsToken,
   TERMS_COOKIE,
+  TERMS_MATERIAL_SINCE,
   TERMS_TTL_SECONDS,
   TERMS_VERSION,
   termsCookieHeader,
@@ -104,10 +105,36 @@ test("missing, empty and non-string versions are all refusals", () => {
   }
 });
 
-test("an older recorded version still counts as accepted", () => {
-  // The owner chose not to re-prompt when the text changes. Storing the version
-  // keeps that option open; it must not silently start enforcing it.
-  assert.equal(hasAcceptedTerms({ tos_version: "2020-01-01" }), true);
+test("a version predating the last material change is not accepted", () => {
+  // The Terms promise re-agreement on a material change. This is the assertion
+  // that keeps the promise honest: an account that agreed to the older text is
+  // asked again rather than being carried across silently.
+  assert.equal(hasAcceptedTerms({ tos_version: "2026-08-29" }), false);
+  assert.equal(hasAcceptedTerms({ tos_version: "2020-01-01" }), false);
+});
+
+test("a version at or after the material change is accepted", () => {
+  assert.equal(hasAcceptedTerms({ tos_version: TERMS_MATERIAL_SINCE }), true);
+  assert.equal(hasAcceptedTerms({ tos_version: "2099-01-01" }), true);
+});
+
+test("a wording fix does not re-prompt anyone", () => {
+  // TERMS_VERSION moves for any change; TERMS_MATERIAL_SINCE moves only when the
+  // change is material. Someone who accepted at the material line stays accepted
+  // through later non-material revisions, which is the point of the split.
+  assert.equal(
+    hasAcceptedTerms({ tos_version: TERMS_MATERIAL_SINCE }, TERMS_MATERIAL_SINCE),
+    true,
+  );
+});
+
+test("the material line is never ahead of the current version", () => {
+  // Setting it to a version that does not exist yet would lock every account out
+  // of the scanner, including ones that just agreed, with no way to satisfy it.
+  assert.ok(
+    TERMS_MATERIAL_SINCE <= TERMS_VERSION,
+    `TERMS_MATERIAL_SINCE (${TERMS_MATERIAL_SINCE}) is ahead of TERMS_VERSION (${TERMS_VERSION})`,
+  );
 });
 
 // ---------------------------------------------------------------------------

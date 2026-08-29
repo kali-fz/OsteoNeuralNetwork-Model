@@ -22,9 +22,9 @@ scanner, and profile. Navigation is stored in the `page` query parameter so link
 profile and scanner survive a Streamlit rerun. Authenticated views share one compact
 header containing the current user's Google photo and name, a link to the profile, a
 single sign-out action, and a back-to-home action where it is needed. The home header does
-not repeat the scanner link because the main `Test ONNM v0.1.0` button already provides it.
+not repeat the scanner link because the main `Test ONNM v0.1.1` button already provides it.
 
-The home page explains that v0.1.0 is the first trained model and asks people to test it
+The home page explains that v0.1.1 is the first trained model and asks people to test it
 or contribute a processed image for human review. It also contains the self-contained
 country globe and the opt-in contributor roll. The scanner has a themed uploader, a clear
 empty state, a concise research disclaimer, and optional model controls in the sidebar.
