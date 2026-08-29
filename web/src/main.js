@@ -219,14 +219,14 @@ function renderFooter() {
   return `
     <footer class="onnm-site-footer" id="legal">
       <p class="onnm-site-footer-warning">
-        <strong>Research demonstration only.</strong> ONNM is not a medical
-        device and has not been clinically validated. It must not be used to
-        make, confirm or delay any clinical decision. If you have a health
-        concern, speak to a qualified clinician.
+        <strong>This is a research demonstration, not a medical device</strong>, and it
+        has not been clinically validated, so it must never be used to make, confirm or
+        delay a clinical decision. If you have a health concern, please speak to a
+        qualified clinician instead.
       </p>
       <p class="onnm-site-footer-meta">
-        Model weights are licensed CC BY-NC 4.0. Uploaded images are never shared
-        unless you explicitly consent per image. Location is recorded only at
+        Model weights are licensed CC BY-NC 4.0, and uploaded images are never shared
+        unless you explicitly consent per image. Location is only ever recorded at
         country level, and no IP address is stored.
       </p>
       <nav class="onnm-legal-links" aria-label="Legal and privacy information">
@@ -239,7 +239,7 @@ function renderFooter() {
       <div class="onnm-legal-summaries">
         <details id="legal-medical">
           <summary>Medical notice</summary>
-          <p>This unvalidated prototype has no FDA, CE, or MHRA clearance. Every radiograph requires review by a qualified clinician.</p>
+          <p>This unvalidated prototype has no FDA, CE or MHRA clearance, so every radiograph still requires review by a qualified clinician.</p>
         </details>
         <details id="legal-governance">
           <summary>Governance</summary>

@@ -98,10 +98,16 @@ export async function renderLanding(main, state) {
           <p class="onnm-hero-eyebrow">Open bone X-ray research · ONNM v${MODEL_VERSION}</p>
           <h1 class="onnm-hero-title">Test the current model and help us train the next one.</h1>
           <p class="onnm-hero-subtitle">
-            ONNM v${MODEL_VERSION} is our first trained model for bone X-rays, now with
-            published terms and a full privacy notice. Create a free account to test it
-            with DICOM files or standard image formats, then choose whether each
-            radiograph can be reviewed for future training.
+            ONNM v${MODEL_VERSION} is a trained model that looks at plain bone X-rays and
+            flags where a lesion might be, and creating an account to use it costs
+            nothing. We built it as a community project, because a public dataset can
+            only take a model so far on its own, and every image someone chooses to
+            share, once a reviewer has checked it, becomes part of what trains the next
+            version, so it keeps improving because the people using it are willing to
+            help teach it. This first version has already been trained and tested end to
+            end, from a raw X-ray to a calibrated probability and a heat map of what it
+            actually looked at, and what we are working towards next is teaching it to
+            tell apart the five main types of bone cancer, and more!
           </p>
           <div class="onnm-hero-points" aria-label="Account and contribution highlights">
             <span>Free Google account</span>
@@ -109,7 +115,7 @@ export async function renderLanding(main, state) {
           </div>
         </section>
         ${cta}
-        <p class="onnm-home-tool-note">Research tool only. This is not a medical device or medical advice.</p>
+        <p class="onnm-home-tool-note">This is a research tool only, not a medical device, and its output is not medical advice.</p>
       </div>
 
       <section class="onnm-home-community" aria-labelledby="community-heading">
@@ -147,8 +153,8 @@ export async function renderLanding(main, state) {
         </div>
       </div>
       <p class="onnm-metric-warning">
-        Every result must be reviewed by a qualified clinician. This prototype has no
-        FDA, CE, or MHRA clearance and must never direct patient care.
+        Every result must be reviewed by a qualified clinician, because this prototype
+        has no FDA, CE or MHRA clearance and must never direct patient care.
       </p>
     </section>
 
@@ -254,9 +260,9 @@ export async function renderLanding(main, state) {
     const people = contributors.value?.contributors || [];
     contributorsHost.innerHTML = people.length
       ? `<div class="onnm-contributor-grid">${people.map(contributorCard).join("")}</div>`
-      : `<p class="onnm-muted">Approved contributors can choose to show their Google name and photo here from My Profile. No account is published automatically.</p>`;
+      : `<p class="onnm-muted">Approved contributors can choose to show their Google name and photo here from My Profile, and no account appears here on its own.</p>`;
   } else {
-    contributorsHost.innerHTML = `<p class="onnm-muted">Contributor profiles are temporarily unavailable. Google profiles remain private by default.</p>`;
+    contributorsHost.innerHTML = `<p class="onnm-muted">Contributor profiles are temporarily unavailable, but Google profiles stay private by default either way.</p>`;
   }
 
   const note = main.querySelector("#globe-note");
@@ -267,14 +273,14 @@ export async function renderLanding(main, state) {
     (payload.unplaced?.signups || 0) + (payload.unplaced?.contributors || 0);
   if (globe.status !== "fulfilled") {
     note.textContent =
-      "Community activity could not be loaded. The globe is still available for orientation, but it contains no live markers.";
+      "Community activity could not be loaded, though the globe is still here for orientation and currently shows no live markers.";
   } else if (!payload.markers?.length) {
     note.textContent =
-      "No displayable country has been recorded yet. Signed-in activity is recorded at country level without sharing a precise location.";
+      "No displayable country has been recorded yet, since signed-in activity is only ever recorded at country level rather than as a precise location.";
   } else if (unplaced) {
-    note.textContent = `${formatCount(unplaced)} ${unplaced === 1 ? "account is" : "accounts are"} included in the totals but cannot be drawn. Markers show aggregated countries, never precise locations.`;
+    note.textContent = `${formatCount(unplaced)} ${unplaced === 1 ? "account is" : "accounts are"} included in the totals but cannot be drawn, since markers only ever show aggregated countries, never precise locations.`;
   } else {
-    note.textContent = "Drag to rotate. Markers show aggregated countries, never precise locations.";
+    note.textContent = "Drag to rotate, and note the markers show aggregated countries, never precise locations.";
   }
 
   return mountGlobe(main.querySelector("#globe-host"), {
