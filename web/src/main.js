@@ -33,11 +33,20 @@ const ROUTES = {
   "/admin": renderAdmin,
 };
 
+const SITE_TITLE = "OsteoNeuralNetwork";
+
+/**
+ * Tab titles. The site name is spelled out in full rather than abbreviated to
+ * ONNM, so a tab, a bookmark and the domain all read as the same thing.
+ *
+ * The landing page is the bare name; every other route puts the page in front
+ * of it, which is what keeps four open tabs tellable apart.
+ */
 const ROUTE_TITLES = {
-  "/": "ONNM — Open bone X-ray research",
-  "/scanner": "Scanner — ONNM",
-  "/profile": "My profile — ONNM",
-  "/admin": "Review queue — ONNM",
+  "/": SITE_TITLE,
+  "/scanner": `Scanner — ${SITE_TITLE}`,
+  "/profile": `My profile — ${SITE_TITLE}`,
+  "/admin": `Review queue — ${SITE_TITLE}`,
 };
 
 /** Pages a signed-out visitor cannot use. */
