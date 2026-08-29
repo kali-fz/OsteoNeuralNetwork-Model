@@ -23,7 +23,11 @@ export default defineConfig({
     // Worker so a local UI session talks to the real D1 rather than a stub.
     proxy: {
       "/api": {
-        target: "https://onnm.kali-fz.workers.dev",
+        // The canonical address. onnm.kali-fz.workers.dev still answers and
+        // would work here too, but a local session proxied through it would
+        // send Google that host's redirect URI, so keeping this on the real
+        // domain means local sign-in exercises the same flow production does.
+        target: "https://osteoneuralnetwork.com",
         changeOrigin: true,
         secure: true,
       },

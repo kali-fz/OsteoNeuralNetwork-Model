@@ -149,7 +149,7 @@ def main() -> int:
         if pending:
             print(
                 f"\n{pending} submission(s) are waiting for you in the review console:\n"
-                "  https://onnm.kali-fz.workers.dev/admin"
+                "  https://osteoneuralnetwork.com/admin"
             )
         return 0
 

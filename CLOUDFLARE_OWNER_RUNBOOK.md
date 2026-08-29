@@ -9,7 +9,10 @@ configured to deploy it automatically.
 
 **Worker:** `onnm`
 
-**Live URL:** `https://onnm.kali-fz.workers.dev`
+**Live URL:** `https://osteoneuralnetwork.com`
+
+**Also answers:** `https://onnm.kali-fz.workers.dev` — kept enabled deliberately, so there
+is a working address if the domain or its certificate ever has a problem.
 
 ## 1. Use a clean checkout of `main`
 
@@ -37,6 +40,7 @@ The previous Google client secret was disclosed in a chat transcript and must be
 5. Confirm this authorised redirect URI is still present:
 
    ```text
+   https://osteoneuralnetwork.com/api/auth/google/callback
    https://onnm.kali-fz.workers.dev/api/auth/google/callback
    ```
 
@@ -81,14 +85,14 @@ npx wrangler deploy --containers-rollout=none
 Do **not** run `npm run deploy` for this release. That command stages the model and rebuilds
 the large inference image unnecessarily.
 
-Wait for Wrangler to report a successful deployment and the `onnm.kali-fz.workers.dev`
+Wait for Wrangler to report a successful deployment and the `osteoneuralnetwork.com`
 address.
 
 ## 5. Required live checks
 
 Open a private/incognito browser window so cached frontend files do not hide the release.
 
-1. Open `https://onnm.kali-fz.workers.dev`.
+1. Open `https://osteoneuralnetwork.com`.
 2. Confirm the homepage headline is:
 
    ```text
