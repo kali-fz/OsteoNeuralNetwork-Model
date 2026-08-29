@@ -1,7 +1,8 @@
 # ONNM: Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-29 (custom domain, review console, retention, terms gate scoped).
+Last audited: 2026-08-29 (custom domain, review console, retention, terms gate scoped;
+the owner's handwritten roadmap and website polish list transcribed in).
 
 **Current state:** 452 Python tests and 51 Worker tests green, repo-wide ruff clean.
 The whole application is **one Cloudflare Worker live at `osteoneuralnetwork.com`**,
@@ -26,6 +27,44 @@ deployment has been removed. Model versioning is live at **v1.0.0**
 > inverted; fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936
 > with no chance baseline established. It does not yet support "the model looks at
 > lesions". Nothing about the classifier's ROC-AUC, recall or calibration was affected.
+
+---
+
+## The owner's roadmap
+
+Transcribed from the handwritten note, 2026-08-29, using its own marks: **o** means
+done, **x** means not finished. Kept in the owner's words, with a line underneath each
+saying where the repository actually stands, because the two are allowed to disagree
+and it is useful to see when they do.
+
+- [x] **Complete the optimisation checks**
+      *Training, calibration and test evaluation all ran for `full-20260822-041653`,
+      registered as v1.0.0. The ablations `abl-ohem` and `abl-augs` never completed;
+      see "Runs" below.*
+- [x] **Send it off to Yasmine (push)**
+- [x] **She will redesign the UI**
+      *Landed. What is left of it is a polish pass, listed under "Design and frontend"
+      in the backlog rather than as redesign work.*
+- [x] **She will also have to add geolocation from her side (make her a prompt)**
+      *Sign-up country is recorded during the OAuth callback and the landing globe
+      draws country-level activity from the Worker API.*
+- [x] **GRC / legal: a requirement to sign up, and stored as legal proof**
+      *The Terms gate is deployed and acceptance is stored per account. The wording
+      itself is still unreviewed, which is the blocking item below.*
+- [ ] **Design the training loop** (user -> community -> ONN -> new version, e.g. v2)
+      *The machinery exists (`scripts/sync_community.py`, `scripts/daily_cycle.py`,
+      `scripts/version_model.py` with guarded promotion). What has never happened is a
+      single pass through it end to end with real submissions, and no v2 has been cut.
+      Six shared submissions are sitting in the queue waiting for it.*
+- [ ] **Test with a small group of trusted, mature people** *(before any promotion)*
+      *Nothing here yet. Note the Google OAuth consent screen is still in testing mode,
+      which caps at 100 listed users: fine for a trusted group, and a decision that has
+      to be made before wider promotion.*
+- [x] **Domain: OsteoNeuralNetwork.com**
+      *Live and canonical; `onnm.kali-fz.workers.dev` is kept as a fallback.*
+- [ ] **Promote to the max**
+      *Deliberately last. It is gated on the two unfinished items above and on the
+      Terms wording being reviewed.*
 
 ---
 
@@ -525,9 +564,66 @@ first: the dataset does not currently support the subtypes wanted.**
 - [ ] **Run `scripts/stratified_report.py`**, per-anatomy tables to confirm or refute the
       complex-joint-anatomy hypothesis; per-subtype tables to split osteosarcoma out
 
+### Design and frontend
+
+From the owner's website list, 2026-08-29. All four were marked **x**, not finished.
+This is polish on top of Yasmine's redesign, not a second redesign.
+
+- [ ] **A custom favicon.** `web/index.html` currently ships `<link rel="icon"
+      href="data:," />`, a deliberate blank that stops the browser requesting
+      `/favicon.ico` and 404ing. A real mark replaces it. Ship an SVG plus a PNG
+      fallback from `web/public/`, and remember the tab icon is the only branding a
+      pinned tab shows.
+- [ ] **The website title.** The tab currently reads `OsteoNeuralNetwork`. If this
+      changes, change it in five places or the site will contradict itself:
+      `<title>`, `og:title`, `twitter:title`, the JSON-LD `name`, and the `<h1>` in
+      the `<noscript>` block, all in `web/index.html`.
+- [ ] **The globe metrics.** *Needs a decision before it needs code.* Right now the
+      three tiles under the globe (registered users, reviewed shared scans, countries
+      represented) are real counts from the Worker, which with a handful of accounts
+      makes the page look empty. The note says "globe fake metrics"; that could mean
+      seed the numbers so the page looks alive, or it could mean the real ones read as
+      fake and need reframing. **Do not publish invented totals**: the site claims to
+      be an honest research prototype, the Terms and the privacy notice lean on that,
+      and a number a visitor can catch out costs more than an empty tile. The
+      defensible version keeps the counts true and changes what is counted or how it
+      is labelled. Logged under "Decisions still owed by a human".
+- [ ] **Extend the width of the page.** One lever: `.onnm-shell { max-width: 1100px }`
+      in `web/src/styles/theme.css`. Raising it alone will not fix it, because the
+      hero, the lede and the footer each carry their own caps (`max-width: 720px` on
+      the title, `620px` on the subtitle, `84ch` on the footer text), so the content
+      would stay narrow inside a wider shell. Widen the shell *and* audit those caps
+      together.
+- [ ] **Fix how compactly the page sits in the viewport.** Same root cause as above and
+      most visible on a large monitor: the layout does not fill the page. Check the
+      landing grid (`.onnm-home-grid`) and the globe column at 1440px and 1920px, not
+      only at the breakpoints already in the stylesheet, which stop at
+      `max-width: 900px` and below.
+- [ ] **Rewrite the v0.1.1 description under "Test the current model and help us train
+      the next one".** It should say plainly that the project is in **early
+      development and always changing**. The string lives in `renderLanding()` in
+      `web/src/pages/landing.js`, in `.onnm-hero-subtitle`; `MODEL_VERSION` at the top
+      of that file feeds the eyebrow, the lede and the call to action, so the version
+      number itself only needs changing once.
+- [ ] **Say what the next big version is working towards**, on the landing page,
+      clearly marked as planned and not built. Two things, in the owner's framing:
+      1. **Detecting the different types of bone cancer**, the main five.
+      2. **A second model of our own, trained specifically on deep understanding of
+         bone cancer, that gives its opinion and explains in words why the scanner
+         decided what it did**, instead of only the heatmap used today.
+      Write "scanner" rather than "computer vision model" in visitor-facing copy.
+      Two cautions before this goes up. The five rare malignancies wanted here are
+      **absent from BTXRD entirely** (see the resolved £10 decision below), so
+      this is a sourcing problem, not a training-run problem. And the current
+      explanation layer is weaker than it looks: Grad-CAM localisation is **roughly at
+      chance**, so promising a written rationale on top of it promises more than the
+      system can currently support. Phrase it as a roadmap, with no date.
+
 ### Medium: app & delivery
 
-- [ ] **Redesign the UI** *(yours, starting 2026-08-23)*
+- [x] **Redesign the UI** *(Yasmine's, started 2026-08-23, marked done on the
+      owner's note 2026-08-29. The remaining work is the polish pass under
+      "Design and frontend" above, not further redesign.)*
 - [ ] **GRC review** *(yours; the Terms text drafted for the blocking section above
       needs your GRC collaborator's eyes before the site is opened to strangers)*
 - [ ] **Credit the image sources on the site.** A `<details>` block added to
@@ -587,6 +683,11 @@ first: the dataset does not currently support the subtypes wanted.**
   entirely, which is a **sourcing and annotation problem that money does not solve**.
   The candidate free sources are MURA for normal controls and, with per-figure licence
   checks, PMC open-access case reports. Keep the £10.
+- **What the globe tiles should show.** The counts are true but small, which reads as
+  an empty page. The options are to seed them (rejected here: the site's whole claim is
+  that it is honest about what it is), to count something that is genuinely larger, or
+  to relabel the tiles so a small number reads as early-stage rather than broken. An
+  owner call, because it is about how the project presents itself.
 - **The OOD entropy threshold.** 7.5 costs 2.16% false rejection; 7.8 costs none. But the
   measured gap between the highest real radiograph (7.7636) and the 8.0 quoted for
   photographs is only **0.236 bits**, so no threshold in that range is robust.
