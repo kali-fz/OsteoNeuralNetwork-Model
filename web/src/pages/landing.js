@@ -98,12 +98,13 @@ export async function renderLanding(main, state) {
           <p class="onnm-hero-eyebrow">Open bone X-ray research · ONNM v${MODEL_VERSION}</p>
           <h1 class="onnm-hero-title">Test the current model and help us train the next one.</h1>
           <p class="onnm-hero-subtitle">
-            ONNM v${MODEL_VERSION} is a trained model that screens bone X-rays for
-            possible lesions, and creating an account to use it is free. It's
-            community-driven: every image someone chooses to share helps train the next
-            version, and what we're working towards next is telling apart the five main
-            types of bone cancer, adding a second model with deep knowledge of the field
-            you'll be able to chat with directly, and more!
+            ONNM v${MODEL_VERSION} screens bone X-rays for possible lesions, and creating
+            an account to use it is free.
+          </p>
+          <p class="onnm-hero-subtitle">
+            It's community-driven, and next we're working towards spotting all five main
+            types of bone cancer, plus an expert model you'll be able to chat with, and
+            more!
           </p>
           <div class="onnm-hero-points" aria-label="Account and contribution highlights">
             <span>Free Google account</span>
