@@ -105,6 +105,28 @@
     }
   ],
 
+  // The public address.
+  //
+  // `custom_domain` (rather than a plain route pattern) makes Cloudflare treat
+  // this Worker as the origin for the hostname: it creates the DNS record and
+  // issues the TLS certificate itself, so there is no A record to maintain and
+  // no certificate to renew.
+  //
+  // `workers_dev` above stays true deliberately. onnm.kali-fz.workers.dev keeps
+  // working as a second address, which is what makes the switch reversible and
+  // what allows Google sign-in to be tested on the new domain before the old
+  // one is retired from the OAuth client.
+  //
+  // Apex only, no `www`. A www hostname would be a second origin, and the
+  // session cookie is `__Host-` prefixed -- host-scoped by definition -- so a
+  // visitor signing in at one would not be signed in at the other, and Google
+  // would need both redirect URIs registered. One canonical hostname avoids
+  // both problems. www can be added later as a redirect rule, which is the
+  // correct shape for it and costs nothing.
+  "routes": [
+    { "pattern": "osteoneuralnetwork.com", "custom_domain": true }
+  ],
+
   // The retention job: delete rejected images a week after rejection.
   //
   // Read the BILLING POSTURE note above before assuming this contradicts it. It
