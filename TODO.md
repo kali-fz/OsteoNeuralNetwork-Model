@@ -1,25 +1,33 @@
 # ONNM: Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-23 (community triage, versioning, publish path, Grad-CAM audit).
+Last audited: 2026-08-29 (custom domain, review console, retention, terms gate scoped).
 
-**Current state:** 403 tests green in the ROCm `.venv`, repo-wide ruff clean. Cloudflare
-Worker + D1 **deployed and live at schema_version 3**; Streamlit Cloud **deployed and
-serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
+**Current state:** 452 Python tests and 37 Worker tests green, repo-wide ruff clean.
+The whole application is **one Cloudflare Worker live at `osteoneuralnetwork.com`**,
+D1 at **schema_version 6**, with the submission review console at `/admin` and a daily
+retention job. The Streamlit deployment has been removed. Model versioning is live at
+**v1.0.0** (`full-20260822-041653`).
 
-> **Read this first if you read nothing else, DEPLOYMENT HAZARD.**
-> `cloudflare/src/worker.js` in this repository is **ahead of the deployed Worker**. Its
-> `INSERT` statements reference `signup_country` and `origin_country`, which **do not
-> exist in live D1**, migration 0004 is written and tested but has never been applied.
+> **Read this first if you read nothing else, THE ONE RELEASE BLOCKER.**
+> Everything works and the domain is bought, but **nobody ever agrees to anything**.
+> The header's "Sign in with Google" goes straight to Google, so an account is created
+> and a scan can be run without a Terms acceptance step ever happening.
 >
-> **Deploying the Worker before applying migration 0004 breaks the live site**: every
-> account creation and every submission fails with "no such column". The order is
-> **migration first, deploy second**, and it is not optional.
+> `users.tos_accepted_at` exists and is populated, but it is **meaningless**:
+> `cloudflare/src/worker.js` binds `tos_accepted_at || created` and the callback never
+> sends the field, so every account has `tos_accepted_at == created_at`. It records
+> that a row was inserted, not that a human read anything.
 >
-> Second: the Grad-CAM localisation claim is now *measurable* (the heatmap was inverted;
-> fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936 with no chance
-> baseline established. It does not yet support "the model looks at lesions". Nothing
-> about the classifier's ROC-AUC, recall or calibration was ever affected.
+> This is a gap the compliance work already assumes is closed: `compliance/DPIA.md`
+> risk rows R1, R2, R7 and R13 all name "the Terms" as their mitigation, and
+> `compliance/ROPA.md` names Art 6(1)(b) "performance of a contract (the Terms)" as
+> the lawful basis. **See `### Blocking: nobody agrees to the Terms` below.**
+>
+> Second, unchanged: the Grad-CAM localisation claim is *measurable* (the heatmap was
+> inverted; fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936
+> with no chance baseline established. It does not yet support "the model looks at
+> lesions". Nothing about the classifier's ROC-AUC, recall or calibration was affected.
 
 ---
 
@@ -154,6 +162,56 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 ---
 
 ## To do
+
+### Blocking: nobody agrees to the Terms
+
+The one thing between v1.0 and public release. Everything else on the site works.
+
+- [ ] **Recover and rewrite the Terms text.** `src/legal.py` was deleted in commit
+      `ea1ce2e` and holds 234 lines of finished Markdown: `TERMS_OF_SERVICE` (10
+      numbered sections), `PRIVACY_POLICY`, `MEDICAL_DISCLAIMER`, `COOKIE_NOTICE`.
+      Recover with `git show ea1ce2e^:src/legal.py`. It was written for the Streamlit
+      deployment ("stored on the Operator's machine", `*.streamlit.app`) so every
+      hosting fact needs rewriting for Cloudflare, but the section skeleton and the
+      liability and IP language transfer directly. Its §9 already states that material
+      changes require renewed consent. Combine with the seven-item list already on the
+      landing page (`web/src/pages/landing.js`, the `onnm-terms-list`).
+      *(Drafted here, then reviewed by the project's GRC collaborator before it is
+      relied on. Not legal advice.)*
+- [ ] **Add the `/terms` route.** New `web/src/pages/terms.js`; register in `ROUTES`
+      and `ROUTE_TITLES` in `web/src/main.js`, and **keep it out of**
+      `SIGNED_IN_ROUTES` so a signed-out visitor can reach it. The page shows the
+      Terms, a tick box, and a "Continue to Google sign-in" button that stays disabled
+      until ticked.
+- [ ] **Repoint all three sign-in links.** `signInHref()` in `web/src/main.js` is the
+      choke point for two of them (the header button and the signed-out route guard),
+      but **`web/src/pages/landing.js` hardcodes `/api/auth/google/start` and bypasses
+      it**. That third one is the easy miss and the whole gate leaks without it.
+- [ ] **Make the gate real on the server.** A tick enforced only in the browser is
+      decoration. `POST /api/terms/accept`; signed out it mints a short-lived signed
+      cookie recording the accepted version, reusing `signSession`/`verifySession`
+      from `worker/lib/session.js` exactly as the OAuth `state` and PKCE verifier
+      already are. `authStart()` then refuses to begin OAuth without that cookie and
+      bounces to `/?auth_error=terms_required` (add the code to `AUTH_ERRORS`).
+- [ ] **Persist acceptance against the account.** `authCallback()` passes the accepted
+      version into `createUser` so it lands on the new row. Migration
+      `cloudflare/migrations/0007_terms_acceptance.sql` following the `0006` template:
+      `ALTER TABLE users ADD COLUMN tos_version TEXT;` plus bumping `schema_version`
+      to `'7'`. Thread `tos_version` through `createUser` in `cloudflare/src/worker.js`
+      (destructure, INSERT columns, bind list), `worker/lib/account.js`, and the
+      callback in `worker/index.js`. **Migration first, deploy second.**
+- [ ] **Re-consent the existing accounts.** *(Owner's decision: everyone, not just new
+      sign-ups.)* `/api/session` gains `terms_accepted`, derived server-side from the
+      user row exactly as `is_admin` already is. A signed-in visitor without acceptance
+      is routed to `/terms`; ticking posts to the same endpoint, which being
+      authenticated writes straight to their row. Existing rows keep `tos_version`
+      NULL, which honestly means "accepted an unrecorded version".
+- [ ] **Refuse scans without acceptance.** `/api/scan` and `/api/warmup` return a clear
+      refusal when the acting account has not accepted. Routing alone is a UI
+      convention any client can skip; this mirrors how `/api/admin/*` is guarded.
+- [ ] **Do not break the signed-out landing page.** It keeps full function, globe
+      included. `/terms` is additive. Re-check the four surfaces afterwards: landing
+      layout, globe, Google sign-in end to end, image upload returning a verdict.
 
 ### Grad-CAM: the heatmap was inverted; fixed 2026-08-23
 
@@ -374,6 +432,51 @@ who hit that are the only witnesses, and their testimony is being dropped on the
 - [ ] **Re-test the known failure cases**, the normal pelvis flagged at 59.6% and the
       normal femur at 69.8%. *(blocked on a retrained checkpoint)*
 - [ ] **Report test-set specificity at the 90% floor** once a checkpoint is chosen.
+- [ ] **Run `scripts/stratified_report.py` first; it has never been run.** It is the
+      cheapest step here and the per-anatomy table that would confirm or refute the
+      complex-joint hypothesis does not exist yet. **Expect it to be underpowered:**
+      the joint columns are extremely sparse, `wrist-joint` = 0, `hip-joint` = 3,
+      `knee-joint` = 37, `shoulder-joint` = 12. Only `pelvis` (216) has usable n, so
+      the honest conclusion may be "cannot tell from this dataset", which is itself
+      worth writing down.
+- [ ] **Judge any specificity work on ROC-AUC, not on false-positive counts.** The
+      OHEM run cut FPs 65 to 37 but dropped malignant recall 0.653 to 0.469 and macro
+      ROC-AUC 0.891 to 0.863. It shifted the bias toward "normal" rather than learning
+      better discrimination, and an argmax FP count cannot tell those two apart.
+- [ ] **MURA as a source of normal controls.** 40,895 musculoskeletal radiographs
+      (Stanford), normal/abnormal labels only, free for research. No tumour subtypes,
+      so it is useless for the subtype work below, but it is directly the "more
+      normals" intervention this section already names as the real fix. Check its
+      licence terms against the manifest's `license` column before importing.
+
+### High: predict the tumour subtype
+
+The goal is to name the tumour, not only call it malignant. **Read the constraint
+first: the dataset does not currently support the subtypes wanted.**
+
+- [ ] **Face what BTXRD actually contains.** `data/raw/BTXRD/dataset.xlsx` is
+      3,746 rows by 37 columns with one-hot indicators and **no categorical diagnosis
+      column**. The malignant side has exactly two: `osteosarcoma` (297) and `other mt`
+      (45). **Ewing sarcoma, chondrosarcoma, chordoma, fibrosarcoma and adamantinoma
+      do not exist as labels** and are all folded into `other mt`; the config comment
+      at `configs/base.yaml` already says so. Benign has seven: `osteochondroma` (754),
+      `multiple osteochondromas` (263), `simple bone cyst` (206), `giant cell tumor`
+      (93), `synovial osteochondroma` (51), `osteofibroma` (44), `other bt` (115).
+- [ ] **Decide the achievable task.** From BTXRD alone the ceiling is osteosarcoma vs
+      other-malignant with 45 in the minority class, plus the seven benign subtypes.
+      That is a real deliverable and needs no new data. The named list of five rare
+      malignancies needs an external dataset or re-annotation, and **no amount of
+      money fixes it**, so it is a sourcing problem rather than a training one.
+- [ ] **Add a subtype head.** Touch points: `configs/base.yaml` (the `labels` block
+      already has correct `subtype_columns` lists), `src/onnm/dataset.py`
+      (`map_labels`, and the record dict in `build_records`), `src/onnm/model.py`
+      (`_replace_head`/`build_model`, currently a single head), `src/onnm/losses.py`
+      (asserts `expected == cfg.model.num_classes`), `src/onnm/metrics.py` (hardcoded
+      `num_classes=3` defaults and `CLASS_NAMES` indexing), `src/onnm/train.py`.
+      Subtype columns currently feed `derive_groups` only, never the label.
+- [ ] **Do not let a subtype head cost lesion recall.** The three-class call is what
+      the product promises; a subtype guess is an extra. Gate promotion on the
+      existing guarded metrics in `scripts/version_model.py`, not on subtype accuracy.
 
 ### Medium: model quality
 
@@ -381,7 +484,23 @@ who hit that are the only witnesses, and their testimony is being dropped on the
       *collects* the training data for this, `configs/ood_manifest.csv` accumulates
       human-confirmed non-radiographs, but nothing consumes it yet: `onnm.ood` has no
       learned component. `onnm.ood_eval` scores the current gate so a learned one has a
-      bar to beat
+      bar to beat.
+      **Say this plainly to whoever is doing the reviewing:** marking an image "not a
+      radiograph" and approving it changes *nothing* about the gate's behaviour today.
+      There is no `paths.ood_manifest` config key, and `grep -c ood` over
+      `scripts/train.py`, `src/onnm/train.py`, `dataset.py`, `losses.py` and
+      `config.py` returns 0. The rows accumulate toward a future detector and improve
+      the `misc_rejection` measurement in the version ledger; that is all.
+      **Why it matters now:** a photograph of a person on a white background passed the
+      gate and reached the review queue in August 2026. `reports/ood_sweep.json` shows
+      every one of the 81 false rejections on real films came from `histogram_entropy`
+      alone, and real radiographs reach a maximum of **7.7636** against the ~8.0
+      expected of photographs. A 0.236-bit gap is about 3% of scale, so this feature
+      has almost no separating power at the top of its range and no threshold placed
+      there will be robust. Hold at 7.5 and treat a learned detector as the fix.
+      **The negatives side is still unmeasured** because the repo has no folder of
+      non-radiograph photos, which is exactly the gap `ood_manifest.csv` was meant to
+      fill and still has not.
 - [ ] **Multi-view radiograph consensus.** BTXRD has multiple views per surrogate patient
 - [ ] **Run `configs/specificity_tuning.yaml`** *(hours of GPU; awaiting go-ahead)*
 - [ ] **Run `scripts/ablate_tta.py`**, decide whether hflip TTA earns its 2× cost
@@ -396,9 +515,31 @@ who hit that are the only witnesses, and their testimony is being dropped on the
 ### Medium: app & delivery
 
 - [ ] **Redesign the UI** *(yours, starting 2026-08-23)*
-- [ ] **GRC review** *(yours)*
+- [ ] **GRC review** *(yours; the Terms text drafted for the blocking section above
+      needs your GRC collaborator's eyes before the site is opened to strangers)*
+- [ ] **Credit the image sources on the site.** A `<details>` block added to
+      `renderFooter()` in `web/src/main.js`. The existing `.onnm-legal-summaries` CSS
+      styles it for free and `<details>`/`<summary>` is already the only collapsible
+      pattern in the codebase, so this needs no new CSS.
+      **Generate it from the manifest, do not hand-maintain it.**
+      `configs/controls_manifest.csv` already carries a `license` column per row; add
+      `source` and `source_url` and build the credits from those, so the page cannot
+      drift from the data actually trained on.
+- [ ] **Check image licences per figure, not per article.** PubMed Central's Open
+      Access Subset splits three ways and only the `oa_comm` tier (CC0, CC BY) is
+      broadly safe. **An open-access article can still contain figures copyrighted by
+      third parties** that need separate permission, so the check is per image and the
+      answer must be recorded per image.
+      Note the constraint already at the top of the chain: **BTXRD is CC BY-NC-ND
+      4.0**, non-commercial *and* no redistribution of derivatives "including Grad-CAM
+      overlays" (`MODEL_CARD.md`). There is currently **no PMC or NLM reference
+      anywhere in the repo**, so if PMC images enter the training set that provenance
+      gap exists in `MODEL_CARD.md` and `README.md` independently of the UI work.
 - [ ] **DICOM metadata parser enhancements**: surface anatomy/laterality/view-position
-- [ ] Per-user scan deletion in the UI
+- [ ] Per-user scan deletion in the UI *(partly done 2026-08-29: a user can now
+      withdraw a shared image until it is approved, from their profile page. What is
+      still missing is deleting the scan record itself, and an account-level erasure
+      request.)*
 - [ ] Native PDF export (only if users ask)
 
 ### Low: housekeeping
@@ -425,6 +566,14 @@ who hit that are the only witnesses, and their testimony is being dropped on the
 
 ## Decisions still owed by a human
 
+- **~~Whether to spend the offered £10 on more data.~~ Resolved 2026-08-29: do not.**
+  The owner offered £10 to expand the dataset for subtype classification. It buys
+  nothing that matters here. BTXRD already ships subtype labels, so the achievable
+  subtype task needs no purchase; and the five rare malignancies actually wanted
+  (Ewing, chondrosarcoma, chordoma, fibrosarcoma, adamantinoma) are absent from BTXRD
+  entirely, which is a **sourcing and annotation problem that money does not solve**.
+  The candidate free sources are MURA for normal controls and, with per-figure licence
+  checks, PMC open-access case reports. Keep the £10.
 - **The OOD entropy threshold.** 7.5 costs 2.16% false rejection; 7.8 costs none. But the
   measured gap between the highest real radiograph (7.7636) and the 8.0 quoted for
   photographs is only **0.236 bits**, so no threshold in that range is robust.
