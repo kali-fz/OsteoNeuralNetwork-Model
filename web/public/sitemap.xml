@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One URL, deliberately. The other routes need a signed-in account, so listing
+  them would point a crawler at pages it will only ever see empty. A sitemap
+  that promises pages it cannot deliver is worse than a short one.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://osteoneuralnetwork.com/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

@@ -14,6 +14,47 @@
       its own origin or to Google's font CDN, which keeps the privacy statement
       in compliance/DPIA.md true by construction.
     -->
+    <!--
+      Canonical, and it matters more than usual here: this exact site also
+      answers on onnm.kali-fz.workers.dev, which is kept alive on purpose as a
+      fallback. Two hostnames serving identical pages is duplicate content, and
+      without this a search engine is free to decide the workers.dev address is
+      the real one. This says which address is.
+    -->
+    <link rel="canonical" href="https://osteoneuralnetwork.com/" />
+
+    <!-- Link previews: what a shared URL looks like in Slack, LinkedIn, Discord. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OsteoNeuralNetwork" />
+    <meta property="og:title" content="OsteoNeuralNetwork" />
+    <meta
+      property="og:description"
+      content="A research demonstration that screens bone radiographs for possible lesions and shows what the model looked at. Not a medical device."
+    />
+    <meta property="og:url" content="https://osteoneuralnetwork.com/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="OsteoNeuralNetwork" />
+    <meta
+      name="twitter:description"
+      content="A research demonstration that screens bone radiographs for possible lesions and shows what the model looked at. Not a medical device."
+    />
+
+    <!--
+      Structured data. The useful part is `alternateName`: people write this
+      project's name as one word, as three, and as an abbreviation, and this is
+      what tells a search engine those all denote the same thing.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "OsteoNeuralNetwork",
+        "alternateName": ["ONNM", "Osteo Neural Network", "OsteoNeuralNetwork Model"],
+        "url": "https://osteoneuralnetwork.com/",
+        "description": "An open research prototype that screens bone radiographs for possible lesions, returns calibrated probabilities and shows a Grad-CAM heat map of what influenced the result. Not a medical device."
+      }
+    </script>
+
     <link rel="icon" href="data:," />
   </head>
   <body>
@@ -24,11 +65,25 @@
         why rather than showing an empty page.
       -->
       <noscript>
-        <p style="padding: 48px 0">
-          ONNM needs JavaScript to run. The scanner uploads an image, draws a
-          heat map over it and renders an interactive globe, none of which has a
-          meaningful static fallback.
-        </p>
+        <div style="padding: 48px 0; max-width: 70ch">
+          <h1>OsteoNeuralNetwork</h1>
+          <p>
+            An open research prototype that screens bone radiographs for
+            possible lesions. It returns a calibrated probability for each of
+            three classes, normal, benign and malignant, and draws a Grad-CAM
+            heat map showing which part of the image influenced the result.
+          </p>
+          <p>
+            <strong>Research and education only.</strong> This is not a medical
+            device, has no FDA, CE or MHRA clearance, and has not been
+            clinically validated. Every radiograph needs a qualified clinician.
+          </p>
+          <p>
+            The scanner itself needs JavaScript: it uploads an image, draws a
+            heat map over it and renders an interactive globe, none of which has
+            a meaningful static fallback.
+          </p>
+        </div>
       </noscript>
     </div>
     <script type="module" src="/src/main.js"></script>

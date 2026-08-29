@@ -1,0 +1,16 @@
+# OsteoNeuralNetwork
+#
+# Everything public is welcome to be crawled. The three paths below are not
+# secret, they are simply useless to a crawler: /scanner and /profile require a
+# signed-in account and render nothing without one, and /admin belongs to a
+# single account and answers 404 to everybody else. Excluding them keeps a
+# crawler spending its time on the page that actually has content.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /scanner
+Disallow: /profile
+Disallow: /admin
+
+Sitemap: https://osteoneuralnetwork.com/sitemap.xml
