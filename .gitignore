@@ -118,3 +118,4 @@ node_modules/
 # wrangler's local state at the repository root (the Worker that serves the
 # site). cloudflare/.wrangler/ above covers the older onnm-community Worker.
 .wrangler/
+_worktrees/cloudflare-parity/
