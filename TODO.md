@@ -3,26 +3,24 @@
 Companion to `overview.md`. Checked items are verified done, not assumed.
 Last audited: 2026-08-29 (custom domain, review console, retention, terms gate scoped).
 
-**Current state:** 452 Python tests and 37 Worker tests green, repo-wide ruff clean.
+**Current state:** 452 Python tests and 51 Worker tests green, repo-wide ruff clean.
 The whole application is **one Cloudflare Worker live at `osteoneuralnetwork.com`**,
-D1 at **schema_version 6**, with the submission review console at `/admin` and a daily
-retention job. The Streamlit deployment has been removed. Model versioning is live at
-**v1.0.0** (`full-20260822-041653`).
+D1 at **schema_version 7**, with the submission review console at `/admin`, a Terms
+acceptance gate in front of sign-in, and a daily retention job. The Streamlit
+deployment has been removed. Model versioning is live at **v1.0.0**
+(`full-20260822-041653`).
 
-> **Read this first if you read nothing else, THE ONE RELEASE BLOCKER.**
-> Everything works and the domain is bought, but **nobody ever agrees to anything**.
-> The header's "Sign in with Google" goes straight to Google, so an account is created
-> and a scan can be run without a Terms acceptance step ever happening.
+> **Read this first if you read nothing else.**
+> The Terms gate is **built and deployed** (2026-08-29). `/api/auth/google/start`
+> refuses to begin an OAuth flow without a signed acceptance cookie, `/api/scan`
+> refuses an account that has not agreed, and all seven existing accounts carry
+> `tos_version` NULL so they are asked on their next visit. That closes the gap
+> `compliance/DPIA.md` risk rows R1, R2, R7 and R13 assumed was closed, and gives
+> `compliance/ROPA.md`'s Art 6(1)(b) basis something to point at.
 >
-> `users.tos_accepted_at` exists and is populated, but it is **meaningless**:
-> `cloudflare/src/worker.js` binds `tos_accepted_at || created` and the callback never
-> sends the field, so every account has `tos_accepted_at == created_at`. It records
-> that a row was inserted, not that a human read anything.
->
-> This is a gap the compliance work already assumes is closed: `compliance/DPIA.md`
-> risk rows R1, R2, R7 and R13 all name "the Terms" as their mitigation, and
-> `compliance/ROPA.md` names Art 6(1)(b) "performance of a contract (the Terms)" as
-> the lawful basis. **See `### Blocking: nobody agrees to the Terms` below.**
+> **Two things are still owed before promoting the site widely:** the Terms wording
+> has not been reviewed by anyone qualified, and nobody has walked the Google round
+> trip by hand. Automated checks stop at the session boundary.
 >
 > Second, unchanged: the Grad-CAM localisation claim is *measurable* (the heatmap was
 > inverted; fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936
