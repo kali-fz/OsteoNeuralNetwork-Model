@@ -17,6 +17,7 @@ import "./styles/theme.css";
 import "./styles/components.css";
 import "./globe/globe.css";
 
+import onnmLogo from "../../assets/onnm-logo.png?url";
 import { getSession, signOut } from "./api.js";
 import { renderLanding } from "./pages/landing.js";
 import { renderScanner } from "./pages/scanner.js";
@@ -199,13 +200,16 @@ function renderHeader(session) {
         <span>${accountName}</span>
       </a>
       <button class="onnm-site-navlink onnm-site-linkbutton" type="button" data-signout>Sign out</button>`
-    : `<a class="onnm-btn onnm-btn-primary" href="${signInHref()}" data-link>Sign in with Google</a>`;
+    : `<a class="onnm-btn onnm-btn-cream" href="${signInHref()}" data-link>Sign in with Google</a>`;
 
   return `
     <header class="onnm-header">
       <a class="onnm-wordmark" href="/" data-link>
-        <span class="onnm-wordmark-main">OsteoNeuralNetwork Model</span>
-        <span class="onnm-wordmark-sub">Open research prototype · ONNM</span>
+        <img class="onnm-logo" src="${onnmLogo}" alt="" width="40" height="40" />
+        <span class="onnm-wordmark-text">
+          <span class="onnm-wordmark-main">OsteoNeuralNetwork Model</span>
+          <span class="onnm-wordmark-sub">Open research prototype · ONNM</span>
+        </span>
       </a>
       <nav class="onnm-site-nav" aria-label="Primary navigation">${nav}</nav>
     </header>`;
@@ -318,7 +322,7 @@ async function render() {
          <p class="onnm-muted">
            Scans are saved to your account, so this page needs you signed in.
          </p>
-         <p><a class="onnm-btn onnm-btn-primary" href="${signInHref()}" data-link>Sign in with Google</a></p>
+         <p><a class="onnm-btn onnm-btn-cream" href="${signInHref()}" data-link>Sign in with Google</a></p>
        </section>`,
     );
     focusRouteMain();

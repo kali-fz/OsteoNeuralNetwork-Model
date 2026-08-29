@@ -52,9 +52,9 @@ function formatCount(value) {
 
 function statTile(value, label) {
   return `
-    <div class="onnm-home-stat">
-      <span class="onnm-home-stat-value">${formatCount(value)}</span>
-      <span class="onnm-home-stat-label">${label}</span>
+    <div class="onnm-globe-stat">
+      <span class="onnm-globe-stat-value">${formatCount(value)}</span>
+      <span class="onnm-globe-stat-label">${label}</span>
     </div>`;
 }
 
@@ -87,7 +87,7 @@ export async function renderLanding(main, state) {
   const signedIn = Boolean(state.session?.signed_in);
   const cta = signedIn
     ? `<a class="onnm-home-cta onnm-btn onnm-btn-primary" href="/scanner" data-link>Test ONNM v${MODEL_VERSION}</a>`
-    : `<a class="onnm-home-cta onnm-btn onnm-btn-primary" href="/terms" data-link>Create a free account with Google</a>`;
+    : `<a class="onnm-home-cta onnm-btn onnm-btn-cream" href="/terms" data-link>Create a free account with Google</a>`;
 
   main.insertAdjacentHTML(
     "beforeend",
@@ -119,14 +119,13 @@ export async function renderLanding(main, state) {
         </div>
         <div class="onnm-globe-host" id="globe-host">${globeMarkup}</div>
         <p class="onnm-globe-note" id="globe-note" aria-live="polite">Loading community activity…</p>
+        <div class="onnm-globe-stats" id="stats" aria-label="Project totals">
+          ${statTile(null, "Registered users")}
+          ${statTile(null, "Reviewed shared scans")}
+          ${statTile(null, "Countries represented")}
+        </div>
       </section>
     </div>
-
-    <section class="onnm-home-stats" id="stats" aria-label="Project totals">
-      ${statTile(null, "Registered users")}
-      ${statTile(null, "Reviewed shared scans")}
-      ${statTile(null, "Countries represented")}
-    </section>
 
     <section class="onnm-metric-band" aria-labelledby="scan-benefits-heading">
       <h2 id="scan-benefits-heading">What you receive after a scan</h2>
