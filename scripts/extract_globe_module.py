@@ -154,7 +154,7 @@ SUBSTITUTIONS = [
     ),
     (
         "const d3geo = window.d3geo || window.d3;",
-        "const d3geo = geo;  // was the UMD global inside the Streamlit iframe",
+        "const d3geo = geo;  // an imported module here, formerly a UMD global",
     ),
     (
         "if (WORLD && typeof topojson !== 'undefined') {",

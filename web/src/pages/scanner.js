@@ -158,10 +158,15 @@ export async function renderScanner(main) {
           Share this image to help improve the model. Off by default. Only the
           256-pixel processed image is stored, never the original file or its
           metadata, and sharing is asked per image rather than once.
-          <strong>You can delete a shared image from your account page at any
-          time until a reviewer approves it;</strong> after approval it is part
-          of the training set and cannot be removed.
-          <a href="/#terms" data-link>Terms of use</a>.
+          <strong>By ticking this I confirm I have the right to share this image,
+          and that it shows no visible name, hospital number or other
+          identifier.</strong>
+          You can delete a shared image from your account page at any time until a
+          reviewer approves it. After approval, ask us and we will still delete the
+          stored copy, but what a model has already learned from it cannot be
+          reversed.
+          <a href="/terms" data-link>Terms of use</a> ·
+          <a href="/privacy" data-link>Privacy notice</a>.
         </span>
       </label>
 

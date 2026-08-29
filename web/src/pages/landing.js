@@ -1,10 +1,9 @@
 /**
  * Public landing page.
  *
- * The composition and product copy deliberately follow app.py's final
- * Streamlit homepage. The runtime remains the standalone Vite application:
- * every number, contributor and country marker still comes from a same-origin
- * Worker API, and the globe keeps its existing canvas implementation.
+ * Every number, contributor and country marker comes from a same-origin Worker
+ * API, and the globe keeps its canvas implementation rather than re-drawing in
+ * the DOM, because it animates.
  */
 
 import heroMoss from "../../../assets/hero-moss.svg?url";
@@ -156,12 +155,13 @@ export async function renderLanding(main, state) {
           leaves the review queue immediately.
         </p>
         <p>
-          <strong>That window closes when a reviewer approves the image.</strong>
-          Approval adds it to the research training set, and once a model has
-          been trained on an image there is no way to remove what the model
-          learned from it. We cannot take it back out afterwards, and we will not
-          claim otherwise. Approval is therefore the last point at which the
-          decision is still yours, so if you are unsure, delete it before then.
+          <strong>That self-service window closes when a reviewer approves the
+          image</strong>, but your rights do not. After approval you can still ask
+          us and we will delete the stored copy. What cannot be undone is the
+          training itself: once a model has learned from an image, no technique
+          removes that image's contribution from the weights, and we will not
+          claim otherwise. Approval is the last point at which the decision is
+          entirely yours, so if you are unsure, delete it before then.
         </p>
       </div>
 

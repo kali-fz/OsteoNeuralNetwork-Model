@@ -21,7 +21,7 @@ import { signSession, verifySession } from "./session.js";
  * bundle can send an old string, and honouring it would let a client choose what
  * it is deemed to have agreed to.
  */
-export const TERMS_VERSION = "2026-08-29";
+export const TERMS_VERSION = "2026-08-30";
 
 /**
  * A short-lived cookie proving the Terms were accepted before any account exists.

@@ -40,9 +40,11 @@ timetable above.
 
 - The Cloudflare Worker at `onnm-community.kali-fz.workers.dev` and the code in
   `cloudflare/src/`.
-- The application code in this repository: `app.py`, `src/`, `scripts/`.
-- The Streamlit application logic as deployed, including authentication, session
-  handling, upload validation, and the community submission path.
+- The website and API at `osteoneuralnetwork.com`, served by the Worker in `worker/`
+  with the frontend in `web/`.
+- The application code in this repository: `src/`, `scripts/`, `inference/`.
+- The deployed application logic, including authentication, session handling, the Terms
+  gate, upload validation, the community submission path, and the admin review console.
 - Dependency vulnerabilities that are actually reachable from this project's code.
 
 Findings we particularly want: authentication or authorisation bypass on any Worker
@@ -56,7 +58,6 @@ make the app store an image the user did not consent to share.
 without written authorisation may be an offence under the **Computer Misuse Act 1990**,
 and it is not authorised by this policy:
 
-- **Streamlit Community Cloud**: the hosting platform.
 - **Google**: the identity provider.
 - **Cloudflare's own platform**, as distinct from our Worker's application logic.
 - **GitHub**.
@@ -97,7 +98,8 @@ no long-term support branches.
 ## Secrets
 
 If you find a credential in this repository, its history, an issue, a screenshot, or any
-published artefact, report it through the channel above and **do not use it**. Secrets are
-kept in `.env` and `.streamlit/secrets.toml`, both gitignored; D1 dumps are gitignored by
-pattern because `wrangler d1 export` writes them into `cloudflare/` by default and they
-contain every user's email, password hash, and shared radiographs.
+published artefact, report it through the channel above and **do not use it**. Deployment
+secrets live in Cloudflare's secret store, set with `npx wrangler secret put` and never in
+the repository; local development values go in `.env`, which is gitignored. D1 dumps are
+gitignored by pattern because `wrangler d1 export` writes them into `cloudflare/` by
+default and they contain every user's email, password hash, and shared radiographs.

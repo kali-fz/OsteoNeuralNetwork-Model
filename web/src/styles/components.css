@@ -1,11 +1,10 @@
 /*
- * Components the standalone frontend needs and Streamlit used to supply.
+ * Every component the frontend draws for itself.
  *
- * theme.css carries ONNM's identity across from src/theme.py -- the palette,
- * the type scale, and the .onnm-* rules that already existed. What it cannot
- * carry is anything Streamlit itself drew: buttons, file inputs, sliders,
- * tables, panels. Those were Streamlit widgets, so they are built here against
- * the same tokens rather than invented from scratch.
+ * theme.css carries ONNM's identity -- the palette, the type scale, and the
+ * .onnm-* rules that define the look. What it does not carry is the controls:
+ * buttons, file inputs, sliders, tables, panels. Those are built here against
+ * the same tokens, so a widget and the page around it cannot drift apart.
  *
  * Written by hand, unlike theme.css and globe.css, which are generated.
  */
@@ -415,20 +414,37 @@
 .onnm-table th { font-weight: 600; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .onnm-table td { font-variant-numeric: tabular-nums; }
 
+/*
+ * A table inside prose, such as the retention schedule in the Privacy notice.
+ *
+ * The scroll container is the point: a three-column table of sentences will not
+ * fit a phone, and without this the whole page scrolls sideways instead of just
+ * the table. `tabular-nums` is unset here because these cells hold sentences,
+ * not figures, and lining digits in running text looks like a mistake.
+ */
+.onnm-table-wrap {
+  margin: 14px 0 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.onnm-table-wrap .onnm-table { min-width: 34rem; }
+.onnm-table-wrap .onnm-table th,
+.onnm-table-wrap .onnm-table td { font-size: 0.85rem; line-height: 1.5; }
+.onnm-table-wrap .onnm-table td { font-variant-numeric: normal; color: var(--muted); }
+.onnm-table-wrap .onnm-table tr:last-child td { border-bottom: 0; }
+
 /* --- Footer -------------------------------------------------------------- */
 
 .onnm-site-footer { border-top: 1px solid var(--line); margin-top: 48px; padding: 24px 0; }
 .onnm-site-footer-warning { font-size: 0.86rem; max-width: 84ch; }
 .onnm-site-footer-meta { font-size: 0.78rem; color: var(--muted); max-width: 84ch; }
-.onnm-legal-status {
-  max-width: 84ch;
-  margin: 18px 0 0;
-  padding: 12px 14px;
-  border-left: 3px solid #9b7b47;
-  background: #f2eee7;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
+/*
+ * `.onnm-legal-status` used to sit here: a caution strip telling visitors the
+ * footer's notices were summaries rather than the real Terms and Privacy Policy.
+ * Both documents now exist as pages, so the strip and its rule are gone. The
+ * footer links to them directly instead of apologising for their absence.
+ */
 .onnm-legal-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; }
 .onnm-legal-links a {
   display: inline-flex;

@@ -6,9 +6,9 @@
  * there is no token here to steal, and no code path in the frontend can read,
  * copy or leak the session.
  *
- * There is also no API key here. The Streamlit deployment held one because the
- * server was the client; the browser is the client now, so the key stays in the
- * Worker and this file simply cannot address the storage routes directly.
+ * There is also no API key here. The browser is the client, so the key that
+ * authenticates against the storage routes stays in the Worker, and this file
+ * simply cannot address those routes directly.
  */
 
 /** Throw a useful message for a failed response, or return its JSON. */

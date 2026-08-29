@@ -3,12 +3,11 @@
  *
  * WHAT THIS REPLACED
  * ------------------
- * `review_app.py`, a second Streamlit app run from a local checkout on port
- * 8502 with the admin key exported into the shell. That arrangement existed
- * because the *public* deployment could not be trusted with the review path:
- * app.py ran on Streamlit Community Cloud, so any guard inside it was a guard
- * running in a process strangers were talking to, and its protection was that
- * the code simply was not deployed there.
+ * A separate review tool run from a local checkout with the admin key exported
+ * into the shell. That arrangement existed because the review path could not be
+ * trusted to the public deployment: any guard inside it would have been a guard
+ * running in a process strangers were talking to, and its real protection was
+ * that the code simply was not deployed there.
  *
  * That reasoning does not carry over. The queue is not guarded here at all --
  * this file is in the bundle every visitor downloads, and reading it grants

@@ -117,7 +117,7 @@ export function mountGlobe(root, options = {}) {
 
   // ── Projection ────────────────────────────────────────────────────────────
   // d3geo is the UMD namespace from d3-geo.umd.min.js
-  const d3geo = geo;  // was the UMD global inside the Streamlit iframe
+  const d3geo = geo;  // an imported module here, formerly a UMD global
   let projection, pathGen, graticule, sphere;
 
   function initProjection() {

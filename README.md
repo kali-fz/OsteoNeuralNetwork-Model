@@ -88,7 +88,7 @@ On the modelling side, I ran deep training loops on my local GPU across 3,746 cl
 
 Because compute is expensive and models are bad at knowing what they don't know, I also built an out-of-distribution quality gate. If someone uploads a photo of a hotdog, a landscape or anything that isn't a valid musculoskeletal X-ray, the system flags the invalid input and stops processing rather than making a blind guess, which saves compute and keeps the outputs meaningful.
 
-To close it out, I turned the sitemap into a working Streamlit frontend, set up hosting for reasonable uptime, and added Grad-CAM heatmaps so a doctor or researcher can actually see what the model is reacting to rather than trusting a black box.
+To close it out, I turned the sitemap into a working web application, set up hosting for reasonable uptime, and added Grad-CAM heatmaps so a doctor or researcher can actually see what the model is reacting to rather than trusting a black box.
 
 ### How the code is organised
 
@@ -100,7 +100,7 @@ The project is deliberately more than a notebook wrapped in a web page. The impl
 | Dataset pipeline | Derives labels from BTXRD one-hot fields, reconstructs surrogate patient groups, creates leakage-resistant splits, and applies aspect-safe transforms. |
 | Model | Uses ImageNet-shaped DenseNet-121 with a three-class head, calibrated probabilities, threshold selection on validation only, and Grad-CAM hooks. |
 | Evaluation | Reports clinically meaningful class metrics, PR-AUC, bootstrap confidence intervals, reliability bins, malignant error paths, and lesion-localisation scores. |
-| App | Provides Streamlit upload, OOD checks, inference, explainability, legal notices, Google OIDC, and per-user session handling. |
+| App | Provides upload, OOD checks, inference, explainability, the Terms gate, Google sign-in, and per-user session handling. |
 | Community backend | A guarded Cloudflare Worker validates payloads, applies per-user and storage caps, stores consent metadata, and exposes a human review gate before export. |
 | Verification | Six gates plus a focused pytest suite catch environment, data, decoding, training, calibration, privacy, and backend regressions. |
 
@@ -126,13 +126,24 @@ Macro ROC-AUC is **0.893**, macro PR-AUC **0.814**, and balanced accuracy **0.74
 
 ## Run it locally
 
+The website and API run on Wrangler, Cloudflare's local runtime:
+
+```powershell
+npm install
+npm run dev
+```
+
+Open <http://localhost:8787>.
+
+For the training and evaluation side, which is Python:
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
-.venv\Scripts\python.exe -m streamlit run app.py
+.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-Open <http://localhost:8501>. A checkpoint is required under `reports/*/best.pt`; the hosted deployment fetches its pinned checkpoint from the configured release URL.
+A checkpoint is required under `reports/*/best.pt`; the hosted deployment fetches its pinned checkpoint from the configured release URL.
 
 For the full pipeline:
 
@@ -155,8 +166,8 @@ For the full pipeline:
 | [Grad-CAM](https://doi.org/10.48550/arXiv.1610.02391) | Visual explanation method. |
 | [PyTorch](https://pytorch.org/) | Tensor and model runtime. |
 | [MONAI](https://monai.io/) | Medical-imaging transforms and data pipeline components. |
-| [Streamlit](https://streamlit.io/) | Local and hosted research interface. |
-| [Cloudflare Workers](https://developers.cloudflare.com/workers/) · [D1](https://developers.cloudflare.com/d1/) | Authenticated community API and consented review storage. |
+| [Cloudflare Workers](https://developers.cloudflare.com/workers/) · [D1](https://developers.cloudflare.com/d1/) · [Containers](https://developers.cloudflare.com/containers/) | The website, the authenticated API, consented review storage, and server-side inference. |
+| [Vite](https://vite.dev/) | Frontend build for the standalone web application. |
 
 ## Licence and safety
 

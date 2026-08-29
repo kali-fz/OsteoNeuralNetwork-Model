@@ -29,17 +29,56 @@ const SECRET = "a-test-secret-that-is-long-enough";
 // The two halves must agree
 // ---------------------------------------------------------------------------
 
+const termsPage = readFileSync(
+  fileURLToPath(new URL("../../web/src/pages/terms.js", import.meta.url)),
+  "utf8",
+);
+
 test("the page and the server record the same Terms version", () => {
   // If these drift, every acceptance is recorded against a version string that
   // does not describe the text the person actually read. Nothing else in the
   // system would notice, which is exactly why this is asserted.
-  const page = readFileSync(
-    fileURLToPath(new URL("../../web/src/pages/terms.js", import.meta.url)),
-    "utf8",
-  );
-  const match = page.match(/export const TERMS_VERSION = "([^"]+)"/);
+  const match = termsPage.match(/export const TERMS_VERSION = "([^"]+)"/);
   assert.ok(match, "web/src/pages/terms.js must export TERMS_VERSION");
   assert.equal(match[1], TERMS_VERSION);
+});
+
+test("the operator is named before the Terms can ship", () => {
+  // A contract needs a named counterparty and Article 13(1)(a) needs a named
+  // controller. This test is what stops a placeholder reaching production: it is
+  // not a reminder, it is a build failure.
+  //
+  // The assertion reads the value out of the OPERATOR object rather than
+  // scanning the whole file. Scanning matched the marker wherever it appeared,
+  // including inside the code that checked for it, so the test failed even once
+  // the name was filled in. Assert on the datum, not on the text around it.
+  const match = termsPage.match(/export const OPERATOR = \{\s*name: "([^"]*)"/);
+  assert.ok(match, "web/src/pages/terms.js must export OPERATOR with a name");
+
+  const name = match[1].trim();
+  assert.ok(name.length > 0, "OPERATOR.name is empty");
+  assert.ok(
+    !name.includes("TODO"),
+    `OPERATOR.name is still a placeholder (${name}). The Terms and the Privacy ` +
+      "notice both name the operator, and neither can be published until the " +
+      "controller's legal name and capacity are confirmed.",
+  );
+});
+
+test("the Privacy notice and the Terms move together", () => {
+  // They cross-reference each other and the Terms require agreement to both, so
+  // a Privacy notice older than the Terms means people agreed to a notice that
+  // no longer describes what happens. Dates, so this is a string comparison.
+  const privacyPage = readFileSync(
+    fileURLToPath(new URL("../../web/src/pages/privacy.js", import.meta.url)),
+    "utf8",
+  );
+  const match = privacyPage.match(/export const PRIVACY_VERSION = "([^"]+)"/);
+  assert.ok(match, "web/src/pages/privacy.js must export PRIVACY_VERSION");
+  assert.ok(
+    match[1] >= TERMS_VERSION,
+    `the Privacy notice (${match[1]}) predates the Terms (${TERMS_VERSION})`,
+  );
 });
 
 // ---------------------------------------------------------------------------

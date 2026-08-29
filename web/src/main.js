@@ -1,19 +1,16 @@
 /**
  * Application shell and router.
  *
- * WHAT REPLACED WHAT
- * ------------------
- * Streamlit re-executed the whole script on every interaction and rebuilt the
- * page from the top; `app.py` routed with an if/elif chain over
- * `st.session_state["current_page"]`. That model is the source of the lag this
- * migration exists to remove, so it is not reproduced. Pages render once, and
- * only the part that changed is re-rendered.
+ * WHY IT RENDERS THE WAY IT DOES
+ * ------------------------------
+ * Pages render once and only the part that changed is re-rendered. Rebuilding
+ * the document on every interaction is the source of the lag this application
+ * exists to avoid, so nothing here does it.
  *
- * The four pages are the same four the Streamlit app had -- landing, auth,
- * scanner, profile -- and the URL is the source of truth for which is showing,
- * so a deep link works and the back button behaves. `not_found_handling` is set
- * to single-page-application in wrangler.jsonc, which is what makes a cold load
- * of /scanner return the shell rather than a 404.
+ * The URL is the source of truth for which page is showing, so a deep link works
+ * and the back button behaves. `not_found_handling` is set to
+ * single-page-application in wrangler.jsonc, which is what makes a cold load of
+ * /scanner return the shell rather than a 404.
  */
 
 import "./styles/theme.css";
@@ -26,6 +23,7 @@ import { renderScanner } from "./pages/scanner.js";
 import { renderProfile } from "./pages/profile.js";
 import { renderAdmin } from "./pages/admin.js";
 import { renderTerms } from "./pages/terms.js";
+import { renderPrivacy } from "./pages/privacy.js";
 
 const ROUTES = {
   "/": renderLanding,
@@ -33,6 +31,7 @@ const ROUTES = {
   "/profile": renderProfile,
   "/admin": renderAdmin,
   "/terms": renderTerms,
+  "/privacy": renderPrivacy,
 };
 
 const SITE_TITLE = "OsteoNeuralNetwork";
@@ -50,13 +49,17 @@ const ROUTE_TITLES = {
   "/profile": `My profile · ${SITE_TITLE}`,
   "/admin": `Review queue · ${SITE_TITLE}`,
   "/terms": `Terms of use · ${SITE_TITLE}`,
+  "/privacy": `Privacy notice · ${SITE_TITLE}`,
 };
 
 /**
  * Pages a signed-out visitor cannot use.
  *
  * `/terms` is deliberately absent: it is the page a signed-out visitor has to be
- * able to read, since agreeing to it is what lets them sign in at all.
+ * able to read, since agreeing to it is what lets them sign in at all. `/privacy`
+ * is absent for a stronger reason: an Article 13 notice has to be readable by
+ * someone deciding whether to hand over any data at all, so putting it behind the
+ * account it describes would defeat its purpose.
  */
 const SIGNED_IN_ROUTES = new Set(["/scanner", "/profile", "/admin"]);
 
@@ -222,33 +225,20 @@ function renderFooter() {
         unless you explicitly consent per image. Location is recorded only at
         country level, and no IP address is stored.
       </p>
-      <p class="onnm-legal-status">
-        <strong>Legal and privacy overview.</strong> These are concise research-use
-        notices, not the complete deployment-specific Terms or Privacy Policy.
-        Publication still requires review of the full notices for this Cloudflare deployment.
-      </p>
       <nav class="onnm-legal-links" aria-label="Legal and privacy information">
-        <a href="#legal-terms">Research-use terms summary</a>
-        <a href="#legal-privacy">Privacy summary</a>
+        <a href="/terms" data-link>Terms of use</a>
+        <a href="/privacy" data-link>Privacy notice</a>
         <a href="#legal-medical">Medical notice</a>
         <a href="#legal-cookies">Session notice</a>
       </nav>
       <div class="onnm-legal-summaries">
-        <details id="legal-terms">
-          <summary>Research-use terms summary</summary>
-          <p>Use ONNM only for research and education. Do not use its output to diagnose, treat, or delay care, and only upload images you are authorised to use.</p>
-        </details>
-        <details id="legal-privacy">
-          <summary>Privacy summary</summary>
-          <p>Your account identifies your own saved scans. Images are retained for research review only when you explicitly consent for that image; public map data is aggregated at country level.</p>
-        </details>
         <details id="legal-medical">
           <summary>Medical notice</summary>
           <p>This unvalidated prototype has no FDA, CE, or MHRA clearance. Every radiograph requires review by a qualified clinician.</p>
         </details>
         <details id="legal-cookies">
           <summary>Session notice</summary>
-          <p>ONNM uses a secure, HTTP-only session cookie to keep you signed in. It is not used for advertising or cross-site tracking.</p>
+          <p>ONNM uses a secure, HTTP-only session cookie to keep you signed in, and a short-lived cookie that carries your agreement to the Terms through sign-in. Neither is used for advertising or cross-site tracking.</p>
         </details>
       </div>
     </footer>`;
