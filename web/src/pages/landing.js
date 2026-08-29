@@ -102,7 +102,8 @@ export async function renderLanding(main, state) {
             possible lesions, and creating an account to use it is free. It's
             community-driven: every image someone chooses to share helps train the next
             version, and what we're working towards next is telling apart the five main
-            types of bone cancer, and more!
+            types of bone cancer, adding a second model with deep knowledge of the field
+            you'll be able to chat with directly, and more!
           </p>
           <div class="onnm-hero-points" aria-label="Account and contribution highlights">
             <span>Free Google account</span>
