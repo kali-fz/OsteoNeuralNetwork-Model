@@ -1,4 +1,4 @@
-"""Model version registry — what shipped, what it scored, and what is serving.
+"""Model version registry: what shipped, what it scored, and what is serving.
 
 WHY THIS EXISTS
 ---------------
@@ -343,7 +343,7 @@ def register(
 def _fmt(value: Any) -> str:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return f"{value:.4f}" if isinstance(value, float) else str(value)
-    return "—" if value in (None, "") else str(value)
+    return "-" if value in (None, "") else str(value)
 
 
 def _serving_line(current: Version | None) -> str:
@@ -354,7 +354,7 @@ def render_markdown(versions: list[Version]) -> str:
     """Render the ledger. Generated -- never hand-edit ``ONN.md``."""
     current = serving(versions)
     head = [
-        "# ONN — model version ledger",
+        "# ONN: model version ledger",
         "",
         "**Generated from `model_versions.json` by `scripts/version_model.py render`.**",
         "Do not edit by hand: the JSON is the source of truth and a test asserts",
@@ -363,13 +363,13 @@ def render_markdown(versions: list[Version]) -> str:
         "Every training generation is registered here *before* anything is promoted,",
         "and promotion is a separate, guarded act. A run that regresses is recorded as",
         "`held`, `reports/PRODUCTION` does not move, and the previous checkpoint keeps",
-        "serving — so a bad retrain costs a row in this table and nothing else.",
+        "serving, so a bad retrain costs a row in this table and nothing else.",
         "",
         "| level | means |",
         "|---|---|",
-        "| major | a different model — another architecture family or task head |",
+        "| major | a different model, another architecture family or task head |",
         "| minor | a deliberate recipe change (augmentation, loss, backbone) |",
-        "| patch | the same recipe, more data — what the daily community loop produces |",
+        "| patch | the same recipe with more data, which is what the daily community loop produces |",
         "",
         f"**Serving now:** {_serving_line(current)}",
         "",
@@ -404,7 +404,7 @@ def render_markdown(versions: list[Version]) -> str:
 
     detail: list[str] = ["", "---", "", "## Detail", ""]
     for version in reversed(versions):
-        detail.append(f"### {version.version} — {version.status}")
+        detail.append(f"### {version.version}: {version.status}")
         detail.append("")
         detail.append(f"- **Registered** {version.created_at}")
         detail.append(f"- **Run** `{version.run}`")

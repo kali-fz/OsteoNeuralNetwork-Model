@@ -44,9 +44,9 @@ const SITE_TITLE = "OsteoNeuralNetwork";
  */
 const ROUTE_TITLES = {
   "/": SITE_TITLE,
-  "/scanner": `Scanner — ${SITE_TITLE}`,
-  "/profile": `My profile — ${SITE_TITLE}`,
-  "/admin": `Review queue — ${SITE_TITLE}`,
+  "/scanner": `Scanner · ${SITE_TITLE}`,
+  "/profile": `My profile · ${SITE_TITLE}`,
+  "/admin": `Review queue · ${SITE_TITLE}`,
 };
 
 /** Pages a signed-out visitor cannot use. */

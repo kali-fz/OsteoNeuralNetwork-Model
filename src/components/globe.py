@@ -838,7 +838,7 @@ def _build_html(
         closest.contributorCount + ' approved contributor' +
         (closest.contributorCount === 1 ? '' : 's')
       );
-      tooltip.textContent = closest.label + ' — ' + parts.join(' · ');
+      tooltip.textContent = closest.label + ': ' + parts.join(' · ');
       tooltip.style.display = 'block';
       // Clamp so tooltip stays inside the wrapper
       const tx = Math.min(mx + 12, SIZE - tooltip.offsetWidth - 4);

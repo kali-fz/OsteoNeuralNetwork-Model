@@ -13,7 +13,7 @@ Report privately. **Do not open a public issue for a security defect.**
 
 Please include what you found, how to reproduce it, what an attacker could reach, and
 any log or request evidence. If you believe personal data or radiographs were exposed,
-say so explicitly and early — that changes the response clock (see below).
+say so explicitly and early. That changes the response clock (see below).
 
 ### What to expect
 
@@ -50,14 +50,14 @@ route; anything that lets one account read another's submissions; anything that 
 the admin review or export path without the admin key; injection into D1; and any way to
 make the app store an image the user did not consent to share.
 
-### Out of scope — do not test
+### Out of scope: do not test
 
 **Only test infrastructure this project controls.** Testing third-party infrastructure
 without written authorisation may be an offence under the **Computer Misuse Act 1990**,
 and it is not authorised by this policy:
 
-- **Streamlit Community Cloud** — the hosting platform.
-- **Google** — the identity provider.
+- **Streamlit Community Cloud**: the hosting platform.
+- **Google**: the identity provider.
 - **Cloudflare's own platform**, as distinct from our Worker's application logic.
 - **GitHub**.
 

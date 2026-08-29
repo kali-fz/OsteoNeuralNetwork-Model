@@ -1,4 +1,4 @@
-# ONNM production deployment — Cloudflare account owner runbook
+# ONNM production deployment: Cloudflare account owner runbook
 
 This runbook is only for the owner of the Cloudflare and Google OAuth accounts.
 The application code is already on GitHub `main`, and its GitHub Actions checks pass.
@@ -11,7 +11,7 @@ configured to deploy it automatically.
 
 **Live URL:** `https://osteoneuralnetwork.com`
 
-**Also answers:** `https://onnm.kali-fz.workers.dev` — kept enabled deliberately, so there
+**Also answers:** `https://onnm.kali-fz.workers.dev`, kept enabled deliberately, so there
 is a working address if the domain or its certificate ever has a problem.
 
 ## 1. Use a clean checkout of `main`

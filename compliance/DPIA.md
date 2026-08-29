@@ -1,6 +1,6 @@
-# Data Protection Impact Assessment — ONNM hosted deployment
+# Data Protection Impact Assessment: ONNM hosted deployment
 
-**Status: DRAFT — not signed off.** Prepared by the engineering side to be completed and
+**Status: DRAFT, not signed off.** Prepared by the engineering side to be completed and
 signed by the controller. Sections marked **[CONTROLLER]** require a decision that only the
 controller can make. This is not legal advice.
 
@@ -10,9 +10,9 @@ controller can make. This is not legal advice.
 | Subject | ONNM hosted deployment and community submission loop |
 | Version | 0.1 (draft) |
 | Prepared | 2026-08-24 |
-| Controller | kali-fz — **[CONTROLLER]** confirm whether acting personally or on behalf of an institution |
+| Controller | kali-fz, **[CONTROLLER]** confirm whether acting personally or on behalf of an institution |
 | Prepared by | Engineering, with GRC input (Yaso-cyber) |
-| DPO consulted | No DPO appointed — see §8 |
+| DPO consulted | No DPO appointed, see §8 |
 | Signed off by | **Not yet signed** |
 | Review | On any change of purpose, dataset, hosting, or user population; otherwise annually |
 
@@ -69,12 +69,12 @@ Flow for the hosted app:
 7. Shared submissions enter a human review queue. Only a human-approved label can reach
    training.
 
-### 2.2 Scope — data processed
+### 2.2 Scope: data processed
 
 See `ROPA.md` for the itemised register. In summary: account identifiers (email, Google
 `sub`, UUID, display name, photo URL, password hash for legacy password accounts),
 consent and ToS timestamps, country code, model outputs (verdict, probabilities, OOD
-flags), and — **on explicit per-image consent only** — a 256 px processed radiograph.
+flags), and, **on explicit per-image consent only**, a 256 px processed radiograph.
 
 **Special category data:** the radiographs, and the inferred verdict, are data concerning
 health (Art 4(15)) and therefore Article 9 data. The data remains **pseudonymised, not
@@ -83,7 +83,7 @@ anonymous**, because it is linked to an authenticated account.
 ### 2.3 Context
 
 - **Data subjects:** registered users (researchers, students, curious members of the
-  public), and — potentially and unverifiably — the **patients depicted in uploaded
+  public), and, potentially and unverifiably, the **patients depicted in uploaded
   radiographs**, who are not users and have no relationship with the controller.
 - **Relationship:** voluntary, no service dependency, users can stop at any time.
 - **Expectations:** users are told plainly in the Privacy Policy that images reach
@@ -114,17 +114,17 @@ out-of-distribution negatives that improves the safety gate.
 | Party | Status |
 |---|---|
 | Data subjects | **[CONTROLLER]** Not yet consulted. Consider a short notice inviting comment, or record why consultation is disproportionate |
-| DPO | None appointed — see §8 |
-| Processors (Streamlit, Cloudflare, Google) | **Not yet approached** for Article 28 terms — see §6, risk R7 |
+| DPO | None appointed, see §8 |
+| Processors (Streamlit, Cloudflare, Google) | **Not yet approached** for Article 28 terms, see §6, risk R7 |
 | Information security | Reviewed internally; see `../grc_compliance_prompt.md` §8 |
 | Clinical input | **[CONTROLLER]** No clinician involved. Required before any claim of clinical utility |
-| ICO prior consultation (Art 36) | Not required unless a high residual risk cannot be mitigated — see §9 |
+| ICO prior consultation (Art 36) | Not required unless a high residual risk cannot be mitigated, see §9 |
 
 ---
 
 ## 4. Necessity and proportionality
 
-### 4.1 Lawful basis (Article 6) — **[CONTROLLER] to confirm**
+### 4.1 Lawful basis (Article 6): **[CONTROLLER] to confirm**
 
 Proposed: **Article 6(1)(f), legitimate interests**, supported by a documented Legitimate
 Interests Assessment. Rationale: the interest is scientific research into medical imaging;
@@ -137,10 +137,10 @@ arguably from derived model weights, which is not currently technically achievab
 
 **Note the distinction carefully:** legitimate interests may be the Article 6 basis while
 the *sharing* decision remains a genuine, granular, opt-in consent at the interface level.
-The two are not in conflict — one is the legal basis, the other is a user-facing control
+The two are not in conflict: one is the legal basis, the other is a user-facing control
 and a mitigation.
 
-### 4.2 Article 9 condition — **[CONTROLLER] to confirm**
+### 4.2 Article 9 condition: **[CONTROLLER] to confirm**
 
 Proposed: **Article 9(2)(j)**, scientific research, read with **DPA 2018 Schedule 1 Part 1
 paragraph 4** and the **Article 89(1)** safeguards.
@@ -158,11 +158,11 @@ document** would materially strengthen it. See risk R9.
 
 | Purpose | Data used | Could less be used? |
 |---|---|---|
-| Authentication | Email, `sub` | No — required to isolate one user's history from another's |
-| Inference | Image pixels | No — the image is the input |
+| Authentication | Email, `sub` | No, required to isolate one user's history from another's |
+| Inference | Image pixels | No, the image is the input |
 | History | Submission metadata | No |
-| Research corpus | 256 px image | **Already minimised** — original resolution is never stored; only 256 px, only on consent |
-| Globe display | Country code | **Already minimised** — country only, deliberately chosen over coordinates |
+| Research corpus | 256 px image | **Already minimised**, original resolution is never stored; only 256 px, only on consent |
+| Globe display | Country code | **Already minimised**, country only, deliberately chosen over coordinates |
 | Contributor display | Name, photo | **Opt-in only**, off by default, reversible |
 
 ### 4.4 Proportionality
@@ -188,9 +188,9 @@ Likelihood and severity: Low / Medium / High. Overall risk is the combination.
 |---|---|---|---|---|
 | R1 | A user uploads a real patient's radiograph without authority or consent; the patient is a data subject with no relationship to the controller | **Medium** | **High** | **High** |
 | R2 | Identifiers burned into image pixels are stored and shown to a reviewer; de-identification cannot remove them | **Medium** | **High** | **High** |
-| R3 | Credential compromise exposes shared radiographs and all account emails — the admin key unlocks review and export | **Medium** | **High** | **High** |
+| R3 | Credential compromise exposes shared radiographs and all account emails, the admin key unlocks review and export | **Medium** | **High** | **High** |
 | R4 | Re-identification from image content combined with account data | Low | High | **Medium** |
-| R5 | A user relies on a "normal" verdict and delays seeking care. Measured malignant recall is **0.633** — roughly one in three missed | **Medium** | **High** | **High** |
+| R5 | A user relies on a "normal" verdict and delays seeking care. Measured malignant recall is **0.633**, roughly one in three missed | **Medium** | **High** | **High** |
 | R6 | Data retained indefinitely because no retention schedule exists | **High** | Medium | **High** |
 | R7 | No Article 28 contract with processors; no transfer mechanism documented | **High** | Medium | **High** |
 | R8 | A data subject cannot exercise erasure because there is no user-facing deletion | **High** | Medium | **Medium** |
@@ -209,11 +209,11 @@ Likelihood and severity: Low / Medium / High. Overall risk is the combination.
 | R1 | Terms require the user to hold all necessary authority and consent; explicit instruction not to upload identifiable radiographs to the hosted app | Reduced | **Medium** | **In place**, but contractual only and unverifiable |
 | R1 | **[CONTROLLER]** Consider an interstitial confirmation at upload, and whether the hosted demo should accept uploads at all versus a fixed sample set | Reduced | Low | **Proposed** |
 | R2 | Warning in Terms and Privacy Policy that pixel-burned identifiers cannot be removed | Reduced | Medium | **In place** |
-| R2 | Reviewer instruction to reject and delete any image showing burned-in identifiers | Reduced | Low | **Proposed** — add to the review console |
-| R3 | **Rotate the exposed credentials immediately**; separate app and admin keys already limit blast radius; hosted app deliberately holds no admin key | Reduced | Medium | **OUTSTANDING — P1** |
+| R2 | Reviewer instruction to reject and delete any image showing burned-in identifiers | Reduced | Low | **Proposed**, add to the review console |
+| R3 | **Rotate the exposed credentials immediately**; separate app and admin keys already limit blast radius; hosted app deliberately holds no admin key | Reduced | Medium | **OUTSTANDING, P1** |
 | R3 | Record rotation dates; repeat the git-history secret audit | Reduced | Low | **Proposed** |
 | R4 | 256 px downscale, DICOM PII strip, UUID filenames, country-level location only | Reduced | Low | **In place** |
-| R5 | Prominent, unavoidable medical disclaimer; malignant recall stated first in the model card; verdict never presented as diagnosis | Reduced | **Medium** | **In place** — cannot be eliminated while the demo is public |
+| R5 | Prominent, unavoidable medical disclaimer; malignant recall stated first in the model card; verdict never presented as diagnosis | Reduced | **Medium** | **In place**, cannot be eliminated while the demo is public |
 | R6 | Define a retention schedule and implement scheduled deletion | Not yet reduced | **High** | **OUTSTANDING** |
 | R7 | Obtain processor terms; complete IDTA/Addendum and a Transfer Risk Assessment | Not yet reduced | **High** | **OUTSTANDING** |
 | R8 | Implement per-user scan deletion in the UI; document a DSR procedure with a named contact | Not yet reduced | Medium | **OUTSTANDING** |
@@ -231,10 +231,10 @@ Likelihood and severity: Low / Medium / High. Overall risk is the combination.
 |---|---|---|
 | R1 Third-party patient images | Medium | **[CONTROLLER]** |
 | R2 Burned-in identifiers | Medium | **[CONTROLLER]** |
-| R3 Credential compromise | **High until rotation is complete** | **Must not be accepted — remediate** |
-| R5 Reliance on a false-negative | Medium | **[CONTROLLER]** — inherent to a public demo |
-| R6 Retention | High until scheduled | **Must not be accepted — remediate** |
-| R7 Processor and transfer documentation | High until complete | **Must not be accepted — remediate** |
+| R3 Credential compromise | **High until rotation is complete** | **Must not be accepted, remediate** |
+| R5 Reliance on a false-negative | Medium | **[CONTROLLER]**, inherent to a public demo |
+| R6 Retention | High until scheduled | **Must not be accepted, remediate** |
+| R7 Processor and transfer documentation | High until complete | **Must not be accepted, remediate** |
 | R8 Erasure | Medium until implemented | **[CONTROLLER]** |
 | Others | Low–Medium | **[CONTROLLER]** |
 

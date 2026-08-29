@@ -1,4 +1,4 @@
-# ONN — model version ledger
+# ONN: model version ledger
 
 **Generated from `model_versions.json` by `scripts/version_model.py render`.**
 Do not edit by hand: the JSON is the source of truth and a test asserts
@@ -7,13 +7,13 @@ this file is in step with it.
 Every training generation is registered here *before* anything is promoted,
 and promotion is a separate, guarded act. A run that regresses is recorded as
 `held`, `reports/PRODUCTION` does not move, and the previous checkpoint keeps
-serving — so a bad retrain costs a row in this table and nothing else.
+serving, so a bad retrain costs a row in this table and nothing else.
 
 | level | means |
 |---|---|
-| major | a different model — another architecture family or task head |
+| major | a different model, another architecture family or task head |
 | minor | a deliberate recipe change (augmentation, loss, backbone) |
-| patch | the same recipe, more data — what the daily community loop produces |
+| patch | the same recipe with more data, which is what the daily community loop produces |
 
 **Serving now:** v1.0.0 (`full-20260822-041653`)
 
@@ -23,13 +23,13 @@ serving — so a bad retrain costs a row in this table and nothing else.
 
 | version | date | status | run | macro ROC-AUC | malignant recall | misc rejection | community rows |
 |---|---|---|---|---|---|---|---|
-| **v1.0.0** | 2026-08-23 01:09 UTC | serving | `full-20260822-041653` | 0.8934 | 0.6327 | — | — |
+| **v1.0.0** | 2026-08-23 01:09 UTC | serving | `full-20260822-041653` | 0.8934 | 0.6327 | - | - |
 
 ---
 
 ## Detail
 
-### v1.0.0 — serving
+### v1.0.0: serving
 
 - **Registered** 2026-08-23 01:09 UTC
 - **Run** `full-20260822-041653`

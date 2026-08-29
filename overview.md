@@ -1,4 +1,4 @@
-# ONNM — Agent Overview
+# ONNM: Agent Overview
 
 Terse orientation for agents working on this repo. Facts, paths, invariants.
 Human-facing detail lives in `README.md`.
@@ -34,12 +34,12 @@ on the user's machine.
 
 ---
 
-## Dataset — BTXRD
+## Dataset: BTXRD
 
 - 3,746 grayscale radiographs: **1,879 normal / 1,525 benign / 342 malignant (9.1%)**
 - Per-lesion boxes + segmentation polygons (LabelMe 5.x JSON), 1,867 annotated
 - Source: figshare `10.6084/m9.figshare.27865398` (Sci Data 2024)
-- **Licence CC BY-NC-ND 4.0.** NoDerivatives covers Grad-CAM overlays — never redistribute
+- **Licence CC BY-NC-ND 4.0.** NoDerivatives covers Grad-CAM overlays, never redistribute
   derived images. `data/` and `reports/` are gitignored.
 
 Three release quirks, all handled in code:
@@ -50,7 +50,7 @@ Three release quirks, all handled in code:
 
 **No patient ID exists.** 2,826/3,746 images are multiple views of one patient.
 `derive_groups` reconstructs a surrogate patient id from runs of consecutive image ids
-sharing centre/age/sex/anatomy/diagnosis. Splits are grouped on it — verified zero leakage.
+sharing centre/age/sex/anatomy/diagnosis. Splits are grouped on it, verified zero leakage.
 
 ---
 
@@ -60,7 +60,7 @@ sharing centre/age/sex/anatomy/diagnosis. Splits are grouped on it — verified 
 |---|---|
 | DL | PyTorch 2.9.1+rocm7.2.1, MONAI 1.5.2, torchvision 0.24.1 |
 | Model | torchvision DenseNet-121, ImageNet-pretrained, 3-class head, dropout 0.2 |
-| I/O | pydicom 3.x, Pillow — DICOM + PNG/JPEG/BMP/TIFF |
+| I/O | pydicom 3.x, Pillow, DICOM + PNG/JPEG/BMP/TIFF |
 | Metrics | scikit-learn; bootstrap CIs hand-rolled |
 | Viz | matplotlib, seaborn, OpenCV-headless |
 | UI | Streamlit >=1.42 (`app.py`); loopback locally, Streamlit Cloud when hosted |
@@ -74,13 +74,13 @@ ROCm reports through the CUDA API: `torch.cuda.is_available()` is True, device i
 
 ## Environment landmines
 
-**MIOpen cannot JIT-compile its training-mode BatchNorm kernel** on these wheels —
+**MIOpen cannot JIT-compile its training-mode BatchNorm kernel** on these wheels, 
 `<type_traits>` is not shipped (`rocm-sdk init` supplies only thrust's). Training dies with
 `RuntimeError: miopenStatusUnknownError`; **inference is unaffected** because it uses the
 eval-mode path. Workaround is `train.miopen: false` (ATen native kernels, ~40% slower per
 step, semantically identical). `scripts/verify_env.py` gate 1 checks this.
 
-**Windows spawns DataLoader workers** — each re-imports the module and duplicates the
+**Windows spawns DataLoader workers**, each re-imports the module and duplicates the
 ~2.1 GB MONAI cache. Any script building a loader needs `if __name__ == "__main__":`.
 Machine has 31.8 GB RAM; `num_workers: 2` is the measured safe ceiling.
 
@@ -90,15 +90,15 @@ Machine has 31.8 GB RAM; `num_workers: 2` is the measured safe ceiling.
 
 **`train.miopen: false` is ROCm-only and must not be honoured on CUDA.** It exists purely
 for the defect above, but the flag it sets (`torch.backends.cudnn.enabled`) is the *same*
-flag on both backends — so obeying it on NVIDIA disables cuDNN and costs several times the
+flag on both backends, so obeying it on NVIDIA disables cuDNN and costs several times the
 throughput, for a bug that cannot occur there. `configure_backend` now gates the disable on
 `torch.version.hip` and logs when it ignores the flag. This matters because `full_run.yaml`
 and `overnight.yaml` both set `miopen: false`, and those are exactly the configs a Colab run
 reuses in order to stay comparable.
 
 **bf16 is not universal.** The project trains in bf16 locally because it shares fp32's
-exponent range and so needs no `GradScaler`. Turing cards — including Colab's free **T4
-(sm_75)** — have no bf16 at all. `resolve_amp_dtype` checks `torch.cuda.is_bf16_supported()`
+exponent range and so needs no `GradScaler`. Turing cards, including Colab's free **T4
+(sm_75)**, have no bf16 at all. `resolve_amp_dtype` checks `torch.cuda.is_bf16_supported()`
 and falls back to fp16 with a scaler, loudly. The scaler is enabled *only* for fp16, so the
 local bf16 path is unchanged. Effective dtype is recorded in the run result, because a run
 that says bf16 when fp16 happened is not comparable to one that means it.
@@ -147,16 +147,16 @@ configs/             base.yaml + overrides: densenet121_3class, full_run,
   ablations/         ohem_only, augs_only -- separate the overnight regression
 notebooks/           01_data_sanity, kaggle_train, colab_train
 tests/               311 tests, synthetic fixtures, no dataset required
-app.py               Streamlit UI;  .streamlit/config.toml binds loopback, telemetry off
-review_app.py        local-only community review and training-sync console
+web/                 the site: pages, styles, and the contributor globe
+worker/              the Worker: API routes, sessions, review, retention
 cloudflare/          Worker, D1 schema, migrations, and Wrangler deployment config
 MODEL_CARD.md        intended use, training data, measured limits, failure modes
-.github/workflows/   ci.yml — ruff + torch-free fast tests + full suite on CPU torch
+.github/workflows/   ci.yml: ruff + torch-free fast tests + full suite on CPU torch
 ```
 
 ---
 
-## App layer — auth, storage, OOD gate
+## App layer: auth, storage, OOD gate
 
 **Two sign-in paths are supported, but never in the same deployment.** A hosted community
 deployment requires Google OIDC and fails closed with a configuration message when the
@@ -175,15 +175,15 @@ contribution.
 `auth_provider` ('password' | 'google') and `provider_subject`, with a CHECK constraint
 pairing them: a password account needs a hash and no subject, a Google account needs a
 subject and a NULL hash. This is a database constraint rather than a Worker convention
-because the failure it prevents — one account reachable by two different proofs of
-identity — is an authentication bypass, not a data-quality problem. `verify_password`
+because the failure it prevents, one account reachable by two different proofs of
+identity, is an authentication bypass, not a data-quality problem. `verify_password`
 returns False for a non-string, and `authenticate_user` treats a federated account exactly
 like an unknown one (same dummy hash, same wasted work) so the login form cannot be timed
 to discover which addresses use Google.
 
 Identity keys on Google's `sub`, not email: a Workspace address can be reassigned after an
 account closes, so `get_or_create_oauth_user` looks up by subject first and falls back to
-email only to *return* an existing account — never to convert one. Silently upgrading a
+email only to *return* an existing account, never to convert one. Silently upgrading a
 password account to Google would let anyone who can prove control of an address take it
 over.
 
@@ -194,11 +194,11 @@ Uploads are stored de-identified under `data/user_uploads/{user_uuid}/` with
 UUID filenames: DICOM headers pass through a PII-stripping pass (private tags,
 PN/date fields, patient/institution identifiers removed, UIDs regenerated);
 standard images are re-encoded to metadata-free PNG. De-identification is
-header-level only — burned-in pixels are not scanned. Legal text lives in
+header-level only, burned-in pixels are not scanned. Legal text lives in
 `src/legal.py` and renders in expandable footers.
 
 **OOD gate (`onnm.ood`), two stages.** The classifier is a closed-set softmax:
-any input — a hotdog photo included — is forced into normal/benign/malignant.
+any input, a hotdog photo included, is forced into normal/benign/malignant.
 Stage 1 rejects non-radiographs *before* inference on named heuristics
 (colorfulness, dynamic range, 256-bin histogram entropy ≤ 7.5 bits, strong-
 gradient fraction ≤ 0.45, minimum size); the app then shows a hard
@@ -207,7 +207,7 @@ predictive entropy and max softmax probability on every prediction; the app
 downgrades a lesion call to **"Non-Diagnostic / Inconclusive"** when max prob
 < 0.65 or normalized entropy ≥ 0.90. Both stages are **opt-in parameters on
 `RadiographClassifier.predict`** and default off, so scripted evaluation of
-the curated dataset is unchanged. The gate can only withdraw a positive call —
+the curated dataset is unchanged. The gate can only withdraw a positive call, 
 it never issues one and never moves the calibrated threshold.
 
 ---
@@ -217,7 +217,7 @@ it never issues one and never moves the calibrated threshold.
 YAML, deep-merged. `base.yaml` → `--override a.yaml` → `--override b.yaml` → `--profile x`.
 Lists replace wholesale; dicts merge. Access via attribute or `cfg.lookup("a.b.c")`.
 
-Profiles: `kaggle`, `colab`, `smoke`. **`colab` deliberately sets no `paths:`** —
+Profiles: `kaggle`, `colab`, `smoke`. **`colab` deliberately sets no `paths:`**, 
 `verify_data.py` and `make_splits.py` accept no `--profile`, so a profile that moved
 `data_root` would apply to training but not to the gates that check the data. The notebook
 symlinks the dataset into the default location instead.
@@ -227,7 +227,7 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 
 ---
 
-## Invariants — do not break these
+## Invariants: do not break these
 
 1. **Never fit a threshold or temperature on test.** Both are fitted on val and applied
    unchanged. `scripts/calibrate.py --split test` warns loudly.
@@ -239,11 +239,11 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 4. **MONOCHROME1 DICOM must be inverted.** Silent failure otherwise: valid arrays,
    converging loss, a model that learned an inverted world.
 5. **Grad-CAM must run outside `no_grad`.** It backpropagates to the hooked layer.
-6. **Temperature scaling is monotone** — it cannot change any argmax. Accuracy, recall and
+6. **Temperature scaling is monotone**, it cannot change any argmax. Accuracy, recall and
    AUC are identical before and after. Only confidence moves.
 7. **Accuracy is not a headline metric.** "Never malignant" scores 90.9%. Report malignant
    recall, PR-AUC, and bootstrap CIs.
-8. **`RandAffine` subsumes `RandRotated`+`RandZoomd`** — enabling all three interpolates
+8. **`RandAffine` subsumes `RandRotated`+`RandZoomd`**, enabling all three interpolates
    twice and blurs trabecular texture.
 9. **The OOD/uncertainty gate defaults off in `predict()`.** Scripted evaluation of the
    curated dataset must be byte-identical with and without the app layer; only `app.py`
@@ -264,7 +264,7 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
     `community.USER_AGENT`.
 14. **A `misc` row must never reach `manifest.csv`.** `build_records` reads that file and
     merges anything with a recognised label column into the three-class set, so a bucket
-    column would not save it — the separation has to be two files. Enforced by the
+    column would not save it, the separation has to be two files. Enforced by the
     `bucket_and_label_must_agree` trigger, the review endpoint, and `_check_row` in
     `export_batch.py`, which is the only one of the three that runs locally.
 15. **The review form preselects nothing.** A bucket radio already sitting on
@@ -274,7 +274,7 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
     `reports/<run>/` and never touches an existing checkpoint; `reports/PRODUCTION` moves
     only through `version_model.py`, and only when no guarded metric regressed. Nothing in
     the daily cycle can overwrite a good model with a bad one.
-17. **`ONN.md` is generated — never hand-edit it.** `model_versions.json` is the source of
+17. **`ONN.md` is generated, never hand-edit it.** `model_versions.json` is the source of
     truth. A ledger that can disagree with itself is worse than no ledger.
 18. **No new approvals means no training run.** Not an optimisation: a day with no new
     data has no new information in it, and a version number that marks nothing makes the
@@ -297,9 +297,9 @@ YAML on disk, so editing a config cannot desynchronise the app from a trained mo
 `calibrate.py` writes `calibration.json` beside the checkpoint; the app and `evaluate.py`
 read it automatically. It exits non-zero when the operating point is unusable.
 
-**Colab** (`notebooks/colab_train.ipynb`) — a second free GPU for the ablation backlog.
+**Colab** (`notebooks/colab_train.ipynb`), a second free GPU for the ablation backlog.
 Everything is staged through Drive at `MyDrive/OSTEONEURALNETWORK/`: `onnm-code.zip`,
-`BTXRD.zip`, `splits.json`. It unpacks to `/content` (local SSD — unzipping onto Drive is
+`BTXRD.zip`, `splits.json`. It unpacks to `/content` (local SSD, unzipping onto Drive is
 pathologically slow for 3.7 k small files), symlinks the data into `data/raw/BTXRD`, copies
 the local `splits.json` so results stay comparable, runs gates 1/2/3/6, then a 2-epoch smoke
 run, then the two ablations, then copies `reports/` back to Drive. Colab wipes `/content` on
@@ -329,7 +329,7 @@ deployed from the Cloudflare account that owns D1. It corrects the earlier count
 path, which saw the Streamlit server's country instead of the visitor's. `RUN_ME.md`
 contains the account-safe migration, deployment, and verification sequence.
 
-- `cloudflare/` — Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
+- `cloudflare/`: Worker (`src/worker.js`), `schema.sql`, `migrations/`, `wrangler.toml`,
   deploy README. Migrations are applied by hand:
   `npx wrangler d1 execute onn-model --remote --profile onnm --file=./migrations/NNNN_*.sql`.
   `0002_google_oauth.sql` rebuilds `users` (SQLite cannot relax NOT NULL in place) and
@@ -338,27 +338,27 @@ contains the account-safe migration, deployment, and verification sequence.
   `0005_public_contributor_profiles.sql` adds the private-by-default public profile fields.
   `0006_browser_country_capture.sql` adds one-use capture tokens and marks countries that
   were resolved from the signed-in browser rather than from the Streamlit server.
-- `src/community.py` — client; **fails soft** so a dead API never blocks inference.
-- `src/backend.py` — accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
+- `src/community.py`: client; **fails soft** so a dead API never blocks inference.
+- `src/backend.py`: accounts go to D1 when `ONNM_COMMUNITY_URL`/`_KEY` are set, local
   SQLite otherwise. `auth.py` imports from here, so hashing stays in one place.
-- `src/community_ui.py` — consent checkbox, feedback widget, rejection dispute,
+- `src/community_ui.py`: consent checkbox, feedback widget, rejection dispute,
   three-tab admin review queue.
-- `src/geo.py` and `src/components/globe.py` — validate Worker aggregates and render a
+- `src/geo.py` and `src/components/globe.py`, validate Worker aggregates and render a
   rotating globe from local code. The home page no longer downloads globe libraries or
   world geometry from a CDN during a Streamlit render.
-- `review_app.py` — **the review console**, and where approving actually happens:
+- `review_app.py`: **the review console**, and where approving actually happens:
   `python -m streamlit run review_app.py --server.port 8502`. Local only, never deployed,
   so the review path is not present in the process strangers talk to. `app.py` keeps a
   sidebar entry for discoverability.
-- `scripts/export_batch.py` — approved rows to a `controls_manifest`-format CSV, plus a
+- `scripts/export_batch.py`: approved rows to a `controls_manifest`-format CSV, plus a
   separate OOD-negatives manifest and a `batch.json` summary.
-- `scripts/sync_community.py` — claim + rebuild in one step. Writes the cumulative
+- `scripts/sync_community.py`: claim + rebuild in one step. Writes the cumulative
   `configs/controls_manifest.csv`, which `base.yaml` **already** reads, so an approval
   reaches training with no config edit.
 
 **Free tier only: Workers + D1, no R2, no payment method.** Shared images are the 256px
 preprocessed PNG as base64 in D1 (~30 KB each), capped at 200 MB in the Worker. With no
-card on the account, overage cannot bill — it fails closed.
+card on the account, overage cannot bill, it fails closed.
 
 **The globe stores country codes, not precise browser locations.** Streamlit first mints a
 short-lived, one-use token through its private Worker key. The signed-in browser sends only
@@ -377,10 +377,10 @@ identity on its own. The globe and the contributor roll use the same Worker and 
 deployment, so both are repaired by the 0004/0005/0006 migrations and Worker release described
 in `RUN_ME.md`.
 
-**Invariant 9 — user feedback is a signal, never a label.** `user_says_wrong` and
+**Invariant 9, user feedback is a signal, never a label.** `user_says_wrong` and
 `user_suggested_label` are untrusted; only `admin_label`, set during human review, reaches
 training. Enforced three times: a schema trigger that aborts approval without a label, the
-review endpoint, and the export query. Redundant on purpose — every other bug here
+review endpoint, and the export query. Redundant on purpose, every other bug here
 announces itself, this one would quietly train on a hotdog labelled "normal bone".
 
 **Three buckets, triaged on arrival.** `triage_bucket` is computed by the Worker
@@ -390,33 +390,33 @@ softmax probability and any dispute:
 | bucket | means | retrains |
 |---|---|---|
 | `valid_bone` | the OOD gate accepted it | the lesion classifier |
-| `misc` | the gate rejected it — misuse, and misuse is data | the OOD detector, as negatives |
+| `misc` | the gate rejected it, misuse, and misuse is data | the OOD detector, as negatives |
 | `contradiction` | the system disagreed with itself | either, per the label |
 
 A contradiction is a *gate* failure, not a grading disagreement: the gate rejected an image
 the user insists is a radiograph, or accepted one the user says is not while the classifier
 confidently diagnosed it. "You said malignant, I think benign" stays in `valid_bone`.
 
-`admin_bucket` is the confirmed bucket and is what export reads — separate from
+`admin_bucket` is the confirmed bucket and is what export reads, separate from
 `triage_bucket` for exactly the reason `admin_label` is separate from
 `user_suggested_label`: the automatic value is the guess of the system being retrained and
 cannot be its own ground truth. The review form therefore preselects nothing.
 
 `admin_label` gained a fourth value, `misc`, meaning "not a bone radiograph". It is a real
-training target — `onnm.ood` stage 1 has no learned component and no negatives — but not a
+training target, `onnm.ood` stage 1 has no learned component and no negatives, but not a
 diagnosis, so a second trigger (`bucket_and_label_must_agree`) makes "hotdog, benign"
 unsayable, and export writes misc rows to `ood_manifest.csv`, never to `manifest.csv`.
 
 **OOD rejections are now recorded, not discarded.** `app.py` writes a row with
 `model_label='rejected'` and no probabilities, and offers "this really is a radiograph",
-which is the only witness to a false rejection — inference never ran, so nothing else in
+which is the only witness to a false rejection, inference never ran, so nothing else in
 the row distinguishes a mishandled radiograph from a correctly-refused photograph. Images
 for these come from `encode_payload_for_sharing`, which re-encodes the raw upload to a
 metadata-free 256px grayscale PNG; DICOM is deliberately excluded, because its identifiers
 live in headers Pillow cannot be shown to have stripped.
 
-**Review is one hardcoded account** — `kzfhero@gmail.com`,
-`c2c5a209-4aaa-4eb9-b112-b2929b6dbe12` — pinned in three places: a CHECK constraint on
+**Review is one hardcoded account**, `kzfhero@gmail.com`,
+`c2c5a209-4aaa-4eb9-b112-b2929b6dbe12`, pinned in three places: a CHECK constraint on
 `users` (no other row can hold `is_admin = 1`), an `x-onnm-admin-user` header the Worker
 requires on `/admin/*`, and `community.is_admin` gating the UI. `ADMIN_KEY` authenticates
 the *caller*, the header identifies the *account*; the pair is not defence against a stolen
@@ -428,7 +428,7 @@ persistent URL, and need the owner's browser session.
 
 **The loop is a pull, not a push.** Nothing can send an approved batch *to* Colab: a
 runtime has no inbound address. So the notebook claims at the start of each run, and
-"approve whenever, it lands next run" is the only shape available — not a limitation of
+"approve whenever, it lands next run" is the only shape available, not a limitation of
 this implementation.
 
 **In Colab the community store must live on Drive.** Export *claims* rows (the Worker
@@ -436,18 +436,18 @@ stamps `batch_id` so nothing trains twice) and a claim cannot be undone from the
 A batch claimed onto `/content` and then lost to a disconnect reads as exported forever
 while its images no longer exist. `sync_community.py --store <drive>/community`.
 
-**Hosting is Streamlit Community Cloud** (`deploy/streamlit-cloud/`) — free, 2.7 GB RAM,
+**Hosting is Streamlit Community Cloud** (`deploy/streamlit-cloud/`), free, 2.7 GB RAM,
 deploys from GitHub, redeploys on push. **Hugging Face Spaces is not an option:** Gradio
 and Docker Spaces now require PRO and Streamlit is not an offered SDK at all; only Static
-(client-side, no Python) is free. Netlify cannot host it either — static sites and JS
+(client-side, no Python) is free. Netlify cannot host it either, static sites and JS
 functions only. Both would require an ONNX-in-browser rewrite.
 
-**Two hosting landmines, both already paid for — do not rediscover them.**
+**Two hosting landmines, both already paid for, do not rediscover them.**
 
 *Cloudflare's edge bans `Python-urllib`.* A request carrying the default urllib
 User-Agent gets HTTP 403 with a plain-text `error code: 1010` body, generated at the edge
 and never reaching the Worker. Every component looks correct in isolation, and `curl` and
-a browser both get a clean 200, so the obvious next step — testing with curl — actively
+a browser both get a clean 200, so the obvious next step, testing with curl, actively
 confirms the wrong conclusion. `community.USER_AGENT` fixes it; a non-JSON error body is
 now reported as coming from the gateway rather than surfaced as a bare `error code: 1010`.
 
@@ -463,7 +463,7 @@ the cause. `requirements.txt` pins `httpx` and `itsdangerous` explicitly.
 one at boot from `ONNM_CHECKPOINT_URL` and pins it. It verifies the payload starts with
 torch's zip magic, because a CDN 404 typically returns HTTP 200 with an HTML page, which
 would otherwise land in `best.pt` and fail much later inside `torch.load`. The default run
-name is `hosted`, not `production` — that would collide with the `reports/PRODUCTION`
+name is `hosted`, not `production`, that would collide with the `reports/PRODUCTION`
 marker on case-insensitive filesystems.
 
 **The fetch cache is keyed on the configuration, not the filename.** A `source.json` beside
@@ -472,17 +472,17 @@ the checkpoint records the URLs and digest that produced it; any change re-fetch
 silent:
 
 1. A changed `ONNM_CHECKPOINT_URL` was ignored whenever the old `best.pt` was still on
-   disk — so whether a publish took effect depended on whether the platform handed you a
+   disk, so whether a publish took effect depended on whether the platform handed you a
    fresh container.
 2. Weights and calibration were guarded independently, so new weights could serve at the
    old threshold. That does not raise; it moves where the model calls a lesion.
 3. `reports/PRODUCTION` was written only when absent, so "rename the run to force a
-   re-download" — the obvious workaround for (1) — downloaded the new model into a new
+   re-download", the obvious workaround for (1), downloaded the new model into a new
    directory and left the marker naming the old one.
 
 `ONNM_CHECKPOINT_SHA256` is optional and worth setting: the magic-bytes check catches a
 wrong file, only a digest catches a truncated right one. `ONNM_CHECKPOINT_RUN` is now
-cosmetic — it names a directory and nothing depends on remembering to change it.
+cosmetic, it names a directory and nothing depends on remembering to change it.
 
 **Publishing is `scripts/publish_model.py`.** It stages a version's weights and calibration
 into `dist/<version>/`, refuses if the on-disk bytes no longer match the digest the ledger
@@ -490,35 +490,35 @@ recorded, and prints the exact secrets to paste. `--verify <url>` fetches what y
 and checks it against the ledger *before* the deployment points at it.
 
 **The app names the version it is serving**, matched by digest against
-`model_versions.json` — `find_by_sha`, fed by the `source.json` record. Every other signal
+`model_versions.json`, `find_by_sha`, fed by the `source.json` record. Every other signal
 is a statement of intent; the digest is what actually arrived. A checkpoint whose digest
 matches no registered version renders a warning rather than a version number, because
 nothing then relates the running model to any measured score.
 
 **Console output in `scripts/` is ASCII.** Windows consoles default to cp1252 and cannot
-encode an em dash, so a stray `—` in a `print` — or in a module docstring, which argparse
-prints for `--help` — is a `UnicodeEncodeError` on the user's machine and a silent failure
+encode an em dash, so a stray `, ` in a `print`, or in a module docstring, which argparse
+prints for `--help`, is a `UnicodeEncodeError` on the user's machine and a silent failure
 under Task Scheduler. `src/` is exempt: those strings are rendered by Streamlit in a
 browser.
 
 ---
 
-## Versioning — `ONN.md` / `model_versions.json`
+## Versioning: `ONN.md` / `model_versions.json`
 
 Every training generation is registered before anything is promoted, and promotion is a
 separate guarded act (`onnm.versioning`). A run that regresses is recorded as `held`,
-`reports/PRODUCTION` does not move, and the previous checkpoint keeps serving — **rollback
+`reports/PRODUCTION` does not move, and the previous checkpoint keeps serving, **rollback
 is the default outcome of a bad run, not a recovery procedure.**
 
 | level | means |
 |---|---|
-| major | a different model — another architecture family or task head |
+| major | a different model, another architecture family or task head |
 | minor | a deliberate recipe change (augmentation, loss, backbone) |
-| patch | the same recipe, more data — what the daily community loop produces |
+| patch | the same recipe, more data, what the daily community loop produces |
 
 Guarded metrics, any of which falling by more than `REGRESSION_TOLERANCE` (0.01) blocks
 promotion: `macro_roc_auc`, `malignant_recall`, `misc_rejection`. Accuracy is deliberately
-absent — invariant 7. The tolerance is not zero because bootstrap noise on 536 test images
+absent, invariant 7. The tolerance is not zero because bootstrap noise on 536 test images
 moves malignant recall by more than a point between identical runs, and a gate that fires
 on noise is a gate that gets overridden by habit.
 
@@ -526,7 +526,7 @@ on noise is a gate that gets overridden by habit.
 non-radiographs the OOD gate turns away. Until the community loop started recording
 rejections there was no data on which stage 1 could be scored at all, so "getting better at
 bone vs misc" was not a checkable claim. It is reported beside `bone_acceptance`, never
-folded into one number — a gate that rejects everything scores 1.0 on the first and 0.0 on
+folded into one number, a gate that rejects everything scores 1.0 on the first and 0.0 on
 the second.
 
 **Measured at v1.0.0: `bone_acceptance` = 0.960** on the first 200 BTXRD images. The gate
@@ -537,7 +537,7 @@ Those are exactly the false rejections the `contradiction` bucket now collects.
 a test asserts the two are in step. Both are git-tracked because `reports/` is not, so the
 ledger is the only part of a version that survives a fresh clone.
 
-## Daily cycle — `scripts/daily_cycle.py`
+## Daily cycle: `scripts/daily_cycle.py`
 
 ```
 approved rows waiting?  --no-->  stop. no training, no version, no ledger row.
@@ -573,17 +573,17 @@ called malignant. Calibrated T=1.41, threshold 0.496 → 0.813 sensitivity / 0.8
 specificity. ECE improved 0.053 → 0.017.
 
 **The overnight run underperformed.** ROC-AUC is threshold-independent, so 0.863 vs 0.891
-is genuinely worse ranking — not recoverable by tuning the threshold. False positives did
+is genuinely worse ranking, not recoverable by tuning the threshold. False positives did
 fall (65 → 37 normal films called lesion) but malignant recall fell with them (0.653 →
 0.469), which is a bias shift, not better discrimination. The aggressive augmentation and
 OHEM penalty are the suspects. `full-20260822-041653` remains the checkpoint to serve.
 
 **Known open issue:** false positives on complex joint anatomy (a normal pelvis flagged at
-59.6%). The durable fix is more normal controls in training, not a harsher loss — the
+59.6%). The durable fix is more normal controls in training, not a harsher loss, the
 sensitivity/specificity curve can only be slid along, not moved, without new data. The
 app-layer uncertainty gate now *suppresses presentation* of low-confidence lesion calls
 (max prob < 0.65 or normalized entropy ≥ 0.90 → "Non-Diagnostic / Inconclusive"), and the
-pre-inference validator rejects non-radiograph uploads outright — but neither changes the
+pre-inference validator rejects non-radiograph uploads outright, but neither changes the
 underlying ranking quality; they are presentation-layer containment, not the data fix.
 
 ---

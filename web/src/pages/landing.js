@@ -35,8 +35,8 @@ function safeImageUrl(value) {
 }
 
 function formatCount(value) {
-  if (value === null || value === undefined || value === "") return "—";
-  return Number.isFinite(Number(value)) ? Number(value).toLocaleString() : "—";
+  if (value === null || value === undefined || value === "") return "-";
+  return Number.isFinite(Number(value)) ? Number(value).toLocaleString() : "-";
 }
 
 function statTile(value, label) {
@@ -148,7 +148,7 @@ export async function renderLanding(main, state) {
       </div>
 
       <div class="onnm-terms-notice">
-        <h3>You can withdraw a shared image — until it is approved</h3>
+        <h3>You can withdraw a shared image until it is approved</h3>
         <p>
           Sharing is optional and is asked separately for every image. While a
           shared image is still waiting to be reviewed, you can delete it at any
@@ -161,7 +161,7 @@ export async function renderLanding(main, state) {
           been trained on an image there is no way to remove what the model
           learned from it. We cannot take it back out afterwards, and we will not
           claim otherwise. Approval is therefore the last point at which the
-          decision is still yours — so if you are unsure, delete it before then.
+          decision is still yours, so if you are unsure, delete it before then.
         </p>
       </div>
 
@@ -184,8 +184,8 @@ export async function renderLanding(main, state) {
           the image is never written down.
         </li>
         <li>
-          <strong>A shared image is stored as a 256-pixel processed copy</strong>
-          — never your original file, and never its metadata. DICOM tags are
+          <strong>A shared image is stored as a 256-pixel processed copy.</strong>
+          Never your original file, and never its metadata. DICOM tags are
           stripped before anything is stored.
         </li>
         <li>

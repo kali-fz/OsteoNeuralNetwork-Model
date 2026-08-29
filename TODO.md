@@ -1,4 +1,4 @@
-# ONNM — Status & Backlog
+# ONNM: Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
 Last audited: 2026-08-23 (community triage, versioning, publish path, Grad-CAM audit).
@@ -7,17 +7,17 @@ Last audited: 2026-08-23 (community triage, versioning, publish path, Grad-CAM a
 Worker + D1 **deployed and live at schema_version 3**; Streamlit Cloud **deployed and
 serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 
-> **Read this first if you read nothing else — DEPLOYMENT HAZARD.**
+> **Read this first if you read nothing else, DEPLOYMENT HAZARD.**
 > `cloudflare/src/worker.js` in this repository is **ahead of the deployed Worker**. Its
 > `INSERT` statements reference `signup_country` and `origin_country`, which **do not
-> exist in live D1** — migration 0004 is written and tested but has never been applied.
+> exist in live D1**, migration 0004 is written and tested but has never been applied.
 >
 > **Deploying the Worker before applying migration 0004 breaks the live site**: every
 > account creation and every submission fails with "no such column". The order is
 > **migration first, deploy second**, and it is not optional.
 >
 > Second: the Grad-CAM localisation claim is now *measurable* (the heatmap was inverted;
-> fixed 2026-08-23) but still **roughly at chance** — pointing game 0.0936 with no chance
+> fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936 with no chance
 > baseline established. It does not yet support "the model looks at lesions". Nothing
 > about the classifier's ROC-AUC, recall or calibration was ever affected.
 
@@ -32,20 +32,20 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 - [x] **374 tests**, synthetic fixtures, no dataset required; the torch-free
       auth/storage/OOD/report/metrics subset runs without torch
 - [x] CI workflow (`.github/workflows/ci.yml`): ruff lint, torch-free fast tests,
-      full suite on CPU torch — gates 1–2 stay local-only (GPU/dataset)
+      full suite on CPU torch, gates 1–2 stay local-only (GPU/dataset)
 - [x] `.env` and `.streamlit/secrets.toml` gitignored; **audited 2026-08-23: neither has
       ever been committed, and none of the 9 secret values in `.env` appears anywhere in
       git history.** The only matches are `ADMIN_EMAIL` and the D1 database id, both
       deliberately public
 - [x] **D1 dumps gitignored** (`cloudflare/*.sql`, except `schema.sql` and the
       migrations). `wrangler d1 export` writes there by default, so the safe habit and
-      the dangerous file come from the same command — a dump carries every user's email,
+      the dangerous file come from the same command. A dump carries every user's email,
       their PBKDF2 hash, and every shared radiograph
 - [x] Diagnosed the MIOpen training-BatchNorm defect; workaround `train.miopen: false`
 - [x] `verify_env.py` gate 1 runs a real train-mode forward/backward
 - [x] Measured VRAM/throughput across batch sizes; established 64 as the optimum
 - [x] **Console output in `scripts/` is ASCII.** Windows consoles are cp1252, so an em
-      dash in a `print` — or in a docstring, which argparse prints for `--help` — raised
+      dash in a `print`, or in a docstring, which argparse prints for `--help`, raised
       `UnicodeEncodeError` on the target machine. Was already latent in `ablate_tta.py`
       and `stratified_report.py`
 
@@ -56,7 +56,7 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 - [x] DICOM handling: modality LUT, VOI LUT, MONOCHROME1 inversion (test-pinned)
 - [x] Splits 2675 / 535 / 536, stratification holds to 0.1%
 - [x] **No unmapped rows.** `verify_data.py` re-run 2026-08-23: 1879/1525/342 = 3746,
-      `+0` on every class. The "5 unmapped rows" item is resolved — there are none
+      `+0` on every class. The "5 unmapped rows" item is resolved: there are none
 
 ### Model & training
 - [x] DenseNet-121, ImageNet-pretrained, 3-class head
@@ -67,10 +67,10 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 - [x] Optional foreground cropping + guard disabling localisation scoring under it
 - [x] Cosine and `ReduceLROnPlateau` schedulers; early stopping on macro ROC-AUC
 - [x] Per-epoch tracking: loss, ROC-AUC, PR-AUC, sens, spec, balanced acc, F1, OHEM count
-- [x] **Thermal governor** — AMD ADL via ctypes, hotspot control temp, memory ceiling
+- [x] **Thermal governor**, AMD ADL via ctypes, hotspot control temp, memory ceiling
 
 ### Calibration & metrics
-- [x] Temperature scaling — guarded fit (grid + ternary + LBFGS)
+- [x] Temperature scaling, guarded fit (grid + ternary + LBFGS)
 - [x] Dual-mode threshold search: sensitivity-floor and specificity-floor
 - [x] ECE / NLL, bootstrap CIs, clinical error breakdown, macro F1
 - [x] Conflicting-constraint reporting instead of silently picking one
@@ -93,47 +93,47 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
       `model_versions.json`. Run names are a local convention; the digest is what
       actually arrived, so a publish that did not take effect is visible not silent
 
-### Community loop — three-bucket triage
+### Community loop: three-bucket triage
 - [x] Cloudflare Worker + D1, free tier only (no R2, no payment method)
 - [x] **Schema v3 applied to live D1**: `triage_bucket`, `triage_reason`, `admin_bucket`,
       `admin_label` widened to include `misc`, per-bucket batch counts
-- [x] **Three buckets, triaged on arrival and re-triaged on user feedback** —
+- [x] **Three buckets, triaged on arrival and re-triaged on user feedback**, 
       `valid_bone` / `misc` / `contradiction`. Rule mirrored in `worker.js` and
       `community.classify_bucket`, with a test asserting the two agree
 - [x] **OOD rejections are recorded, not discarded.** Previously an image the gate turned
       away left no trace, so the `misc` bucket could only ever be empty and the gate could
       only be retuned by hand
-- [x] **"This really is a radiograph" dispute button** — the only witness to a false
+- [x] **"This really is a radiograph" dispute button**, the only witness to a false
       rejection, since inference never ran on those
 - [x] **Admin pinned to one account** (`kzfhero@gmail.com`) in three places: a CHECK
       constraint on `users`, an `x-onnm-admin-user` header the Worker requires, and
       `community.is_admin` gating the UI
-- [x] **`review_app.py` — the dedicated review console.** Full-width, three bucket tabs,
+- [x] **`review_app.py`, the dedicated review console.** Full-width, three bucket tabs,
       base64 auto-decoded, nothing preselected. Local only, never deployed
 - [x] Review gate now enforced in **four** places; a second trigger
       (`bucket_and_label_must_agree`) makes "hotdog, benign" unsayable
-- [x] `scripts/sync_community.py` — claim + rebuild in one command, writing the cumulative
+- [x] `scripts/sync_community.py`, claim + rebuild in one command, writing the cumulative
       `configs/controls_manifest.csv` that `base.yaml` already reads, so an approval
       reaches training with no config edit. Rebuilt rather than appended, so re-running is
       idempotent
-- [x] Export writes **two** manifests — lesion rows and OOD negatives — because
+- [x] Export writes **two** manifests, lesion rows and OOD negatives, because
       `build_records` would merge a combined file straight into the 3-class set
 
 ### Versioning & release
-- [x] **`ONN.md` + `model_versions.json`** — every generation registered before anything is
+- [x] **`ONN.md` + `model_versions.json`**, every generation registered before anything is
       promoted; promotion is a separate guarded act. A regression is recorded as `held`,
       `reports/PRODUCTION` does not move, and the previous checkpoint keeps serving
-- [x] **v1.0.0 seeded and serving** — `full-20260822-041653`, macro ROC-AUC 0.8934,
+- [x] **v1.0.0 seeded and serving**, `full-20260822-041653`, macro ROC-AUC 0.8934,
       malignant recall 0.6327, sha256 `f6b0ae7e…`
-- [x] **`scripts/daily_cycle.py`** — approvals in, a guarded version out, or nothing at
+- [x] **`scripts/daily_cycle.py`**, approvals in, a guarded version out, or nothing at
       all. **Skips training entirely when no new data was approved**
-- [x] **`scripts/publish_model.py`** — stages a version, refuses if the on-disk bytes no
+- [x] **`scripts/publish_model.py`**, stages a version, refuses if the on-disk bytes no
       longer match the ledger, prints the exact secrets, and `--verify` checks a published
       URL before the deployment points at it
 - [x] **Checkpoint fetch keyed on configuration, not filename.** Killed three silent
       publish bugs: a changed URL ignored when the old file existed; weights and
       calibration guarded independently (new weights at the old threshold); and
-      `reports/PRODUCTION` written only when absent — which made "rename the run to force
+      `reports/PRODUCTION` written only when absent, which made "rename the run to force
       a re-download" *cause* a worse bug
 - [x] **v1.0.0 backed up** to `G:\My Drive\ONNM-model1\` with a README, sha-verified
 
@@ -145,17 +145,17 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 - [x] Google Sign-In: OIDC, provider-aware Worker, identity keyed on `sub`
 
 ### Runs
-- [x] `full-20260822-041653` — trained, calibrated, test-evaluated (**current best**,
+- [x] `full-20260822-041653`, trained, calibrated, test-evaluated (**current best**,
       registered as v1.0.0 and pinned as PRODUCTION)
-- [x] `overnight-20260822-055132` — trained only; **regressed** to 0.8629
-- [ ] `abl-ohem` / `abl-augs` — never completed. No `reports/` directory appeared in
+- [x] `overnight-20260822-055132`, trained only; **regressed** to 0.8629
+- [ ] `abl-ohem` / `abl-augs`, never completed. No `reports/` directory appeared in
       `MyDrive/OSTEONEURALNETWORK/`, so the Colab notebook's save-back cell never ran
 
 ---
 
 ## To do
 
-### Grad-CAM — the heatmap was inverted; fixed 2026-08-23
+### Grad-CAM: the heatmap was inverted; fixed 2026-08-23
 
 - [x] **The CAM was inverted. Root cause found and fixed.** MONAI's `CAMBase`
       defaults `postprocessing=default_normalizer`, which maps
@@ -240,10 +240,10 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
 
 - [ ] **Gate 4: human visual review.** `notebooks/01_data_sanity.ipynb` still has
       **0/7 code cells executed**. Nobody has looked at the preprocessed images.
-      Assertions verify shape; only eyes verify content. *(Cannot be delegated — but a
+      Assertions verify shape; only eyes verify content. *(Cannot be delegated, but a
       contact sheet can be generated for you to look at.)*
 
-### Blocking — OOD gate is measurably mistuned
+### Blocking: OOD gate is measurably mistuned
 
 - [x] **Empirically measure the OOD validator on real data.** `scripts/ood_sweep.py`
       (new). Run over all **3,746** BTXRD films:
@@ -266,11 +266,11 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
       | 7.7 | 7 (0.19%) |
       | **7.8** | **0** |
 
-      **Not changed, and still 7.5** (`src/onnm/ood.py:60`) — confirmed 2026-08-23.
+      **Not changed, and still 7.5** (`src/onnm/ood.py:60`), confirmed 2026-08-23.
 
       **The radiograph side is now measured** (600-film random sample): p50 6.36,
       p99 7.54, **max 7.7636**. So the gap between the highest real radiograph and the
-      8.0 that `onnm.ood` quotes for photographs is **0.236 bits — about 3% of the
+      8.0 that `onnm.ood` quotes for photographs is **0.236 bits, about 3% of the
       scale**.
 
       That reframes the decision. It is not "7.5 or 7.8": this single feature has almost
@@ -278,26 +278,26 @@ serving**. Model versioning is live at **v1.0.0** (`full-20260822-041653`).
       **Recommendation: hold at 7.5** and treat the learned OOD detector as the real fix.
 
       The cost side is still unmeasured. `scripts/ood_sweep.py --negatives <folder>`
-      already exists and works — it only needs a folder of non-radiograph photos, which
+      already exists and works. It only needs a folder of non-radiograph photos, which
       this repository does not contain. The community `misc` bucket is meant to become
       that corpus, but `configs/ood_manifest.csv` does not exist yet: nothing has been
       approved into it.
 - [ ] **Measure what the uncertainty gate withdraws.** How many *true* lesion calls the
       0.65 / 0.90 gates suppress on val, before trusting the defaults.
 
-### Blocking — a disputed false rejection is silently discarded
+### Blocking: a disputed false rejection is silently discarded
 
 The single highest-value signal in the community loop is being thrown away, and the UI
 tells the user the opposite. Traced end to end 2026-08-23:
 
 1. The OOD gate rejects an upload. `app.py:909` calls
    `record_rejection(..., shared=SHARE_CONSENT)`. Without the share tick the row is
-   stored **with no image** — deliberate and correct; consent governs the pixels.
+   stored **with no image**, deliberate and correct; consent governs the pixels.
 2. The **"This really is a radiograph" button is rendered unconditionally**
    (`app.py:924`), whether or not the user shared.
 3. Its help text says **"Sends the image to a human reviewer."** That is **false** for an
    unshared row: there is no image, and no reviewer will ever see it.
-4. Pressing it re-triages the row to `contradiction` — the bucket `schema.sql` calls
+4. Pressing it re-triages the row to `contradiction`, the bucket `schema.sql` calls
    "worth the most per row", because each one is a demonstrated failure of the gate.
 5. `pendingReview` (`worker.js:708`) filters `shared = 1`, so the row never reaches the
    queue. `/health` filters it too (`worker.js:227`, `:239`), so it is not even counted.
@@ -308,7 +308,7 @@ who hit that are the only witnesses, and their testimony is being dropped on the
 
 - [ ] **A. Make the UI tell the truth** (`src/community_ui.py`,
       `render_rejection_dispute`). When the row carries no image, still record the dispute
-      — it is a real signal and it counts — but say plainly that nothing was kept, so a
+     , it is a real signal and it counts, but say plainly that nothing was kept, so a
       reviewer cannot check it, and how to make it reviewable (tick share, re-upload).
       When shared, behaviour and wording unchanged. App-side only: no schema change, no
       Worker change, no redeploy hazard. **Ships with the next Streamlit deploy.**
@@ -318,10 +318,10 @@ who hit that are the only witnesses, and their testimony is being dropped on the
       existing number and does not touch the review gate; gives a running count of the
       false-rejection evidence currently being lost, which is what makes the entropy
       decision measurable over time.
-      **Requires a Worker deploy — see the deployment hazard at the top of this file.
+      **Requires a Worker deploy, see the deployment hazard at the top of this file.
       Migration 0004 must be applied to live D1 first, or the deploy breaks the site.**
 
-- [ ] **C. Decide: prompt for consent at dispute time?** *(not proposed — a human call.)*
+- [ ] **C. Decide: prompt for consent at dispute time?** *(not proposed, a human call.)*
       Asking "share this image so a reviewer can check?" at the moment of dispute would
       convert the highest-value signal into reviewable training data. It needs a new write
       path that attaches an image to an existing submission, which is consent-sensitive on
@@ -329,12 +329,12 @@ who hit that are the only witnesses, and their testimony is being dropped on the
 
       Tests to accompany A and B: one asserting the new health count catches a disputed
       unshared row against the real schema (as `tests/test_geolocation.py` does), and one
-      pinning that `pendingReview`'s `shared = 1` filter is **unchanged** — the fix must
+      pinning that `pendingReview`'s `shared = 1` filter is **unchanged**. The fix must
       not smuggle imageless rows into the review queue.
 
-### Done — gate 6
+### Done: gate 6
 
-- [x] **Gate 6: overfit check — PASSES.** 30 images memorised in 3 steps, accuracy 1.0,
+- [x] **Gate 6: overfit check, PASSES.** 30 images memorised in 3 steps, accuracy 1.0,
       final loss 0.0059, in about 8 seconds. **The pipeline learns**: labels line up with
       images, normalisation preserves the signal, gradients reach the backbone.
 
@@ -351,19 +351,19 @@ who hit that are the only witnesses, and their testimony is being dropped on the
          giving up, which looked like "training is slow" rather than "the workaround is
          not applied".
 
-### High — resolve the regression
+### High: resolve the regression
 
 - [ ] **Calibrate + evaluate the overnight checkpoint.** It still has no
       `calibration.json` and no `metrics_test.json`, so "it regressed" rests on val ROC
       alone. Two commands, both quick.
 - [ ] **Ablate the overnight regression** (0.863 vs 0.891 macro ROC-AUC). Configs ready:
       `configs/ablations/augs_only.yaml`, `configs/ablations/ohem_only.yaml`. **Hours of
-      GPU each — not started, awaiting your go-ahead.**
+      GPU each, not started, awaiting your go-ahead.**
 - [ ] **Consider lowering OHEM penalty or raising `warmup_epochs`.** Malignant recall fell
       0.653 → 0.469 while FPs fell 65 → 37: a bias shift toward "normal", not better
       discrimination.
 
-### High — the actual fix for false positives
+### High: the actual fix for false positives
 
 - [ ] **Integrate an expanded normal-control dataset.** More normals move the whole ROC
       curve; loss tricks only slide along it. The community loop now feeds
@@ -371,37 +371,37 @@ who hit that are the only witnesses, and their testimony is being dropped on the
       **Caveat:** `derive_groups` reconstructs patient identity from consecutive image
       ids; external images each become their own group, which is safe for splitting but
       loses leakage protection if the same patient appears twice.
-- [ ] **Re-test the known failure cases** — the normal pelvis flagged at 59.6% and the
+- [ ] **Re-test the known failure cases**, the normal pelvis flagged at 59.6% and the
       normal femur at 69.8%. *(blocked on a retrained checkpoint)*
 - [ ] **Report test-set specificity at the 90% floor** once a checkpoint is chosen.
 
-### Medium — model quality
+### Medium: model quality
 
 - [ ] **Learned OOD detection to replace the heuristics.** The community loop now
-      *collects* the training data for this — `configs/ood_manifest.csv` accumulates
-      human-confirmed non-radiographs — but nothing consumes it yet: `onnm.ood` has no
+      *collects* the training data for this, `configs/ood_manifest.csv` accumulates
+      human-confirmed non-radiographs, but nothing consumes it yet: `onnm.ood` has no
       learned component. `onnm.ood_eval` scores the current gate so a learned one has a
       bar to beat
 - [ ] **Multi-view radiograph consensus.** BTXRD has multiple views per surrogate patient
 - [ ] **Run `configs/specificity_tuning.yaml`** *(hours of GPU; awaiting go-ahead)*
-- [ ] **Run `scripts/ablate_tta.py`** — decide whether hflip TTA earns its 2× cost
+- [ ] **Run `scripts/ablate_tta.py`**, decide whether hflip TTA earns its 2× cost
 - [ ] Backbone ablation: `resnet50`, `efficientnet_b0`, `densenet169` *(3 full runs)*
-- [ ] **3D CT/MRI expansion** (long horizon) — park behind a design doc
+- [ ] **3D CT/MRI expansion** (long horizon), park behind a design doc
 
-### Medium — evaluation rigour
+### Medium: evaluation rigour
 
-- [ ] **Run `scripts/stratified_report.py`** — per-anatomy tables to confirm or refute the
+- [ ] **Run `scripts/stratified_report.py`**, per-anatomy tables to confirm or refute the
       complex-joint-anatomy hypothesis; per-subtype tables to split osteosarcoma out
 
-### Medium — app & delivery
+### Medium: app & delivery
 
-- [ ] **Redesign the UI** *(yours — starting 2026-08-23)*
+- [ ] **Redesign the UI** *(yours, starting 2026-08-23)*
 - [ ] **GRC review** *(yours)*
 - [ ] **DICOM metadata parser enhancements**: surface anatomy/laterality/view-position
 - [ ] Per-user scan deletion in the UI
 - [ ] Native PDF export (only if users ask)
 
-### Low — housekeeping
+### Low: housekeeping
 
 - [ ] **Walk the community loop once end to end.** Sign in → upload with sharing ticked →
       review and label it in `review_app.py` → `python scripts/sync_community.py --dry-run`

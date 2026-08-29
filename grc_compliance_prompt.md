@@ -4,9 +4,9 @@
 
 | Field | Value |
 |---|---|
-| Document | GRC Implementation Requirements — OsteoNeuralNetwork-Model (ONNM) |
+| Document | GRC Implementation Requirements, OsteoNeuralNetwork-Model (ONNM) |
 | Version | 2.0 |
-| Status | **Draft for legal review — not yet signed off** |
+| Status | **Draft for legal review, not yet signed off** |
 | Owner | kali-fz (project lead) |
 | GRC contributor | Yaso-cyber |
 | Last updated | 2026-08-24 |
@@ -42,7 +42,7 @@ itself be evidence of inadequate governance.
 ### 1.1 What the system actually is
 
 *   **Clinical task:** three-class triage of **primary bone tumours** on **plain 2D
-    radiographs** — `normal` / `benign` / `malignant`. It is **not** an osteoporosis tool, and
+    radiographs**, `normal` / `benign` / `malignant`. It is **not** an osteoporosis tool, and
     it does not process CT or MRI. (`MODEL_CARD.md`, `README.md`)
 *   **Architecture:** DenseNet-121, ImageNet-pretrained, 3-class head, 256 px grayscale input,
     MONAI transform chain, temperature-scaled probabilities, Grad-CAM on `features.denseblock4`.
@@ -51,7 +51,7 @@ itself be evidence of inadequate governance.
     chest/skull/spine films, post-operative films with hardware, and "any deployment where the
     output reaches a patient or clinician as a finding". (`MODEL_CARD.md`)
 *   **Measured performance, which governs the risk position:** malignant recall **0.633**
-    (95% CI 0.490–0.776) — roughly **one malignant film in three is missed**. Macro ROC-AUC
+    (95% CI 0.490–0.776), roughly **one malignant film in three is missed**. Macro ROC-AUC
     0.893. Single-distribution (BTXRD only), **no external validation**.
 *   **Explainability status:** Grad-CAM localisation is measured at **pointing game 0.0936**,
     mean IoU 0.0428, over 267 annotated test films, with **no chance baseline established**.
@@ -134,7 +134,7 @@ intended purpose includes diagnosis, prevention, monitoring, prediction, prognos
 of disease. Software intended to flag suspected primary bone tumours for human review falls
 within that definition **once it is used to inform decisions about identifiable patients**.
 
-### 2.2 The "Research Use Only" position — what it does and does not do
+### 2.2 The "Research Use Only" position: what it does and does not do
 
 The project labels itself a research prototype with no MHRA, CE or FDA clearance, and states
 this in the README, the model card, the app disclaimer and the Terms of Service. **This is
@@ -167,7 +167,7 @@ If ONNM is ever placed on the market or put into service for a clinical purpose:
 *   **Standards that would become engaged:** ISO 13485 (QMS), ISO 14971 (risk management),
     IEC 62304 (software life cycle), IEC 82304-1 (health software), ISO/IEC 42001 (AI
     management systems), and BS 30440 (validation framework for AI in healthcare).
-*   **MHRA AI Airlock** — the regulator's sandbox for AI medical devices — is worth
+*   **MHRA AI Airlock**: the regulator's sandbox for AI medical devices, is worth
     investigating before any clinical route is attempted.
 
 ### 2.4 Evidence that would be required
@@ -175,7 +175,7 @@ If ONNM is ever placed on the market or put into service for a clinical purpose:
 The current evidence base would not support a conformity assessment. In particular: single
 dataset, no external validation, malignant recall 0.633, no clinical evaluation, no defined
 operating point, and no post-market surveillance plan. **This is not a criticism of a research
-prototype — it is the reason the research label must be defended.**
+prototype. It is the reason the research label must be defended.**
 
 ---
 
@@ -187,7 +187,7 @@ The AI Act applies to providers established outside the EU where the system is p
 market **or where the output produced by the system is used in the EU**. A publicly accessible
 hosted demo is reachable from the EU, so reach must be assessed rather than assumed absent.
 
-### 3.2 Risk tier — how high-risk status would arise
+### 3.2 Risk tier: how high-risk status would arise
 
 **Correction to the common assumption:** a medical device does **not** become high-risk via
 **Annex III**. Annex III lists stand-alone high-risk use cases (biometrics, education,
@@ -256,8 +256,8 @@ separate **Article 9(2)** condition for special category data.
 *   **Article 6:** legitimate interests (Art 6(1)(f)) is defensible for research, supported by
     a documented Legitimate Interests Assessment. Consent (Art 6(1)(a)) is available but
     fragile: it is withdrawable at any time, and withdrawal would require removing the data
-    from training sets and arguably from derived model weights — a serious operational hazard.
-*   **Article 9:** the likely condition is **Art 9(2)(j)** — scientific research purposes —
+    from training sets and arguably from derived model weights, a serious operational hazard.
+*   **Article 9:** the likely condition is **Art 9(2)(j)**, scientific research purposes, 
     read with **DPA 2018 Schedule 1 Part 1 paragraph 4** and the **Article 89(1)** safeguards
     (data minimisation, pseudonymisation, and measures ensuring the processing does not permit
     decisions about specific individuals).
@@ -267,7 +267,7 @@ separate **Article 9(2)** condition for special category data.
 
 ### 4.3 Data (Use and Access) Act 2025
 
-The DUAA 2025 introduces flexibilities relevant here — including provision for **broad consent
+The DUAA 2025 introduces flexibilities relevant here, including provision for **broad consent
 to areas of scientific research** and a clearer position on the compatibility of reusing data
 for research purposes. **Commencement is phased**, so each provision relied on must be checked
 for whether it is actually in force at the time of reliance, and ICO guidance updated under the
@@ -280,13 +280,13 @@ Stripping DICOM headers, regenerating filenames and re-encoding to remove metada
 for three reasons the project already recognises:
 
 1.  Records remain linked to an authenticated account.
-2.  De-identification **cannot remove identifiers burned into image pixels** — the Terms place
+2.  De-identification **cannot remove identifiers burned into image pixels**. The Terms place
     that duty on the user, which is a reasonable allocation but not a technical control.
 3.  Medical images may be re-identifiable from their content.
 
 The Privacy Policy already states this correctly. It must not be softened.
 
-### 4.5 DPIA — mandatory, and currently absent
+### 4.5 DPIA: mandatory, and currently absent
 
 A **Data Protection Impact Assessment is required under Article 35**. This processing meets
 multiple ICO screening criteria simultaneously: special category and health data, innovative
@@ -298,14 +298,14 @@ this repository.** This is the single most significant documentary gap.
 **Article 30** requires a ROPA. The Art 30(5) small-organisation derogation does **not** apply
 where the processing involves special category data. **No ROPA exists.**
 
-### 4.7 Data subject rights — operational readiness
+### 4.7 Data subject rights: operational readiness
 
 Rights of access, rectification, erasure, restriction, portability and objection apply.
 Article 89 provides derogations for research, but they are conditional and must be
 individually justified.
 
 *   **Current gap:** per-user scan deletion in the UI is an **open, unimplemented item**
-    (`TODO.md`, "Medium — app & delivery"). Erasure currently requires manual operator action
+    (`TODO.md`, "Medium, app & delivery"). Erasure currently requires manual operator action
     against D1.
 *   A documented, tested request-handling procedure is required, with a named contact and a
     one-month response deadline.
@@ -320,8 +320,8 @@ automated or scheduled deletion mechanism, is required.
 ### 4.9 International transfers
 
 Personal data reaches Streamlit, Google, Cloudflare and GitHub, all operating internationally.
-Where transfers leave the UK, a transfer mechanism is required — **UK IDTA**, or the **UK
-Addendum to the EU SCCs**, supported by a **Transfer Risk Assessment** — unless covered by
+Where transfers leave the UK, a transfer mechanism is required, **UK IDTA**, or the **UK
+Addendum to the EU SCCs**, supported by a **Transfer Risk Assessment**, unless covered by
 adequacy. **No transfer documentation exists.**
 
 ### 4.10 Processor arrangements
@@ -333,7 +333,7 @@ processing terms must be obtained, reviewed, and recorded.
 ### 4.11 Transparency
 
 Privacy information must be concise, intelligible and accessible, and must be provided at the
-point of collection. The existing Privacy Policy is unusually good — specific, honest about the
+point of collection. The existing Privacy Policy is unusually good, specific, honest about the
 hosted configuration, and clear that images reach Streamlit. Two defects:
 
 *   The **"This really is a radiograph" dispute button tells the user "Sends the image to a
@@ -360,8 +360,8 @@ The **Privacy and Electronic Communications Regulations 2003 (PECR)** govern sto
 access to information on a user's device, separately from UK GDPR. Consent is required unless
 the cookie is **strictly necessary** for a service the user has requested.
 
-The project's position — no advertising, analytics, tracking pixels or cross-site profiling,
-with only Streamlit's technically necessary session and WebSocket tokens — falls within the
+The project's position, no advertising, analytics, tracking pixels or cross-site profiling,
+with only Streamlit's technically necessary session and WebSocket tokens, falls within the
 strictly-necessary exemption, so **no cookie banner is required on the current build**
 (`src/legal.py`, Cookie Notice). Two conditions attach:
 
@@ -380,8 +380,8 @@ processing health data.
 *   **Research ethics approval.** Research involving NHS patients, staff, or data, or requiring
     access to identifiable health records, generally requires **HRA approval and a Research
     Ethics Committee opinion**. Work confined to a public, licensed, already-collected research
-    dataset (BTXRD) may not, but **the community loop — collecting new radiographs from
-    members of the public via a web app for the purpose of improving a model — is new data
+    dataset (BTXRD) may not, but **the community loop, collecting new radiographs from
+    members of the public via a web app for the purpose of improving a model, is new data
     collection for research** and its status must be determined, not assumed.
 *   **Institutional sponsorship.** If any contributor is acting in a university capacity, the
     institution may require sponsorship, its own ethics review, and its own DPIA. Two Master's
@@ -401,11 +401,11 @@ processing health data.
 Also absent from the earlier draft. These apply to health IT deployed in NHS-facing contexts and
 are contractual and regulatory expectations, not optional good practice:
 
-*   **DCB0129** — Clinical Risk Management: its Application in the Manufacture of Health IT
+*   **DCB0129**: Clinical Risk Management: its Application in the Manufacture of Health IT
     Systems. Requires a nominated **Clinical Safety Officer** (a registered clinician), a
     Clinical Risk Management File, a hazard log, and a Clinical Safety Case Report.
-*   **DCB0160** — the equivalent standard for the deploying organisation.
-*   **NHS DTAC** — Digital Technology Assessment Criteria, the baseline entry gate for NHS
+*   **DCB0160**: the equivalent standard for the deploying organisation.
+*   **NHS DTAC**: Digital Technology Assessment Criteria, the baseline entry gate for NHS
     procurement, covering clinical safety, data protection, technical security,
     interoperability and usability.
 *   **Current position:** none of these exist, which is consistent with a research prototype
@@ -416,21 +416,21 @@ are contractual and regulatory expectations, not optional good practice:
 
 ## 7. Intellectual property, dataset licensing and open source
 
-### 7.1 BTXRD — the binding constraint
+### 7.1 BTXRD: the binding constraint
 
 Training data is **BTXRD** (3,746 annotated radiographs), licensed **CC BY-NC-ND 4.0**. This is
 more restrictive than commonly assumed and imposes three distinct limits:
 
-*   **BY** — attribution required wherever the dataset or derivatives are used or described.
-*   **NC** — **non-commercial only**. Any commercialisation, including a paid service, a
+*   **BY**: attribution required wherever the dataset or derivatives are used or described.
+*   **NC**: **non-commercial only**. Any commercialisation, including a paid service, a
     commercial research contract, or a spin-out, is outside the licence and would require
     separate permission from the rights holder.
-*   **ND** — **no derivatives may be redistributed**. The model card already draws the correct
+*   **ND**: **no derivatives may be redistributed**. The model card already draws the correct
     conclusion: **Grad-CAM overlays and case reports are derivative images and must remain
     local**. They must not be published in papers, README files, marketing material, issue
     threads, or the hosted app's public surfaces.
 
-### 7.2 The unresolved question — are trained weights a derivative?
+### 7.2 The unresolved question: are trained weights a derivative?
 
 `TODO.md` records this as an open decision: "Whether to publish the weights openly. They derive
 from BTXRD (CC BY-NC-ND 4.0), and whether trained weights are a 'derivative' under that licence
@@ -438,11 +438,11 @@ is unsettled."
 
 **This is correctly identified and currently unresolved, yet weights are already published via
 a GitHub Release and fetched by the app at runtime** (`src/checkpoint_fetch.py`, release
-`v0.1.0`). The legal question is therefore not hypothetical — it is live. It requires a
+`v0.1.0`). The legal question is therefore not hypothetical, it is live. It requires a
 determination, and if the answer is unfavourable, either permission from the BTXRD rights holder
 or withdrawal of the public weights.
 
-### 7.3 Repository licence — a concrete, immediately fixable defect
+### 7.3 Repository licence: a concrete, immediately fixable defect
 
 The README displays an **Apache-2.0 badge**, but **there is no `LICENSE` file in the
 repository**. Without it, the default position is exclusive copyright: contributors and users
@@ -452,9 +452,9 @@ correct the badge.**
 
 ### 7.4 Third-party components
 
-*   **DenseNet-121 ImageNet-pretrained weights** (torchvision) — check the licence of the
+*   **DenseNet-121 ImageNet-pretrained weights** (torchvision), check the licence of the
     pretrained weights, not only the library.
-*   **MONAI, PyTorch, Streamlit** and the wider dependency tree — an **SBOM** should be
+*   **MONAI, PyTorch, Streamlit** and the wider dependency tree, an **SBOM** should be
     produced (see Section 8), which also serves licence-compliance review.
 *   **Contributor terms.** With no `LICENSE`, no `CONTRIBUTING.md` and no DCO or CLA, inbound
     contribution rights are undefined.
@@ -472,8 +472,8 @@ boundary applies from two directions.
 
 ### 8.1 Legal drivers
 
-*   **UK GDPR Article 32** — appropriate technical and organisational security measures.
-*   **EU Cyber Resilience Act (Regulation (EU) 2024/2847)** — obligations for products with
+*   **UK GDPR Article 32**: appropriate technical and organisational security measures.
+*   **EU Cyber Resilience Act (Regulation (EU) 2024/2847)**: obligations for products with
     digital elements placed on the EU market. **Vulnerability and incident reporting
     obligations apply from September 2026**, with the main body of obligations following in
     December 2027. Free and open-source software developed outside a commercial activity is
@@ -483,26 +483,26 @@ boundary applies from two directions.
     infrastructure without written authorisation risks liability under the **Computer Misuse
     Act 1990**.
 
-### 8.2 Open security finding — unremediated credential exposure
+### 8.2 Open security finding: unremediated credential exposure
 
-`TODO.md` records, under "Low — housekeeping":
+`TODO.md` records, under "Low, housekeeping":
 
 > "Rotate the credentials. The Cloudflare API token and R2 token were pasted into a chat
 > transcript, and `ONNM_COMMUNITY_KEY` / `ONNM_ADMIN_KEY` appeared in screenshots during setup."
 
 **This is a known credential exposure that has not been remediated, and it is classified as
 low priority.** That classification is wrong. `ONNM_ADMIN_KEY` unlocks the review queue,
-approvals and export — that is, access to every shared radiograph in D1. Assessment:
+approvals and export, that is, access to every shared radiograph in D1. Assessment:
 
 *   **Rotate all four secrets now**, and record the rotation date.
 *   Determine whether the exposure requires a **personal data breach assessment** under Article
     33. If unauthorised access to health data cannot be ruled out, the **72-hour ICO
     notification clock** is engaged from the point of awareness.
 *   The positive finding is that a prior audit confirmed no secret value ever entered git
-    history, and `.env` and `.streamlit/secrets.toml` are gitignored — that audit should be
+    history, and `.env` and `.streamlit/secrets.toml` are gitignored, that audit should be
     repeated and its result recorded.
 
-### 8.3 Security posture — assessment
+### 8.3 Security posture: assessment
 
 Strengths: bearer auth on every route; privilege separation between app and admin keys;
 parameterised queries; request and storage caps; loopback binding by default locally;
@@ -530,7 +530,7 @@ Gaps to address:
     and the operator. There is no second pair of eyes, and no documented process if that
     account is unavailable.
 *   **Google OAuth consent screen remains in testing mode** (`TODO.md`), capping listed users
-    at 100 and showing an "unverified app" interstitial — relevant to both security posture and
+    at 100 and showing an "unverified app" interstitial, relevant to both security posture and
     user trust.
 *   **No logging or audit retention policy**, and Worker observability sampling is set to 10%.
 
@@ -538,10 +538,10 @@ Gaps to address:
 
 ## 9. Product liability and professional liability
 
-*   **UK — Consumer Protection Act 1987.** Strict liability for damage caused by defective
+*   **UK, Consumer Protection Act 1987.** Strict liability for damage caused by defective
     products. Whether standalone software is a "product" under the 1987 Act has historically
     been contested; the safer working assumption is that it may be.
-*   **EU — the new Product Liability Directive (EU) 2024/2853.** This **expressly brings
+*   **EU, the new Product Liability Directive (EU) 2024/2853.** This **expressly brings
     software, including AI systems, within the definition of a product**, covers defects
     arising from software updates and machine learning, and eases the burden of proof for
     claimants in technically complex cases. Member states transpose by **9 December 2026**.
@@ -564,21 +564,21 @@ Gaps to address:
 
 ## 10. Transparency, explainability and human oversight
 
-### 10.1 The Grad-CAM problem — an honest statement is required
+### 10.1 The Grad-CAM problem: an honest statement is required
 
 The earlier draft asserted that deploying Grad-CAM heatmaps mitigates liability by providing
 interpretable reasoning. **On the evidence in this repository, that reasoning is unsafe and
 must not be relied upon.**
 
 Grad-CAM localisation is measured at **pointing game 0.0936, mean IoU 0.0428**, with **no chance
-baseline established** — and a lesion box covering roughly a tenth of the frame would be hit
+baseline established**, and a lesion box covering roughly a tenth of the frame would be hit
 roughly a tenth of the time by accident. The project's own conclusion is that this "does not yet
 support the claim 'the model looks at lesions'".
 
 An explanation that does not actually explain, but is presented to a user as evidence, is worse
 than no explanation: it invites unjustified confidence and could itself be characterised as
-misleading. The correct position is the one already taken in the Medical Disclaimer — **"Grad-CAM
-shows model attention and does not prove pathological localization or reasoning"** — and it must
+misleading. The correct position is the one already taken in the Medical Disclaimer, **"Grad-CAM
+shows model attention and does not prove pathological localization or reasoning"**, and it must
 be preserved in substance anywhere heatmaps are shown.
 
 **Action:** establish the chance baseline (score a randomly-initialised model identically). Until
@@ -629,13 +629,13 @@ Absent from the earlier draft, and material for a health AI system.
 
 A distinct obligation from bias, and easily overlooked. Under the **Equality Act 2010** a
 service provider owes a duty to make **reasonable adjustments** for disabled users, and that
-duty is **anticipatory** — it does not wait for a complaint.
+duty is **anticipatory**, it does not wait for a complaint.
 
 *   The target standard is **WCAG 2.2 Level AA**. For public-sector bodies the Public Sector
     Bodies (Websites and Mobile Applications) Accessibility Regulations 2018 make it a hard
     requirement with a mandatory accessibility statement; ONNM is not currently in that
     category, but any NHS or university deployment would bring it in.
-*   **Specific risk in this app:** the primary output is **colour-coded and image-based** — a
+*   **Specific risk in this app:** the primary output is **colour-coded and image-based**, a
     Grad-CAM heatmap over a greyscale radiograph. Colour alone must not be the only carrier of
     meaning, and the textual verdict, probabilities and limitations must remain available to
     screen readers independently of the overlay.
@@ -679,13 +679,13 @@ Compliance is demonstrated by records. The following should exist and be retaine
 
 | Artefact | Status |
 |---|---|
-| DPIA | **Drafted, unsigned** — `compliance/DPIA.md` |
-| ROPA | **Drafted, unsigned** — `compliance/ROPA.md` |
-| Legitimate Interests Assessment | **Missing** — required to complete the DPIA §4.1 |
+| DPIA | **Drafted, unsigned**, `compliance/DPIA.md` |
+| ROPA | **Drafted, unsigned**, `compliance/ROPA.md` |
+| Legitimate Interests Assessment | **Missing**, required to complete the DPIA §4.1 |
 | Transfer Risk Assessment + IDTA/Addendum | **Missing** |
-| Retention schedule | **Drafted, values not set** — `compliance/ROPA.md` §E |
-| Incident response plan + incident log | **Drafted, unsigned** — `compliance/INCIDENT_RESPONSE.md` |
-| `LICENSE` file | **Exists** — canonical Apache-2.0 text |
+| Retention schedule | **Drafted, values not set**, `compliance/ROPA.md` §E |
+| Incident response plan + incident log | **Drafted, unsigned**, `compliance/INCIDENT_RESPONSE.md` |
+| `LICENSE` file | **Exists**, canonical Apache-2.0 text |
 | `SECURITY.md` + disclosure policy | **Exists** |
 | `CONTRIBUTING.md` + DCO | **Exists** |
 | SBOM | **Missing** |
@@ -704,18 +704,18 @@ commercial route.
 | # | Pri | Gap | Evidence | Action |
 |---|---|---|---|---|
 | 1 | **P1** | Exposed credentials not rotated; classified "Low" | `TODO.md` housekeeping | **STILL OPEN.** Rotate all four secrets; assess Art 33 breach duty; record date. Logged as incident 001 in `compliance/INCIDENT_RESPONSE.md` |
-| 2 | **P1** | No DPIA despite mandatory Art 35 triggers | Repo-wide search: absent | **DRAFTED** — `compliance/DPIA.md`. Awaiting controller decisions and signature |
-| 3 | **P1** | No `LICENSE` file, Apache-2.0 badge displayed | Repo root listing; `README.md` badge | **CLOSED** — canonical Apache-2.0 text added as `LICENSE` |
-| 4 | **P1** | Dispute button states images go to a reviewer when none was stored | `TODO.md`, traced 2026-08-23 | **CLOSED** — `render_rejection_dispute` now takes a required `shared` argument and states what actually happened |
+| 2 | **P1** | No DPIA despite mandatory Art 35 triggers | Repo-wide search: absent | **DRAFTED**, `compliance/DPIA.md`. Awaiting controller decisions and signature |
+| 3 | **P1** | No `LICENSE` file, Apache-2.0 badge displayed | Repo root listing; `README.md` badge | **CLOSED**, canonical Apache-2.0 text added as `LICENSE` |
+| 4 | **P1** | Dispute button states images go to a reviewer when none was stored | `TODO.md`, traced 2026-08-23 | **CLOSED**, `render_rejection_dispute` now takes a required `shared` argument and states what actually happened |
 | 5 | **P1** | Weights published while "are weights a derivative of CC BY-NC-ND?" is unresolved | `TODO.md` open decision; release `v0.1.0` live | **STILL OPEN.** Obtain determination; seek permission or withdraw |
-| 6 | **P2** | No ROPA (Art 30(5) derogation unavailable) | Repo-wide search: absent | **DRAFTED** — `compliance/ROPA.md`. Controller fields outstanding |
-| 7 | **P2** | No retention schedule; no automated erasure of submissions | `src/legal.py`; only tokens purged | **PARTLY** — schedule drafted at `compliance/ROPA.md` §E; periods not set and deletion not implemented |
+| 6 | **P2** | No ROPA (Art 30(5) derogation unavailable) | Repo-wide search: absent | **DRAFTED**, `compliance/ROPA.md`. Controller fields outstanding |
+| 7 | **P2** | No retention schedule; no automated erasure of submissions | `src/legal.py`; only tokens purged | **PARTLY**, schedule drafted at `compliance/ROPA.md` §E; periods not set and deletion not implemented |
 | 8 | **P2** | No user-facing deletion; erasure is manual | `TODO.md` open item | Implement per-user scan deletion; document DSR procedure |
 | 9 | **P2** | No Art 28 processor terms recorded for Streamlit/Cloudflare/Google | Not present | Obtain, review, record |
 | 10 | **P2** | No transfer mechanism or TRA documented | Not present | Complete IDTA/Addendum + TRA |
 | 11 | **P2** | Controller not named; contact is "repository channels" | `src/legal.py` | Name the controller and a contact route |
-| 12 | **P2** | No `SECURITY.md`, no disclosure policy, no SBOM, no dependency scanning | Repo root | **PARTLY** — `SECURITY.md` and `CONTRIBUTING.md` added. SBOM and dependency scanning still outstanding |
-| 13 | **P2** | No incident response plan | Not present | **DRAFTED** — `compliance/INCIDENT_RESPONSE.md`, with gap #1 logged as incident 001 |
+| 12 | **P2** | No `SECURITY.md`, no disclosure policy, no SBOM, no dependency scanning | Repo root | **PARTLY**, `SECURITY.md` and `CONTRIBUTING.md` added. SBOM and dependency scanning still outstanding |
+| 13 | **P2** | No incident response plan | Not present | **DRAFTED**, `compliance/INCIDENT_RESPONSE.md`, with gap #1 logged as incident 001 |
 | 14 | **P2** | Grad-CAM presented as explanation while measured near chance | `MODEL_CARD.md`, `TODO.md` | Establish chance baseline; make no localisation claim until then |
 | 15 | **P2** | Research-ethics status of community data collection undetermined | Section 5 | Determine HRA/REC and institutional position |
 | 16 | **P2** | Single admin account is sole reviewer and operator | `TODO.md`, schema CHECK | Document key-person risk; plan continuity |
@@ -727,7 +727,7 @@ commercial route.
 | 22 | **P3** | Google OAuth consent screen in testing mode | `TODO.md` | Decide publish vs remain capped at 100 users |
 | 23 | **P2** | No accessibility audit; verdict is colour- and image-led | Section 11.1 | Audit against WCAG 2.2 AA during the planned UI redesign |
 | 24 | **P3** | No DPO appointment decision recorded | Section 16 | Assess Art 37 trigger and record the decision either way |
-| 25 | **P1** | **The test suite wrote to the production database.** `backend.create_user` routes to live D1 whenever a community key is configured and ignores the `path` argument, so `pytest` on a credentialled machine created real accounts. 3 `@example.com` accounts had reached production D1 | `src/backend.py:49–60`; 4 failures in `tests/test_auth_database.py` reproduced at clean HEAD; D1 count confirmed 2026-08-24 | **CLOSED** — autouse fixture in `tests/conftest.py` clears the community environment and resets the memoised client; `tests/test_backend_isolation.py` pins it; the 3 accounts were purged from D1 on 2026-08-24 after a backup, `quick_check` ok, no real account or submission affected |
+| 25 | **P1** | **The test suite wrote to the production database.** `backend.create_user` routes to live D1 whenever a community key is configured and ignores the `path` argument, so `pytest` on a credentialled machine created real accounts. 3 `@example.com` accounts had reached production D1 | `src/backend.py:49–60`; 4 failures in `tests/test_auth_database.py` reproduced at clean HEAD; D1 count confirmed 2026-08-24 | **CLOSED**, autouse fixture in `tests/conftest.py` clears the community environment and resets the memoised client; `tests/test_backend_isolation.py` pins it; the 3 accounts were purged from D1 on 2026-08-24 after a backup, `quick_check` ok, no real account or submission affected |
 | 26 | **P2** | `ONNM_COMMUNITY_URL`, `ONNM_COMMUNITY_KEY` and `ONNM_ADMIN_KEY` are set as **OS-level** environment variables on a development machine, so any script, shell or ad-hoc command talks to production by default | Confirmed 2026-08-24: present in a fresh subprocess with no `.env` loaded | Scope the variables to the app's launch rather than the user environment. The test fixture closes the test path only; every other path is still live |
 
 ---
@@ -739,7 +739,7 @@ commercial route.
 | Data controller (hosted) | kali-fz | All UK GDPR controller duties; ICO contact |
 | Project lead / maintainer | kali-fz | Intended purpose, releases, model promotion |
 | GRC | Yaso-cyber | This register, DPIA, ROPA, policy review |
-| Admin / reviewer | single pinned account | Review gate, approvals, export — **key-person risk** |
+| Admin / reviewer | single pinned account | Review gate, approvals, export, **key-person risk** |
 | Clinical Safety Officer | **Unfilled** | Required only if NHS-facing (DCB0129) |
 | Data Protection Officer | **Not appointed** | Assess whether Art 37 requires one; large-scale special category processing is a trigger |
 
@@ -754,7 +754,7 @@ medical device AI.
 
 ---
 
-## Appendix A — corrections applied to the earlier draft
+## Appendix A: corrections applied to the earlier draft
 
 Recorded so the changes are visible to whoever reviews this next.
 
@@ -767,10 +767,10 @@ Recorded so the changes are visible to whoever reviews this next.
 | XAI/Grad-CAM **mitigates liability** | Grad-CAM here is measured **at roughly chance**; presenting it as reasoning is unsafe | The project's own measurements contradict the claim; asserting it could increase exposure |
 | Consent should be avoided in favour of legitimate interests | Retained, but split into the required **Art 6 basis** and separate **Art 9(2)(j) condition** with Art 89 safeguards | Conflating the two is the most common UK GDPR error in health research |
 | Liability under **CPA 1987** only | Added **PLD (EU) 2024/2853**, which expressly covers software and AI | The new directive materially changes EU exposure and is transposed by December 2026 |
-| — | Added: clinical safety (DCB0129/0160, DTAC), research ethics and HRA, equality and bias, supply chain, incident management, records, and the gap register | These were absent and are the sections a regulator or reviewer would ask for first |
-| — | Added on review: PECR and cookies (§4.14), interface accessibility under the Equality Act and WCAG 2.2 AA (§11.1), and training-data poisoning resistance as a named security control (§8.3) | Cookies are a separate regime from UK GDPR; accessibility is an anticipatory duty distinct from model bias; and the anti-poisoning controls are real mitigations that were going undocumented |
+| - | Added: clinical safety (DCB0129/0160, DTAC), research ethics and HRA, equality and bias, supply chain, incident management, records, and the gap register | These were absent and are the sections a regulator or reviewer would ask for first |
+| - | Added on review: PECR and cookies (§4.14), interface accessibility under the Equality Act and WCAG 2.2 AA (§11.1), and training-data poisoning resistance as a named security control (§8.3) | Cookies are a separate regime from UK GDPR; accessibility is an anticipatory duty distinct from model bias; and the anti-poisoning controls are real mitigations that were going undocumented |
 
-## Appendix B — instruments referenced
+## Appendix B: instruments referenced
 
 UK Medical Devices Regulations 2002 (SI 2002/618) · Regulation (EU) 2017/745 (EU MDR) ·
 Regulation (EU) 2024/1689 (EU AI Act) · UK GDPR · Data Protection Act 2018 ·

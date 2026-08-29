@@ -1,4 +1,4 @@
-# Model Card — OsteoNeuralNetwork-Model (ONNM)
+# Model Card: OsteoNeuralNetwork-Model (ONNM)
 
 DenseNet-121 classifier for triage of primary bone tumours on plain 2D
 radiographs. Last updated 2026-08-22, describing checkpoint
@@ -33,7 +33,7 @@ clinician regardless of the model's output.
 
 ## Training data
 
-- **Source:** BTXRD — 3,746 plain radiographs with tumour annotations,
+- **Source:** BTXRD, 3,746 plain radiographs with tumour annotations,
   licensed **CC BY-NC-ND 4.0** (non-commercial, no redistribution of
   derivatives, including Grad-CAM overlays).
 - **Splits:** 2,675 / 535 / 536 (train/val/test), grouped by a surrogate
@@ -65,7 +65,7 @@ only:
 
 Which specificity floor binds is a clinical policy decision that has **not**
 been made; both are reported. Bootstrap 95% CIs accompany every headline number
-in `reports/<run>/metrics_test.json` — with 49 malignant test images, the
+in `reports/<run>/metrics_test.json`, with 49 malignant test images, the
 interval is the result.
 
 ## Measured limitations
@@ -95,12 +95,12 @@ interval is the result.
 - **Out-of-distribution inputs.** A closed-set softmax forces any image into
   one of three classes. Mitigation: a two-stage OOD gate (statistical
   pre-screen + predictive-entropy withdrawal of low-confidence lesion calls),
-  but the pre-screen is heuristic — a grayscale photograph with X-ray-like
+  but the pre-screen is heuristic: a grayscale photograph with X-ray-like
   statistics can pass stage 1, and the gate thresholds were set on synthetic
   phantoms, not yet tuned on real film distributions.
 - **Bias shift under loss re-weighting.** An OHEM-weighted training run
   regressed macro ROC-AUC (0.891 → 0.863) while appearing to reduce false
-  positives — it had shifted its bias toward "normal", not learned better
+  positives. It had shifted its bias toward "normal" rather than learned better
   discrimination. Threshold-independent metrics are required when judging any
   specificity intervention.
 - **Confident errors.** Temperature scaling improves average calibration, not

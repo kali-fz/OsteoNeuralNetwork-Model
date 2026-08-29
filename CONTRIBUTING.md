@@ -25,7 +25,7 @@ a test image, use a synthetic one.
 ## Licence of your contribution
 
 By contributing you agree that your contribution is licensed under the
-[Apache License 2.0](LICENSE), the same licence as the project — inbound equals outbound.
+[Apache License 2.0](LICENSE), the same licence as the project. Inbound equals outbound.
 
 Sign off each commit to certify you have the right to submit it, under the
 [Developer Certificate of Origin](https://developercertificate.org/):
@@ -68,7 +68,7 @@ dataset.
 ## House style, learned the hard way
 
 - **Console output in `scripts/` must be ASCII.** Windows consoles are cp1252, so an em
-  dash in a `print` — or in a docstring, which argparse prints for `--help` — raises
+  dash in a `print` (or in a docstring, which argparse prints for `--help`) raises
   `UnicodeEncodeError` on the target machine. This has bitten this project twice.
 - **Write files as UTF-8 explicitly.** Python's `open(..., "w")` defaults to the system
   ANSI codepage on Windows; pass `encoding="utf-8"`.
@@ -84,7 +84,7 @@ Some areas carry consequences beyond the code. Flag these in the pull request:
 
 | Area | Why |
 |---|---|
-| `cloudflare/migrations/` | Applied to a live production database. Migrations are additive and are never rerun. Never edit a migration that has already been applied — add a new one. |
+| `cloudflare/migrations/` | Applied to a live production database. Migrations are additive and are never rerun. Never edit a migration that has already been applied, add a new one. |
 | `cloudflare/src/worker.js` | **Apply the matching migration before deploying.** Deploying a Worker that reads columns D1 does not have breaks the live site. |
 | Consent, sharing, or storage paths | Consent governs the pixels. A change here is a GRC decision, not only an engineering one. |
 | `src/legal.py` | Published legal notices. Changes should be reviewed against `grc_compliance_prompt.md`. |
@@ -100,4 +100,4 @@ This repository uses short, hyphenated, subject-only commit messages, for exampl
 
 `grc_compliance_prompt.md` is the project's compliance register and lists the open gaps.
 If your change closes one, say which number in the pull request. If it opens a new one,
-say that too — an honest gap is worth more than a quiet one.
+say that too. An honest gap is worth more than a quiet one.

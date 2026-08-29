@@ -17,7 +17,7 @@ function escapeHtml(text) {
 }
 
 function formatDate(iso) {
-  if (!iso) return "—";
+  if (!iso) return "-";
   try {
     return new Date(iso).toLocaleString(undefined, {
       year: "numeric",
@@ -121,21 +121,21 @@ export async function renderProfile(main, state) {
             (row) => `
           <tr>
             <td>${escapeHtml(formatDate(row.created_at))}</td>
-            <td>${escapeHtml(row.model_label || "—")}</td>
+            <td>${escapeHtml(row.model_label || "-")}</td>
             <td>${
               typeof row.lesion_probability === "number"
                 ? (row.lesion_probability * 100).toFixed(1) + "%"
-                : "—"
+                : "-"
             }</td>
             <td>${row.shared ? "Yes" : "No"}</td>
-            <td>${escapeHtml(REVIEW_TEXT[row.review_status] || "—")}</td>
+            <td>${escapeHtml(REVIEW_TEXT[row.review_status] || "-")}</td>
             <td class="onnm-history-action">${
               canWithdraw(row)
                 ? `<button class="onnm-btn onnm-btn-quiet" type="button"
                            data-withdraw="${escapeHtml(row.submission_id)}">Delete image</button>`
                 : row.shared
                   ? `<span class="onnm-muted onnm-history-locked">In the training set</span>`
-                  : `<span class="onnm-muted">—</span>`
+                  : `<span class="onnm-muted">-</span>`
             }</td>
           </tr>`,
           )
@@ -152,8 +152,8 @@ export async function renderProfile(main, state) {
       it out of the review queue, and you can do that at any point up until a
       reviewer approves it. After approval the image has been added to the
       training set, and once a model has trained on it there is no way to remove
-      it from what that model learned — so approval is the point of no return,
-      not a policy we could choose to relax. Deleting the image does not remove
+      it from what that model learned, so approval is the point of no return
+      rather than a policy we could choose to relax. Deleting the image does not remove
       the row below; your own record of the scan and its result stays.
     </p>`;
 

@@ -137,7 +137,7 @@ function renderCard(item) {
 
   const verdict = rejected
     ? "<strong>The model did not run.</strong> The gate rejected this upload."
-    : `Model said <strong>${escapeHtml(MODEL_LABELS[item.model_label] || item.model_label || "—")}</strong>${
+    : `Model said <strong>${escapeHtml(MODEL_LABELS[item.model_label] || item.model_label || "-")}</strong>${
         probability ? ` · P(lesion) ${probability}` : ""
       }`;
 
@@ -415,7 +415,7 @@ export async function renderAdmin(main) {
     const card = radio.closest("[data-card]");
     const destination = destinationFor(radio.value, card.dataset.ood === "1");
     card.querySelector("[data-destination]").innerHTML =
-      `Files into <strong>${escapeHtml(destination.title)}</strong> — ${escapeHtml(destination.why)}.`;
+      `Files into <strong>${escapeHtml(destination.title)}</strong>: ${escapeHtml(destination.why)}.`;
     card.querySelector("[data-approve]").disabled = card.dataset.hasimage !== "1";
   });
 
