@@ -165,9 +165,24 @@ retention job. The Streamlit deployment has been removed. Model versioning is li
 
 ### Blocking: nobody agrees to the Terms
 
-The one thing between v1.0 and public release. Everything else on the site works.
+**Built and deployed 2026-08-29.** Migration 0007 applied to live D1 (schema
+version 7) before the deploy, all seven existing accounts carry `tos_version`
+NULL and will be asked on their next visit, and `/api/auth/google/start` now
+bounces to `/terms` without a valid acceptance cookie (verified live, including
+against a forged cookie).
 
-- [ ] **Recover and rewrite the Terms text.** `src/legal.py` was deleted in commit
+**Two things still owed before this counts as closed:**
+
+- [ ] **GRC review of the Terms wording.** *(Yaso-cyber.)* The text was drafted
+      here from the deleted Streamlit version and rewritten for the hosted
+      reality. It has not been reviewed by anyone qualified, and the site should
+      not be promoted widely until it has.
+- [ ] **Walk the gate once as a human.** Sign in on a fresh browser, confirm the
+      tick is required, confirm an existing account is asked on next visit, and
+      confirm a scan works afterwards. Everything up to the session boundary is
+      verified automatically; the round trip through Google is not.
+
+- [x] **Recover and rewrite the Terms text.** `src/legal.py` was deleted in commit
       `ea1ce2e` and holds 234 lines of finished Markdown: `TERMS_OF_SERVICE` (10
       numbered sections), `PRIVACY_POLICY`, `MEDICAL_DISCLAIMER`, `COOKIE_NOTICE`.
       Recover with `git show ea1ce2e^:src/legal.py`. It was written for the Streamlit
@@ -178,38 +193,38 @@ The one thing between v1.0 and public release. Everything else on the site works
       landing page (`web/src/pages/landing.js`, the `onnm-terms-list`).
       *(Drafted here, then reviewed by the project's GRC collaborator before it is
       relied on. Not legal advice.)*
-- [ ] **Add the `/terms` route.** New `web/src/pages/terms.js`; register in `ROUTES`
+- [x] **Add the `/terms` route.** New `web/src/pages/terms.js`; register in `ROUTES`
       and `ROUTE_TITLES` in `web/src/main.js`, and **keep it out of**
       `SIGNED_IN_ROUTES` so a signed-out visitor can reach it. The page shows the
       Terms, a tick box, and a "Continue to Google sign-in" button that stays disabled
       until ticked.
-- [ ] **Repoint all three sign-in links.** `signInHref()` in `web/src/main.js` is the
+- [x] **Repoint all three sign-in links.** `signInHref()` in `web/src/main.js` is the
       choke point for two of them (the header button and the signed-out route guard),
       but **`web/src/pages/landing.js` hardcodes `/api/auth/google/start` and bypasses
       it**. That third one is the easy miss and the whole gate leaks without it.
-- [ ] **Make the gate real on the server.** A tick enforced only in the browser is
+- [x] **Make the gate real on the server.** A tick enforced only in the browser is
       decoration. `POST /api/terms/accept`; signed out it mints a short-lived signed
       cookie recording the accepted version, reusing `signSession`/`verifySession`
       from `worker/lib/session.js` exactly as the OAuth `state` and PKCE verifier
       already are. `authStart()` then refuses to begin OAuth without that cookie and
       bounces to `/?auth_error=terms_required` (add the code to `AUTH_ERRORS`).
-- [ ] **Persist acceptance against the account.** `authCallback()` passes the accepted
+- [x] **Persist acceptance against the account.** `authCallback()` passes the accepted
       version into `createUser` so it lands on the new row. Migration
       `cloudflare/migrations/0007_terms_acceptance.sql` following the `0006` template:
       `ALTER TABLE users ADD COLUMN tos_version TEXT;` plus bumping `schema_version`
       to `'7'`. Thread `tos_version` through `createUser` in `cloudflare/src/worker.js`
       (destructure, INSERT columns, bind list), `worker/lib/account.js`, and the
       callback in `worker/index.js`. **Migration first, deploy second.**
-- [ ] **Re-consent the existing accounts.** *(Owner's decision: everyone, not just new
+- [x] **Re-consent the existing accounts.** *(Owner's decision: everyone, not just new
       sign-ups.)* `/api/session` gains `terms_accepted`, derived server-side from the
       user row exactly as `is_admin` already is. A signed-in visitor without acceptance
       is routed to `/terms`; ticking posts to the same endpoint, which being
       authenticated writes straight to their row. Existing rows keep `tos_version`
       NULL, which honestly means "accepted an unrecorded version".
-- [ ] **Refuse scans without acceptance.** `/api/scan` and `/api/warmup` return a clear
+- [x] **Refuse scans without acceptance.** `/api/scan` and `/api/warmup` return a clear
       refusal when the acting account has not accepted. Routing alone is a UI
       convention any client can skip; this mirrors how `/api/admin/*` is guarded.
-- [ ] **Do not break the signed-out landing page.** It keeps full function, globe
+- [x] **Do not break the signed-out landing page.** It keeps full function, globe
       included. `/terms` is additive. Re-check the four surfaces afterwards: landing
       layout, globe, Google sign-in end to end, image upload returning a verdict.
 
