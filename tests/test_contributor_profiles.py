@@ -106,3 +106,93 @@ def test_client_contributor_list_reports_unavailable(monkeypatch) -> None:
         lambda *_a, **_k: (503, {"error": "offline"}),
     )
     assert client.contributors() is None
+
+
+def _site_worker() -> str:
+    return (ROOT / "worker" / "index.js").read_text(encoding="utf-8")
+
+
+def _visibility_handler() -> str:
+    worker = _site_worker()
+    start = worker.index("async function setProfileVisibility")
+    return worker[start : worker.index("// Scanning", start)]
+
+
+def test_visibility_route_exists_and_requires_a_session() -> None:
+    """Anonymous callers must not be able to publish or unpublish anybody."""
+    worker = _site_worker()
+    start = worker.index('path === "/api/profile/visibility"')
+    route = worker[start : start + 220]
+
+    assert 'method === "POST"' in worker[start - 60 : start]
+    assert 'fail(401, "sign in first")' in route
+    assert "setProfileVisibility(request, env, session)" in route
+
+
+def test_visibility_takes_identity_from_the_session_not_the_request_body() -> None:
+    """A body-supplied user_id would let anyone rewrite someone else's profile.
+
+    The storage Worker re-checks the Google subject as well, so this is the
+    second of two locks; it is asserted here because the first one is the only
+    thing standing between a signed-in user and every other account's listing.
+    """
+    handler = _visibility_handler()
+
+    assert "user_id: session.uid" in handler
+    assert "provider_subject: session.sub" in handler
+    # The only value taken from the request is the flag itself.
+    assert "body.user_id" not in handler
+    assert "body.provider_subject" not in handler
+
+
+def test_visibility_requires_an_explicit_boolean() -> None:
+    """A missing or misspelled field must not read as "make me private".
+
+    Truthiness would turn a typo into a silent unpublish, which looks identical
+    to the user asking for it.
+    """
+    handler = _visibility_handler()
+
+    assert 'typeof body?.public_profile !== "boolean"' in handler
+    assert 'fail(400, "public_profile must be true or false")' in handler
+
+
+def test_session_reports_visibility_from_the_account_row() -> None:
+    """The cookie lasts eight hours; the answer must not.
+
+    Carrying this in the session would keep somebody listed after they asked to
+    be removed, for as long as their cookie survived.
+    """
+    worker = _site_worker()
+    start = worker.index('path === "/api/session"')
+    handler = worker[start : worker.index('path === "/api/terms/accept"', start)]
+
+    assert "public_profile: account?.public_contributor_profile === 1" in handler
+    assert "accountFor(request, env, session)" in handler
+
+
+def test_opting_out_clears_the_stored_name_and_photo() -> None:
+    """Turning the toggle off deletes the data, rather than only hiding it.
+
+    The Privacy notice offers this as a withdrawal of consent, so leaving the
+    name and picture in the row would make the promise untrue.
+    """
+    worker = (ROOT / "cloudflare" / "src" / "worker.js").read_text(encoding="utf-8")
+    start = worker.index("async function updateContributorProfile")
+    handler = worker[start : worker.index("async function listContributors", start)]
+
+    assert "const storedName = publicProfile === 0 ? null : cleanDisplayName(display_name);" in handler
+    assert (
+        "const storedPicture = publicProfile === 0 ? null : cleanGooglePicture(profile_picture_url);"
+        in handler
+    )
+
+
+def test_the_checkbox_defaults_to_unchecked() -> None:
+    """Opt-in is the whole point: the box must never start ticked by default."""
+    page = (ROOT / "web" / "src" / "pages" / "profile.js").read_text(encoding="utf-8")
+
+    assert "state.session?.public_profile === true" in page
+    assert '${isPublic ? "checked" : ""}' in page
+    # A failed save must not leave the box showing a state the server rejected.
+    assert "visibility.checked = !wanted;" in page

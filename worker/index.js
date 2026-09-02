@@ -394,6 +394,49 @@ async function acceptTerms(request, env) {
   });
 }
 
+/**
+ * Appear on the public contributors list, or stop appearing.
+ *
+ * The Terms say a name and photo are shown publicly only if the person chooses
+ * to appear as a contributor, and the Privacy notice promises the choice is
+ * reversible at any time. This route is where both of those become true; the
+ * column has defaulted to 0 since migration 0005, so silence stays private.
+ *
+ * The identity is taken from the session cookie and never from the body. A
+ * client-supplied user_id or provider_subject would let anyone publish -- or
+ * unpublish -- somebody else's profile. updateContributorProfile re-checks the
+ * subject against the stored one regardless, so this is the second of two locks
+ * rather than the only one.
+ *
+ * The name and picture are re-sent from the session because turning the setting
+ * off nulls both columns. Turning it back on has to restore them, and the
+ * session already holds what Google last told us.
+ */
+async function setProfileVisibility(request, env, session) {
+  const body = await request.json().catch(() => ({}));
+  // Explicitly boolean rather than truthy: a missing or misspelled field would
+  // otherwise read as false and quietly unpublish somebody.
+  if (typeof body?.public_profile !== "boolean") {
+    return fail(400, "public_profile must be true or false");
+  }
+
+  const updated = await forwardJson(request, env, "/users/profile", {
+    method: "POST",
+    body: {
+      user_id: session.uid,
+      provider_subject: session.sub,
+      public_profile: body.public_profile,
+      display_name: session.name,
+      profile_picture_url: session.pic,
+    },
+  });
+  if (!updated.ok) {
+    console.error("profile: visibility update failed", updated.status, updated.payload);
+    return fail(502, "your preference could not be saved; please try again");
+  }
+  return json({ public_profile: body.public_profile });
+}
+
 // ---------------------------------------------------------------------------
 // Scanning
 // ---------------------------------------------------------------------------
@@ -656,6 +699,9 @@ export default {
       // -- session --------------------------------------------------------
       if (method === "GET" && path === "/api/session") {
         const session = await currentSession(request, env);
+        // One read of the account row, shared by both answers below. Asking for
+        // it twice would be two round trips for the same row on every page load.
+        const account = session ? await accountFor(request, env, session) : null;
         return json({
           signed_in: Boolean(session),
           user: session
@@ -668,8 +714,14 @@ export default {
           is_admin: isAdminSession(session),
           // Read from the account row, not from the cookie, so that agreeing
           // takes effect on the next request rather than the next sign-in.
-          terms_accepted: await sessionHasAcceptedTerms(request, env, session),
+          terms_accepted: hasAcceptedTerms(account),
           terms_version: TERMS_VERSION,
+          // Whether this account has chosen to appear on the public contributors
+          // list. Read from the row rather than the cookie for the same reason as
+          // is_admin: it can change without a new sign-in, and a stale "yes"
+          // carried in an eight-hour cookie would keep somebody listed after they
+          // asked not to be.
+          public_profile: account?.public_contributor_profile === 1,
           budget: await budgetStatus(env.DB),
         });
       }
@@ -682,6 +734,11 @@ export default {
 
       // -- authenticated --------------------------------------------------
       const session = await currentSession(request, env);
+
+      if (method === "POST" && path === "/api/profile/visibility") {
+        if (!session) return fail(401, "sign in first");
+        return setProfileVisibility(request, env, session);
+      }
 
       if (method === "GET" && path === "/api/submissions") {
         if (!session) return fail(401, "sign in first");

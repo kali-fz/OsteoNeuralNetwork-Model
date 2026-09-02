@@ -108,6 +108,24 @@ export const acceptTerms = async (version) =>
     }),
   );
 
+/**
+ * Appear on the public contributors list, or stop appearing.
+ *
+ * Off for every new account. The Terms promise a name and photo are shown only
+ * if the person chooses to appear, so this call is that choice, and the Privacy
+ * notice promises it is reversible -- which is why the same route sets it both
+ * ways rather than only opting in.
+ */
+export const setProfileVisibility = async (publicProfile) =>
+  unwrap(
+    await fetch("/api/profile/visibility", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ public_profile: publicProfile }),
+    }),
+  );
+
 export async function signOut() {
   return unwrap(
     await fetch("/api/auth/signout", { method: "POST", credentials: "same-origin" }),

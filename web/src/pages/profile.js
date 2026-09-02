@@ -7,7 +7,7 @@
  * is not a pass-through to the storage Worker.
  */
 
-import { getSubmissions, withdrawSubmission } from "../api.js";
+import { getSubmissions, setProfileVisibility, withdrawSubmission } from "../api.js";
 
 function escapeHtml(text) {
   return String(text ?? "").replace(
@@ -53,6 +53,10 @@ function canWithdraw(row) {
 
 export async function renderProfile(main, state) {
   const user = state.session?.user || {};
+  // The server is the authority on this: it reads the account row on every
+  // /api/session call, so a stale cookie cannot leave the box ticked for
+  // somebody who has since opted out.
+  const isPublic = state.session?.public_profile === true;
 
   main.insertAdjacentHTML(
     "beforeend",
@@ -79,10 +83,55 @@ export async function renderProfile(main, state) {
     </section>
 
     <section class="onnm-panel">
+      <h2>Appearing as a contributor</h2>
+      <label class="onnm-consent">
+        <input type="checkbox" id="public-profile" ${isPublic ? "checked" : ""} />
+        <span>
+          Show my name and photo on the public contributors list.
+        </span>
+      </label>
+      <p class="onnm-status" id="visibility-status" role="status" aria-live="polite"></p>
+      <p class="onnm-caption">
+        This is off unless you turn it on, and you can turn it off again at any
+        time. It controls one thing only: whether your name and photo appear
+        under "People who shared approved research images" on the front page.
+        Turning it off removes you from that list and deletes the stored copy of
+        your name and photo. It does not withdraw any image you have shared, and
+        it does not affect your scans or your account.
+      </p>
+    </section>
+
+    <section class="onnm-panel">
       <h2>Your scans</h2>
       <div id="history"><p class="onnm-muted">Loading…</p></div>
     </section>`,
   );
+
+  const visibility = main.querySelector("#public-profile");
+  const visibilityStatus = main.querySelector("#visibility-status");
+
+  visibility.addEventListener("change", async () => {
+    const wanted = visibility.checked;
+    visibility.disabled = true;
+    visibilityStatus.textContent = "Saving…";
+    try {
+      await setProfileVisibility(wanted);
+      // Kept in step with the server so navigating away and back does not show
+      // the previous answer from a stale session object.
+      if (state.session) state.session.public_profile = wanted;
+      visibilityStatus.textContent = wanted
+        ? "You now appear on the contributors list."
+        : "You no longer appear on the contributors list.";
+    } catch (error) {
+      // Put the box back where it was: leaving it showing the state the user
+      // asked for, when the server never accepted it, is the one outcome that
+      // would actively mislead somebody about whether they are listed.
+      visibility.checked = !wanted;
+      visibilityStatus.textContent = error.message;
+    } finally {
+      visibility.disabled = false;
+    }
+  });
 
   const host = main.querySelector("#history");
 
