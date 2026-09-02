@@ -1,5 +1,5 @@
 /**
- * ISO 3166-1 alpha-2 country centroids, and the jitter that separates layers.
+ * ISO 3166-1 alpha-2 country centroids.
  *
  * GENERATED from src/geo.py by scripts/gen_centroids.mjs -- do not hand-edit.
  * That file remains the single source of truth for turning a country code into
@@ -164,10 +164,3 @@ export const COUNTRY_CENTROIDS = {
   "ZM": ["Zambia", -13.1, 27.8],
   "ZW": ["Zimbabwe", -19.0, 29.2],
 };
-
-/**
- * Maximum jitter in degrees. Small enough that a marker stays over its own
- * country at globe scale, large enough to separate the two layers visually.
- * Must match JITTER_DEGREES in src/geo.py.
- */
-export const JITTER_DEGREES = 1.8;

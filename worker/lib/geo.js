@@ -24,30 +24,10 @@
  * on the page always add up even when the map cannot show everybody.
  */
 
-import { COUNTRY_CENTROIDS, JITTER_DEGREES } from "./centroids.js";
+import { COUNTRY_CENTROIDS } from "./centroids.js";
 
 export const SIGNUP_LAYER = "signup";
 export const CONTRIBUTOR_LAYER = "contributor";
-
-const ENCODER = new TextEncoder();
-
-/**
- * A fixed, reproducible offset for one country on one layer.
- *
- * Derived from a hash so it never changes between renders. A marker that moved
- * on every page load would imply live tracking, and nothing here tracks anybody.
- *
- * Byte-for-byte the same derivation as `src/geo.py:_jitter`: SHA-256 over
- * "CODE:layer", then bytes 0 and 1 mapped from [0, 255] onto [-1, 1] and scaled.
- */
-async function jitter(code, layer) {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", ENCODER.encode(`${code}:${layer}`)),
-  );
-  const latUnit = (digest[0] / 255) * 2 - 1;
-  const lngUnit = (digest[1] / 255) * 2 - 1;
-  return [latUnit * JITTER_DEGREES, lngUnit * JITTER_DEGREES];
-}
 
 /** Coerce Worker count values without letting malformed data break a page. */
 function nonNegativeInt(value) {
@@ -79,10 +59,14 @@ async function markersForLayer(rows, layer) {
     }
 
     const [name, lat, lng] = entry;
-    const [dLat, dLng] = await jitter(code, layer);
+    // The centroid itself, not an offset from it. A previous version nudged
+    // each marker by up to 1.8 degrees to keep the two layers from overlapping,
+    // which is wider than a small country: it placed Belgium's marker in France.
+    // The globe merges the layers into one dot per country before drawing, so
+    // there is nothing to separate and nothing the offset bought.
     markers.push({
-      lat: round3(lat + dLat),
-      lng: round3(lng + dLng),
+      lat: round3(lat),
+      lng: round3(lng),
       label: name,
       country: code,
       count,

@@ -38,7 +38,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from geo import (  # noqa: E402
     CONTRIBUTOR_LAYER,
     COUNTRY_CENTROIDS,
-    JITTER_DEGREES,
     SIGNUP_LAYER,
     build_markers,
 )
@@ -312,12 +311,19 @@ def test_both_layers_are_built_and_labelled() -> None:
     assert layers == {SIGNUP_LAYER, CONTRIBUTOR_LAYER}
 
 
-def test_the_two_layers_do_not_draw_on_top_of_each_other() -> None:
-    """GB appears in both layers; identical coordinates would hide one of them."""
+def test_both_layers_share_one_coordinate_per_country() -> None:
+    """GB appears in both layers, and both sit on the same point.
+
+    This used to assert the opposite. A hash-derived offset moved each layer so
+    one dot could not hide the other, but the globe merges the two layers into a
+    single dot per country before drawing (mergeCountryMarkers in
+    web/src/globe/globe.js), so there was never a second dot to reveal -- and
+    the offset was large enough to push a marker into a neighbouring country.
+    """
     markers = build_markers(sample_payload())["markers"]
     gb = [m for m in markers if m["country"] == "GB"]
     assert len(gb) == 2
-    assert (gb[0]["lat"], gb[0]["lng"]) != (gb[1]["lat"], gb[1]["lng"])
+    assert (gb[0]["lat"], gb[0]["lng"]) == (gb[1]["lat"], gb[1]["lng"])
 
 
 def test_marker_positions_are_stable_between_renders() -> None:
@@ -327,11 +333,18 @@ def test_marker_positions_are_stable_between_renders() -> None:
     assert first == second
 
 
-def test_markers_stay_near_their_country() -> None:
+def test_markers_sit_exactly_on_their_country_centroid() -> None:
+    """Not "near": exactly.
+
+    A tolerance is what allowed the bug this replaces. Belgium's centroid is
+    50.5N 4.5E and the permitted 1.8 degree offset put its marker at 49.6N 2.8E,
+    inside France, which the globe then filled instead of Belgium. Any offset at
+    all is wrong for a country narrower than the offset, and the only bound that
+    holds for every country is zero.
+    """
     for marker in build_markers(sample_payload())["markers"]:
         _, lat, lng = COUNTRY_CENTROIDS[marker["country"]]
-        assert abs(marker["lat"] - lat) <= JITTER_DEGREES + 1e-6
-        assert abs(marker["lng"] - lng) <= JITTER_DEGREES + 1e-6
+        assert (marker["lat"], marker["lng"]) == (round(lat, 3), round(lng, 3))
 
 
 def test_suppressed_people_are_reported_not_dropped() -> None:

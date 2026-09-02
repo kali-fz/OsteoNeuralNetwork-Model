@@ -13,21 +13,22 @@ person. A dot on the landing-page globe is the centroid of a country represented
 in the aggregate response, nudged by a fixed offset derived from the country
 code itself. It is a picture of a country, not a precise location.
 
-WHY THE JITTER EXISTS
----------------------
-Two reasons. The privacy boundary is upstream: the schema cannot hold a
-coordinate and the endpoint selects country-level aggregates only.
+WHY THERE IS NO JITTER
+----------------------
+There used to be a hash-derived offset of up to 1.8 degrees, for two reasons:
+to stop the signup and contributor dots landing on top of each other, and to
+make a dot read as approximate rather than as a claim about a place.
 
-1. The two layers (signups, contributors) would otherwise draw one dot exactly
-   on top of another for every country that appears in both, and the lower
-   layer would simply be invisible.
-2. A dot sitting precisely on a country's mathematical centroid reads as a
-   claim about a place. Nudging it makes the mark obviously approximate, which
-   is what it is.
+Both were wrong. The globe merges the two layers into one dot per country
+before drawing (see mergeCountryMarkers in web/src/globe/globe.js), so there
+was nothing left to separate. And 1.8 degrees is wider than a small country:
+Belgium's centroid is 50.5N 4.5E, so the offset put its marker at 49.6N 2.8E,
+which is in France. A marker in the wrong country is a far stronger false claim
+than one sitting on a centroid.
 
-The offset is derived by hashing the country code, so it is stable between
-renders. A dot that wandered on every page load would look like live tracking,
-which is the opposite of what is happening.
+Markers are therefore drawn on the centroid itself. That is already coarse --
+a whole country reduced to one point -- and the globe says so in the caption
+beneath it.
 
 COVERAGE
 --------
@@ -41,7 +42,6 @@ one-line change and needs no migration.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -205,24 +205,6 @@ COUNTRY_CENTROIDS: dict[str, tuple[str, float, float]] = {
 SIGNUP_LAYER = "signup"
 CONTRIBUTOR_LAYER = "contributor"
 
-#: Maximum jitter in degrees. Small enough that a marker stays over its own
-#: country at globe scale, large enough to separate the two layers visually.
-JITTER_DEGREES = 1.8
-
-
-def _jitter(code: str, layer: str) -> tuple[float, float]:
-    """A fixed, reproducible offset for one country on one layer.
-
-    Derived from a hash so it never changes between renders. A marker that
-    moved on every page load would imply live tracking, and nothing here is
-    tracking anybody.
-    """
-    digest = hashlib.sha256(f"{code}:{layer}".encode()).digest()
-    # Two independent bytes -> two offsets in [-1, 1], scaled to degrees.
-    lat_unit = (digest[0] / 255.0) * 2.0 - 1.0
-    lng_unit = (digest[1] / 255.0) * 2.0 - 1.0
-    return lat_unit * JITTER_DEGREES, lng_unit * JITTER_DEGREES
-
 
 def _nonnegative_int(value: Any) -> int:
     """Coerce Worker count values without letting malformed data break a page."""
@@ -256,11 +238,10 @@ def _markers_for_layer(
             unplaced += count
             continue
         name, lat, lng = entry
-        d_lat, d_lng = _jitter(code, layer)
         markers.append(
             {
-                "lat": round(lat + d_lat, 3),
-                "lng": round(lng + d_lng, 3),
+                "lat": round(lat, 3),
+                "lng": round(lng, 3),
                 "label": name,
                 "country": code,
                 "count": count,

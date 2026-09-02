@@ -13,15 +13,17 @@
  *
  * WHAT A MARKER IS ALLOWED TO BE
  * ------------------------------
- * lat, lng, label, count, layer -- and nothing else. No user id, no email, no
- * timestamp, no sub-country coordinate. The coordinates are country centroids
- * with a fixed per-country jitter applied server-side by worker/lib/geo.js.
+ * lat, lng, label, country, count, layer -- and nothing else. No user id, no
+ * email, no timestamp, no sub-country coordinate. The coordinates are country
+ * centroids exactly, computed server-side by worker/lib/geo.js; `country` is
+ * the ISO 3166-1 alpha-2 code, which is what selects the shape to fill.
  * The browser Geolocation API is never called, and no IP address exists
  * anywhere in this path to be revealed.
  */
 
 import * as geo from "d3-geo";
 import * as topojson from "topojson-client";
+import { COUNTRY_MAP_IDS } from "./country-ids.js";
 
 /**
  * Collapse the two layers into one marker per country, keeping both counts.
@@ -147,11 +149,14 @@ export function mountGlobe(root, options = {}) {
     } catch(e) { console.warn('topojson parse error', e); }
   }
 
-  // Resolve each aggregated country marker to its map polygon once. Keeping
-  // this outside draw() avoids repeating geoContains work during animation.
+  // Resolve each country marker to its map polygon once, by country code
+  // rather than by geometry. Asking which polygon contained a marker's
+  // coordinate answered a question about identity with a point-in-polygon
+  // test, and got it wrong: Belgium's marker filled France, and Singapore's
+  // fills Malaysia even from a perfect centroid. See country-ids.js.
   const activeCountries = countries.map(feature => {
-    const activity = MARKERS.filter(marker =>
-      d3geo.geoContains(feature, [marker.lng, marker.lat])
+    const activity = MARKERS.filter(
+      marker => COUNTRY_MAP_IDS[marker.country] === String(feature.id)
     );
     if (!activity.length) return null;
     return {
