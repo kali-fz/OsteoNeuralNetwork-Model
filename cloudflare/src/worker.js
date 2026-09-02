@@ -437,7 +437,7 @@ async function createUser(db, body) {
         `INSERT INTO users (user_id, email, password_hash, auth_provider, provider_subject,
                             created_at, tos_accepted_at, tos_version, is_admin, signup_country,
                             display_name, profile_picture_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         user_id,
