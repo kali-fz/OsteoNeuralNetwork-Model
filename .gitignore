@@ -119,3 +119,14 @@ node_modules/
 # site). cloudflare/.wrangler/ above covers the older onnm-community Worker.
 .wrangler/
 _worktrees/cloudflare-parity/
+
+# Real radiographs kept as regression cases for the "it looked at the joint"
+# failure. This repository is public and CONTRIBUTING.md's first red line is
+# that a radiograph is never committed, so the whole directory is ignored by
+# pattern rather than by filename -- the next film dropped in here is covered
+# without anyone having to remember to add it.
+test_radiographs/
+
+# Sweep driver logs, written beside the repo root by scripts/overnight_sweep.py.
+sweep_run.log
+sweep_err.log

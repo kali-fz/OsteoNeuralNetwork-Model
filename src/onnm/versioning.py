@@ -369,7 +369,8 @@ def render_markdown(versions: list[Version]) -> str:
         "|---|---|",
         "| major | a different model, another architecture family or task head |",
         "| minor | a deliberate recipe change (augmentation, loss, backbone) |",
-        "| patch | the same recipe with more data, which is what the daily community loop produces |",
+        "| patch | the same recipe with more data, which is what the daily community "
+        "loop produces |",
         "",
         f"**Serving now:** {_serving_line(current)}",
         "",

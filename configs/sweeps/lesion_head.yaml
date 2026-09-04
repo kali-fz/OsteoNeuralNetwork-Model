@@ -1,0 +1,93 @@
+# Night one: does the lesion head help, and at what weight?
+#
+#   .venv\Scripts\python.exe scripts\overnight_sweep.py --plan configs/sweeps/lesion_head.yaml
+#
+# NOTHING IN THIS SWEEP CHANGES THE DATA.
+# Every run trains on exactly the BTXRD split v1.0.0 used, so any difference is
+# attributable to the architecture and the loss weight and to nothing else. That
+# is why the data work (copy-paste augmentation, additional datasets) is a
+# separate night: run them together and a regression has two possible causes.
+#
+# READING THE RESULT
+# ------------------
+# `baseline` is the control and it matters more than it looks. Comparing against
+# the ledger's v1.0.0 would compare across a code change as well as a model
+# change; comparing against a run made tonight, with the same seed and the same
+# splits, isolates the head. Expect `baseline` to land near ROC 0.893 /
+# malignant recall 0.633 -- if it does not, something in this refactor moved the
+# classifier and that has to be understood before any lesion number is believed.
+#
+# A run is only a candidate if it improves localisation AND holds
+# macro_roc_auc >= 0.8934 and malignant_recall >= 0.6327. onnm.versioning will
+# refuse a promotion that regresses either by more than 0.01, so a run that wins
+# on pointing game and loses malignant recall is not a win, it is a trade nobody
+# asked for.
+
+base_overrides:
+  - configs/densenet121_3class.yaml
+  - configs/full_run.yaml
+  - configs/segmentation.yaml
+
+runs:
+  # -- the control -----------------------------------------------------------
+  - name: baseline
+    overrides:
+      model: { lesion_head: false }
+
+  # -- Block A: how hard should the localisation signal push? ----------------
+  # Spans 20x. Below 0.1 the decoder learns while the shared backbone barely
+  # moves; above 1.0 the pixel loss starts dominating the classification
+  # gradient and malignant recall is the first thing to go.
+  - name: w010
+    overrides: { loss: { lesion: { weight: 0.10 } } }
+  - name: w025
+    overrides: { loss: { lesion: { weight: 0.25 } } }
+  - name: w050
+    overrides: { loss: { lesion: { weight: 0.50 } } }
+  - name: w100
+    overrides: { loss: { lesion: { weight: 1.00 } } }
+  - name: w200
+    overrides: { loss: { lesion: { weight: 2.00 } } }
+
+  # -- Block B: resolution, the genuinely expensive axis ---------------------
+  # 384px is 2.25x the pixels of 256px. It is the change most likely to help the
+  # actual complaint: at 256px a lesion occupying 2.79% of the frame is ~1800
+  # pixels, and the decoder's 64x64 output gives it about 29 cells. At 384px the
+  # decoder emits 96x96 and the same lesion gets ~66.
+  #
+  # NOTE: whichever run wins here also becomes the SERVING resolution, because
+  # data.image_size travels inside the checkpoint. 384px is ~2.25x the container
+  # CPU per scan on half a vCPU. Measure /infer latency in a local docker run
+  # before promoting one of these.
+  - name: r384-w025
+    overrides:
+      data: { image_size: 384 }
+      loader: { batch_size: 24 }
+      loss: { lesion: { weight: 0.25 } }
+  - name: r384-w050
+    overrides:
+      data: { image_size: 384 }
+      loader: { batch_size: 24 }
+      loss: { lesion: { weight: 0.50 } }
+
+  # Heavier augmentation at the resolution most likely to win. More pixels means
+  # more capacity to memorise 244 malignant training images, so the aggressive
+  # block earns its keep here in a way it does not at 256px.
+  - name: r384-w050-aug
+    overrides:
+      data: { image_size: 384 }
+      loader: { batch_size: 24 }
+      loss: { lesion: { weight: 0.50 } }
+      augment:
+        affine_prob: 0.5
+        rotate_prob: 0.0      # RandAffine subsumes rotate+zoom; running both
+        zoom_prob: 0.0        # warps twice and blurs trabecular texture
+        histogram_prob: 0.3
+        dropout_prob: 0.0     # stays off -- see configs/segmentation.yaml
+
+  # -- Block C: the expensive one, run last so a crash costs least ------------
+  - name: r512-w050
+    overrides:
+      data: { image_size: 512 }
+      loader: { batch_size: 16 }
+      loss: { lesion: { weight: 0.50 } }

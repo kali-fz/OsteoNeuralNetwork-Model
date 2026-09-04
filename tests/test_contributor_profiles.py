@@ -181,9 +181,13 @@ def test_opting_out_clears_the_stored_name_and_photo() -> None:
     start = worker.index("async function updateContributorProfile")
     handler = worker[start : worker.index("async function listContributors", start)]
 
-    assert "const storedName = publicProfile === 0 ? null : cleanDisplayName(display_name);" in handler
     assert (
-        "const storedPicture = publicProfile === 0 ? null : cleanGooglePicture(profile_picture_url);"
+        "const storedName = publicProfile === 0 ? null : cleanDisplayName(display_name);"
+        in handler
+    )
+    assert (
+        "const storedPicture = publicProfile === 0 ? null : "
+        "cleanGooglePicture(profile_picture_url);"
         in handler
     )
 
