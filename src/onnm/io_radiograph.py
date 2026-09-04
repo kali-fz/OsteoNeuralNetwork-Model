@@ -231,6 +231,185 @@ def read_radiograph(path: str | Path, apply_lut: bool = True) -> tuple[np.ndarra
     )
 
 
+def detect_panels(
+    gray: np.ndarray,
+    *,
+    darkness: float = 0.05,
+    dark_rows: float = 0.97,
+    min_panel: float = 0.18,
+    min_gap: float = 0.01,
+    balance: float = 1.8,
+) -> dict[str, Any]:
+    """Detect a multi-panel composite -- two views pasted into one image.
+
+    WHY THIS MATTERS MORE THAN IT LOOKS
+    -----------------------------------
+    BTXRD is single-view, single-panel. A visitor who uploads an AP and a lateral
+    side by side hands the model something it has never seen, and the damage is
+    not merely novelty: ``build_transforms`` resizes the LONGEST side, so a
+    double-width composite is scaled to roughly half the linear size a single film
+    would get. A lesion occupying 10% of one frame becomes about 5% of the
+    composite -- and the black gutter between the panels lands mid-frame, which is
+    exactly where the reported heatmaps peaked.
+
+    WHAT ACTUALLY DISCRIMINATES
+    ---------------------------
+    Not "is there a dark column". Measured over 300 BTXRD films, 17% have a fully
+    dark interior column and 15-22% have one that is dark down its whole height --
+    because a single bone on a black background produces exactly that. Those are
+    background, not gutters.
+
+    A gutter is a dark stripe *bounded by real content on both sides*. So a run of
+    dark columns counts only when it
+
+      * never touches the frame edge (otherwise it is background),
+      * leaves at least ``min_panel`` of the width on each side,
+      * has mostly-bright columns on both sides, and
+      * splits the frame into two panels of comparable width (``balance``),
+        because an AP and a lateral of the same limb are roughly equal.
+
+    Measured with these defaults over 300 BTXRD films plus the four real uploads:
+    both composites detected, neither single-panel upload flagged, and 1.3% of
+    BTXRD flagged -- against 17.3% for a naive column-mean test.
+
+    ``dark_rows`` is tuned rather than guessed. The two real composites measure
+    1.000 and 0.991, so 0.97 keeps both; raising it to 0.98 loses one, and
+    lowering it to 0.90 admits enough anatomical gaps to nearly double the false
+    positives.
+
+    ADVISORY, NEVER A REJECTION
+    ---------------------------
+    A composite is still a radiograph and the model should still answer. This only
+    supports telling the visitor that one view at a time reads more reliably, so a
+    false positive costs a sentence of advice rather than a refused scan. That is
+    why 2.3% is acceptable here and would not be for the OOD gate.
+    """
+    empty = {"is_composite": False, "n_panels": 1, "split_at": [], "gutter_darkness": None}
+    if gray.ndim != 2 or gray.size == 0:
+        return empty
+
+    finite = np.isfinite(gray)
+    if not finite.any():
+        return empty
+
+    # Percentile scaling, matching the training transform, so `darkness` means
+    # the same thing on a 12-bit DICOM and an 8-bit JPEG.
+    lo, hi = np.percentile(gray[finite], (1.0, 99.0))
+    if hi <= lo:
+        return empty
+    scaled = np.clip((gray - lo) / (hi - lo), 0.0, 1.0)
+
+    width = scaled.shape[1]
+    # Per column: the share of its ROWS that are dark. A pasted gutter is dark
+    # top to bottom; an anatomical gap is interrupted by bone somewhere.
+    column_is_dark = (scaled < darkness).mean(axis=0) >= dark_rows
+
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for index in range(width + 1):
+        dark = bool(column_is_dark[index]) if index < width else False
+        if dark and start is None:
+            start = index
+        elif not dark and start is not None:
+            runs.append((start, index))
+            start = None
+
+    split_at: list[int] = []
+    for left, right in runs:
+        if left == 0 or right == width:
+            continue  # touches the frame edge: background, not a gutter
+        if (right - left) < max(int(min_gap * width), 2):
+            continue  # a thin dark line, not a gutter
+        if (left / width) < min_panel or ((width - right) / width) < min_panel:
+            continue  # one "panel" is a sliver
+        if float((~column_is_dark[:left]).mean()) < 0.5:
+            continue  # nothing solid to the left
+        if float((~column_is_dark[right:]).mean()) < 0.5:
+            continue  # nothing solid to the right
+        if not (1.0 / balance) <= (left / max(width - right, 1)) <= balance:
+            continue  # lopsided: two views of one limb are roughly equal
+        split_at.append(int((left + right) // 2))
+
+    return {
+        "is_composite": bool(split_at),
+        "n_panels": len(split_at) + 1,
+        "split_at": split_at,
+        "gutter_darkness": float(scaled.mean(axis=0).min()),
+    }
+
+
+class LoadLesionMaskd(MapTransform):
+    """Rasterise a record's lesion polygon into a mask aligned with its image.
+
+    RASTERISED HERE, NOT IN THE RECORD
+    ----------------------------------
+    It would be simpler to attach a mask array to each record in
+    ``dataset.build_records``. It would also be a ~20 GB mistake: records live in
+    ``CacheDataset.data`` for the whole run at *original* resolution, and BTXRD
+    films run to 2397x3213, so one mask per record is ~30 MB x 2675 training
+    images. Rasterising inside the chain means the cache holds the mask only
+    after it has been resized to the model input, which is 256 KB.
+
+    The mask emerges as a 2-D ``(H, W)`` float32 array in {0.0, 1.0}, matching
+    :class:`LoadRadiographd`'s output shape so the same
+    ``EnsureChannelFirstd(channel_dim="no_channel")`` handles both.
+
+    A record with no annotation file -- every normal film -- yields an all-zero
+    mask. That is not a placeholder for missing data. It is the supervision that
+    matters most here: "there is no lesion anywhere on this healthy joint" is
+    exactly the lesson the false positives on complex anatomy need, and it is
+    available for all 1879 normal images at no labelling cost.
+    """
+
+    def __init__(
+        self,
+        keys: str | list[str],
+        annotation_key: str = "annotation",
+        image_key: str = "image",
+        allow_missing_keys: bool = False,
+    ) -> None:
+        super().__init__(keys, allow_missing_keys)
+        self.annotation_key = annotation_key
+        self.image_key = image_key
+
+    def __call__(self, data: Mapping[Hashable, Any]) -> dict[Hashable, Any]:
+        import cv2
+
+        from .explainability import load_polygons
+
+        d = dict(data)
+        image = d[self.image_key]
+        # Runs before EnsureChannelFirstd, so the image is still (H, W).
+        height, width = int(image.shape[-2]), int(image.shape[-1])
+
+        # `self.keys`, not `self.key_iterator(d)`: this transform CREATES its
+        # key rather than modifying one, and key_iterator raises on a key that is
+        # not already in the dict.
+        for key in self.keys:
+            mask = np.zeros((height, width), dtype=np.float32)
+            path = d.get(self.annotation_key)
+            if path and Path(path).is_file():
+                annotation = load_polygons(path)
+                # The annotation records the dimensions it was drawn against.
+                # If they disagree with the decoded image the polygon would land
+                # somewhere arbitrary, so scale rather than assume. (Verified
+                # equal across BTXRD, but a community-exported annotation is
+                # written against a 256px preprocessed image, not the original.)
+                src_h = int(annotation["height"]) or height
+                src_w = int(annotation["width"]) or width
+                scale_y, scale_x = height / src_h, width / src_w
+                contours = []
+                for polygon in annotation["polygons"]:
+                    scaled = polygon.copy()
+                    scaled[:, 0] *= scale_x
+                    scaled[:, 1] *= scale_y
+                    contours.append(np.round(scaled).astype(np.int32))
+                if contours:
+                    cv2.fillPoly(mask, contours, 1.0)
+            d[key] = mask
+        return d
+
+
 class LoadRadiographd(MapTransform):
     """MONAI dictionary transform wrapping :func:`read_radiograph`.
 

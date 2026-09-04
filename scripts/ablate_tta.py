@@ -28,7 +28,7 @@ from onnm.calibrate import collect_logits
 from onnm.config import load_config
 from onnm.dataset import build_dataloader
 from onnm.metrics import auc_scores
-from onnm.model import build_model
+from onnm.model import build_model_for_checkpoint
 from onnm.utils import get_device, get_logger
 
 logger = get_logger("ablate_tta")
@@ -51,8 +51,11 @@ def main() -> int:
     cfg = load_config(args.config, overrides=args.override, profile=args.profile)
     device = get_device()
 
-    model = build_model(cfg).to(device)
+    # Load first, then build what the checkpoint says it is. Building from the
+    # YAML on disk and hoping it matches is what breaks the moment a checkpoint
+    # carries a lesion head -- see model.build_model_for_checkpoint.
     state = torch.load(checkpoint, map_location=device, weights_only=False)
+    model = build_model_for_checkpoint(state, cfg).to(device)
     model.load_state_dict(state["model"])
 
     loader = build_dataloader(cfg, args.split, shuffle=False)

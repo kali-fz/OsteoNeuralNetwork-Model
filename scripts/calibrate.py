@@ -28,7 +28,7 @@ from onnm.calibrate import (
 )
 from onnm.config import load_config
 from onnm.dataset import build_dataloader
-from onnm.model import build_model
+from onnm.model import build_model_for_checkpoint
 from onnm.utils import get_device, get_logger, save_json
 
 logger = get_logger("calibrate")
@@ -66,8 +66,11 @@ def main() -> int:
     cfg = load_config(args.config, overrides=args.override, profile=args.profile)
     device = get_device()
 
-    model = build_model(cfg).to(device)
+    # Load first, then build what the checkpoint says it is. Building from the
+    # YAML on disk and hoping it matches is what breaks the moment a checkpoint
+    # carries a lesion head -- see model.build_model_for_checkpoint.
     state = torch.load(checkpoint, map_location=device, weights_only=False)
+    model = build_model_for_checkpoint(state, cfg).to(device)
     model.load_state_dict(state["model"])
 
     # shuffle=False so logits line up with labels in a stable order, which makes

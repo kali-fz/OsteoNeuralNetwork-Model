@@ -23,9 +23,14 @@ import torch
 from torch import nn
 
 from .dataset import build_dataloader, build_records, class_weights
-from .losses import build_loss
+from .losses import build_lesion_loss, build_loss, lesion_weight
 from .metrics import compute_metrics, format_report
-from .model import build_model, model_summary, set_backbone_trainable
+from .model import (
+    build_model,
+    build_model_for_checkpoint,
+    model_summary,
+    set_backbone_trainable,
+)
 from .thermal import build_governor
 from .utils import (
     amp_dtype_from_str,
@@ -137,6 +142,8 @@ def run_epoch(
     grad_clip: float = 0.0,
     governor: Any = None,
     scaler: Any = None,
+    lesion_criterion: Any = None,
+    lesion_weight: float = 0.0,
 ) -> dict[str, Any]:
     """Run one pass. Training when ``optimizer`` is given, evaluation otherwise.
 
@@ -146,6 +153,16 @@ def run_epoch(
     """
     is_train = optimizer is not None
     model.train(is_train)
+
+    # The lesion head is opt-in per call, and `return_mask` is restored
+    # afterwards. Leaving it True would hand a tuple to MONAI's Grad-CAM, to
+    # `collect_logits` and to `predict`, all of which index the result as a
+    # tensor -- so the flag is scoped to exactly the loop that wants both heads.
+    want_mask = lesion_criterion is not None and lesion_weight > 0.0
+    had_mask_flag = getattr(model, "return_mask", False)
+    if want_mask:
+        model.return_mask = True
+    total_lesion_loss = 0.0
 
     use_amp = amp_dtype is not None and device.type == "cuda"
     total_loss = 0.0
@@ -159,8 +176,21 @@ def run_epoch(
 
         with torch.set_grad_enabled(is_train):
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-                logits = model(images)
-                loss = criterion(logits, labels)
+                output = model(images)
+                if want_mask:
+                    logits, mask_logits = output
+                    classification_loss = criterion(logits, labels)
+                    # float32 for the pixel loss: with ~1.7% positive pixels
+                    # after downsampling, a bf16 mean over 4096 cells loses the
+                    # signal it is meant to be measuring.
+                    lesion_loss = lesion_criterion(
+                        mask_logits.float(), batch["mask"].to(device, non_blocking=True).float()
+                    )
+                    loss = classification_loss + lesion_weight * lesion_loss
+                else:
+                    logits = output
+                    lesion_loss = None
+                    loss = criterion(logits, labels)
 
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
@@ -192,6 +222,8 @@ def run_epoch(
                     governor.step()
 
         batch_size = labels.size(0)
+        if lesion_loss is not None:
+            total_lesion_loss += float(lesion_loss.detach()) * batch_size
         total_loss += float(loss.detach()) * batch_size
         n_seen += batch_size
         # softmax in fp32: under bf16 autocast the logits carry ~3 decimal
@@ -201,10 +233,16 @@ def run_epoch(
         )
         targets.append(labels.detach().cpu().numpy())
 
+    model.return_mask = had_mask_flag
+
     y_prob = np.concatenate(probabilities)
     y_true = np.concatenate(targets)
     metrics = compute_metrics(y_true, y_prob)
     metrics["loss"] = total_loss / max(n_seen, 1)
+    if want_mask:
+        # Reported separately from the combined loss so a run log shows whether
+        # the decoder is actually learning, rather than only whether the sum fell.
+        metrics["lesion_loss"] = total_lesion_loss / max(n_seen, 1)
     metrics["_y_prob"] = y_prob
     metrics["_y_true"] = y_true
     return metrics
@@ -243,6 +281,11 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
     ).to(device)
     criterion = build_loss(cfg, alpha=alpha).to(device)
     logger.info("loss: %s", criterion)
+
+    lesion_criterion = build_lesion_loss(cfg)
+    if lesion_criterion is not None:
+        lesion_criterion = lesion_criterion.to(device)
+        logger.info("lesion loss: %s", lesion_criterion)
 
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg, len(train_loader))
@@ -292,11 +335,18 @@ def train(cfg, output_dir: Path, device: torch.device | None = None) -> dict[str
         if hasattr(criterion, "set_epoch"):
             criterion.set_epoch(epoch)
 
+        epoch_lesion_weight = (
+            lesion_weight(cfg, epoch) if lesion_criterion is not None else 0.0
+        )
         train_metrics = run_epoch(
             model, train_loader, criterion, device, optimizer, scheduler,
             amp_dtype, float(cfg.train.grad_clip), governor=governor, scaler=scaler,
+            lesion_criterion=lesion_criterion, lesion_weight=epoch_lesion_weight,
         )
-        val_metrics = run_epoch(model, val_loader, criterion, device, amp_dtype=amp_dtype)
+        val_metrics = run_epoch(
+            model, val_loader, criterion, device, amp_dtype=amp_dtype,
+            lesion_criterion=lesion_criterion, lesion_weight=epoch_lesion_weight,
+        )
 
         score = val_metrics.get(monitor, float("nan"))
         if not np.isfinite(score):
@@ -516,8 +566,11 @@ def evaluate(cfg, checkpoint: Path, split: str = "test", device: torch.device | 
     records = build_records(cfg, split=split)
     loader = build_dataloader(cfg, split, records=records, shuffle=False)
 
-    model = build_model(cfg).to(device)
+    # Load first, then build what the checkpoint says it is. Building from the
+    # YAML on disk and hoping it matches is what breaks the moment a checkpoint
+    # carries a lesion head -- see model.build_model_for_checkpoint.
     state = torch.load(checkpoint, map_location=device, weights_only=False)
+    model = build_model_for_checkpoint(state, cfg).to(device)
     model.load_state_dict(state["model"])
 
     criterion = build_loss(cfg, alpha=None).to(device)

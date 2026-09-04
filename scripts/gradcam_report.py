@@ -40,7 +40,7 @@ from onnm.explainability import (
     overlay_cam,
     pointing_game,
 )
-from onnm.model import build_model
+from onnm.model import build_model_for_checkpoint
 from onnm.utils import ensure_dir, get_device, get_logger, save_json
 
 logger = get_logger("gradcam")
@@ -66,8 +66,11 @@ def main() -> int:
     device = get_device()
     size = int(cfg.data.image_size)
 
-    model = build_model(cfg).to(device)
+    # Load first, then build what the checkpoint says it is. Building from the
+    # YAML on disk and hoping it matches is what breaks the moment a checkpoint
+    # carries a lesion head -- see model.build_model_for_checkpoint.
     state = torch.load(checkpoint, map_location=device, weights_only=False)
+    model = build_model_for_checkpoint(state, cfg).to(device)
     model.load_state_dict(state["model"])
     model.eval()
 

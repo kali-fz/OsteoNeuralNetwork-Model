@@ -14,6 +14,7 @@ non-CUDA Windows box.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import torch
@@ -90,6 +91,26 @@ def build_model(cfg, num_classes: int | None = None) -> nn.Module:
             except AttributeError:
                 logger.warning("no pretrained weights available for %s", name)
 
+        # The lesion head is opt-in, and the default False matters: with it off
+        # this function is bit-identical to what it was, so every existing
+        # checkpoint keeps loading and stage_inference_model.py's digest check
+        # keeps passing on the model currently serving.
+        if bool(cfg.model.get("lesion_head", False)):
+            from .lesion_head import build_densenet_with_lesion_head
+
+            model = build_densenet_with_lesion_head(
+                name,
+                weights,
+                num_classes,
+                dropout,
+                decoder_width=int(cfg.model.get("decoder_channels", 64)),
+            )
+            logger.info(
+                "built %s + lesion head (pretrained=%s, num_classes=%d, dropout=%.2f)",
+                name, weights is not None, num_classes, dropout,
+            )
+            return model
+
         model = getattr(tvm, factory_name)(weights=weights)
         model = _replace_head(model, head_attr, num_classes, dropout)
         logger.info(
@@ -137,6 +158,51 @@ def build_model(cfg, num_classes: int | None = None) -> nn.Module:
     )
 
 
+def build_model_for_checkpoint(state: dict[str, Any], cfg, num_classes: int | None = None):
+    """Build the architecture a checkpoint actually contains, not the one on disk.
+
+    WHY THIS EXISTS
+    ---------------
+    ``RadiographClassifier`` reads the config embedded in the checkpoint, but it
+    is the only thing that does. Six other entry points build from whatever YAML
+    they were passed and then load a state dict into it:
+
+        evaluate.py, calibrate.py, gradcam_report.py, stratified_report.py,
+        ablate_tta.py, and onnm.train.evaluate
+
+    That worked only because every checkpoint so far happened to be a 3-class
+    densenet121, which is what ``configs/base.yaml`` says anyway. The moment a
+    checkpoint carries a lesion head, those six build a bare DenseNet and die on
+    a key mismatch -- and ``daily_cycle.py`` is worse than that, because it
+    passes ``--override`` to train.py (:179) but calls calibrate.py (:196) and
+    evaluate.py (:204) with none at all, so the community loop would stop.
+
+    WHAT IT TAKES FROM WHERE
+    ------------------------
+    Only the checkpoint's ``model`` block is honoured. Everything else -- data
+    root, splits file, reports directory -- stays as the caller loaded it,
+    because a checkpoint records where *its* data lived when it was trained, and
+    that is not necessarily where yours is now.
+    """
+    from .config import Config
+
+    data = cfg.to_dict()
+    embedded = state.get("config")
+    if isinstance(embedded, dict) and isinstance(embedded.get("model"), dict):
+        data["model"] = copy.deepcopy(embedded["model"])
+    else:
+        logger.warning(
+            "checkpoint has no embedded model config; building from the supplied "
+            "config instead. If the architectures disagree, load_state_dict will "
+            "say so rather than failing quietly."
+        )
+
+    # The state dict about to be loaded replaces every parameter, so fetching
+    # ImageNet weights would buy nothing and would make this need the internet.
+    data.setdefault("model", {})["pretrained"] = False
+    return build_model(Config(data), num_classes=num_classes)
+
+
 def get_cam_layer(model: nn.Module, cfg) -> str:
     """Resolve the Grad-CAM target layer, validating it exists on the model."""
     configured = str(cfg.explain.get("target_layer", "") or "")
@@ -163,11 +229,23 @@ def count_parameters(model: nn.Module) -> dict[str, int]:
 
 
 def head_parameters(model: nn.Module, cfg) -> list[nn.Parameter]:
-    """The classification head's parameters, for freeze/unfreeze bookkeeping."""
+    """The head parameters, for freeze/unfreeze bookkeeping.
+
+    Plural "heads" when a lesion decoder is attached. The decoder is randomly
+    initialised exactly like the classifier, so it belongs on the head side of
+    the freeze boundary; grouping it with the pretrained backbone would freeze a
+    head that has learnt nothing yet. That failure would also be quiet --
+    ``set_backbone_trainable`` warns and continues rather than raising -- so the
+    run record would describe a freeze that never happened.
+    """
     name = str(cfg.model.name).lower()
     entry = TORCHVISION_BACKBONES.get(name)
     if entry is not None:
-        return list(getattr(model, entry[2]).parameters())
+        parameters = list(getattr(model, entry[2]).parameters())
+        seg_head = getattr(model, "seg_head", None)
+        if seg_head is not None:
+            parameters += list(seg_head.parameters())
+        return parameters
     if hasattr(model, "get_classifier"):  # timm convention
         return list(model.get_classifier().parameters())
     if hasattr(model, "class_layers"):  # MONAI DenseNet convention

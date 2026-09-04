@@ -47,6 +47,7 @@ import numpy as np
 
 from community import encode_image_for_sharing
 from onnm.inference import InferenceResult, RadiographClassifier, render_overlay
+from onnm.io_radiograph import detect_panels
 from onnm.ood import DEFAULT_CONFIDENCE_FLOOR, DEFAULT_ENTROPY_GATE, validate_payload
 
 #: Grad-CAM overlay defaults, matching the initial widget values in
@@ -57,6 +58,19 @@ from onnm.ood import DEFAULT_CONFIDENCE_FLOOR, DEFAULT_ENTROPY_GATE, validate_pa
 DEFAULT_OVERLAY_ALPHA = 0.40
 DEFAULT_OVERLAY_COLORMAP = "jet"
 DEFAULT_OVERLAY_FLOOR = 0.0
+
+#: Fade-in floor for a LESION-HEAD map, kept separate from the Grad-CAM floor
+#: above rather than replacing it -- so every archived Grad-CAM screenshot still
+#: reproduces exactly, which is what the note above asks for.
+#:
+#: A separate constant is necessary, not tidiness. ``compute_cam`` rescales every
+#: Grad-CAM to put its minimum at 0 and maximum at 1, so a floor of 0.0 is
+#: harmless there. A sigmoid has no such guarantee: a confident "nothing here"
+#: map sits near 0.02 everywhere, and ``render_overlay`` gives every pixel above
+#: the floor a non-zero alpha -- so at 0.0 a clean normal film would be painted
+#: deep blue from edge to edge, which reads as evidence rather than as the bottom
+#: of a colour scale.
+LESION_MAP_FLOOR = 0.35
 
 
 def _png_b64(array: np.ndarray) -> tuple[str, int]:
@@ -215,21 +229,54 @@ class ScanService:
             "ood": {"is_radiograph": True, "checks": []},
         }
 
+        # Advisories are notes about the INPUT, not about the finding. They run
+        # after the OOD gate, so a rejection still returns with no `prediction`
+        # key at all, and they never change the verdict -- a composite is still a
+        # radiograph and still gets an answer.
+        #
+        # Shipped as a list so the browser can render nothing at all when it is
+        # empty, and so a cached older frontend that ignores the key still works.
+        advisories: list[dict[str, Any]] = []
+        panels = detect_panels(result.original_image)
+        if panels["is_composite"]:
+            advisories.append(
+                {
+                    "code": "multi_panel",
+                    "message": (
+                        f"This looks like {panels['n_panels']} views combined into one "
+                        "image. The model was trained on single views, and combining "
+                        "them shrinks each one by about half, which makes a small "
+                        "lesion harder to see. Uploading each view on its own will "
+                        "give a more reliable result."
+                    ),
+                }
+            )
+        if advisories:
+            response["advisories"] = advisories
+
         if result.heatmap is not None:
+            is_lesion_map = result.heatmap_kind == "lesion_map"
+            floor = LESION_MAP_FLOOR if is_lesion_map else DEFAULT_OVERLAY_FLOOR
             overlay = render_overlay(
                 result.preprocessed_image,
                 result.heatmap,
                 alpha=DEFAULT_OVERLAY_ALPHA,
                 colormap=DEFAULT_OVERLAY_COLORMAP,
-                threshold=DEFAULT_OVERLAY_FLOOR,
+                threshold=floor,
             )
             overlay_b64, overlay_bytes = _png_b64(overlay)
             response["overlay"] = {
                 "png_b64": overlay_b64,
                 "bytes": overlay_bytes,
+                # `kind` tells the browser which caption is true. A lesion map is
+                # class-agnostic -- "where is the lesion" -- so captioning it as
+                # taken "against" a class would describe a Grad-CAM property it
+                # does not have. cam_class stays None for it.
+                "kind": result.heatmap_kind or "gradcam",
                 "cam_class": result.cam_class,
                 "alpha": DEFAULT_OVERLAY_ALPHA,
                 "colormap": DEFAULT_OVERLAY_COLORMAP,
+                "floor": floor,
             }
 
         if want_preprocessed:

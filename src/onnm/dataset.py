@@ -40,7 +40,7 @@ from monai.transforms import (
 
 from . import CLASS_NAMES
 from .config import REPO_ROOT, Config, ConfigError
-from .io_radiograph import LoadRadiographd, RadiographReadError
+from .io_radiograph import LoadLesionMaskd, LoadRadiographd, RadiographReadError
 from .utils import get_logger, load_json
 
 logger = get_logger(__name__)
@@ -236,6 +236,7 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
     """
     data_root = cfg.resolve_path("paths.data_root")
     images_dir = data_root / cfg.paths.images_dirname
+    annotations_dir = data_root / cfg.paths.annotations_dirname
 
     if not images_dir.is_dir():
         raise FileNotFoundError(f"{images_dir} not found; check paths.images_dirname")
@@ -271,12 +272,19 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
             n_missing += 1
             continue
 
+        # The annotation path is recorded, never the rasterised mask. Records
+        # live in CacheDataset.data for the whole run at original resolution, so
+        # attaching a ~30 MB array per row would cost ~20 GB on the train split;
+        # LoadLesionMaskd rasterises from this path inside the chain instead.
+        # A path that does not exist is normal and expected -- it means a normal
+        # film, which trains against an all-zero mask.
         records.append(
             {
                 "image": str(path),
                 "label": int(row["_label"]),
                 "image_id": Path(raw_id).stem,
                 "patient_id": str(row["_group"]),
+                "annotation": str(annotations_dir / f"{Path(raw_id).stem}.json"),
             }
         )
 
@@ -306,8 +314,16 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
             if not image.is_file() or not 0 <= label < len(CLASS_NAMES):
                 n_manifest_skipped += 1
                 continue
+            # `annotation` is carried even though no manifest writes one yet, so
+            # every record in a batch has the same keys -- list_data_collate
+            # requires that. An empty path rasterises to an all-zero mask, which
+            # is the right target for the external normal controls this manifest
+            # was built for. Community rows with a reviewer-drawn box will fill
+            # it in once the review console exports regions.
+            annotation = str(row["annotation"]) if "annotation" in controls.columns else ""
             records.append({"image": str(image), "label": label, "image_id": str(row["image_id"]),
-                            "patient_id": str(row["patient_id"]), "_split": str(row["split"])})
+                            "patient_id": str(row["patient_id"]), "_split": str(row["split"]),
+                            "annotation": annotation})
         if n_manifest_skipped:
             logger.warning(
                 "%d manifest rows skipped: file missing, or label outside 0..%d",
@@ -330,6 +346,14 @@ def build_records(cfg: Config, split: str | None = None) -> list[dict[str, Any]]
 
     if split is not None:
         records = filter_by_split(records, cfg, split)
+        # `_split` has now served its only purpose. It exists on manifest rows
+        # and not on BTXRD rows, and list_data_collate requires every record in
+        # a batch to carry the same keys -- so leaving it here raises
+        # KeyError('_split') on the first training step, after the whole cache
+        # has been built. Stripped only once the filter has consumed it, so a
+        # caller that filters separately still sees it.
+        for record in records:
+            record.pop("_split", None)
 
     counts = np.bincount([r["label"] for r in records], minlength=len(CLASS_NAMES))
     logger.info(
@@ -446,7 +470,9 @@ def _foreground_selector(threshold: float):
     return select
 
 
-def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose:
+def build_transforms(
+    cfg: Config, mode: str, keep_meta: bool = False, with_mask: bool = False
+) -> Compose:
     """Assemble the MONAI transform chain for one mode.
 
     Args:
@@ -469,12 +495,47 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
     size = int(data.image_size)
     lower, upper = (float(v) for v in data.intensity_percentiles)
 
+    # -- mask threading ----------------------------------------------------
+    # `geo` are the keys every GEOMETRIC transform must move together: warp the
+    # image without warping the mask and the supervision points at the wrong
+    # pixels, silently, with nothing raising. `interp` pairs each key with its
+    # own interpolation, because a scalar mode="bilinear" applied to a binary
+    # mask produces ~41 distinct grey levels -- a soft target the Dice loss will
+    # happily optimise towards while the model learns blurred lesion edges.
+    #
+    # Intensity transforms deliberately keep taking ["image"] alone. Two are
+    # worth naming because they fail without erroring: RepeatChanneld would make
+    # the mask (3, H, W) and Dice would broadcast against (1, H, W) without
+    # complaint, and NormalizeIntensityd would map {0, 1} to {-2.1, 2.2} using
+    # the ImageNet statistics, turning the target into nonsense that still
+    # trains.
+    geo = ["image", "mask"] if with_mask else ["image"]
+
+    def interp(image_mode: str):
+        return [image_mode, "nearest"] if with_mask else image_mode
+
+    if with_mask and bool(data.get("crop_foreground", False)):
+        raise ConfigError(
+            "data.crop_foreground cannot be combined with lesion-mask supervision: "
+            "CropForegroundd picks its crop box from the image alone (source_key="
+            "'image'), and the same box has to be applied to the mask or the two "
+            "stop describing the same pixels. explainability.evaluate_localisation "
+            "already refuses to SCORE through this geometry; nothing was stopping a "
+            "run from TRAINING on a mis-registered mask, so this does."
+        )
+
     # -- deterministic prefix: cached by CacheDataset ----------------------
-    stages: list[Any] = [
-        LoadRadiographd(keys=["image"]),
+    stages: list[Any] = [LoadRadiographd(keys=["image"])]
+    if with_mask:
+        # Placed here deliberately: the image is still (H, W) and no geometry has
+        # been applied, so the polygon is rasterised in the very coordinate space
+        # it was drawn in. Every resize, pad, flip and rotation after this point
+        # moves image and mask together.
+        stages.append(LoadLesionMaskd(keys=["mask"]))
+    stages += [
         # "no_channel" is explicit on purpose: MONAI's inference guesses wrong
         # on square images, where H, W and a channel axis are indistinguishable.
-        EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+        EnsureChannelFirstd(keys=geo, channel_dim="no_channel"),
         # Percentile scaling rather than min-max: radiographs carry collimation
         # borders and burned-in L/R markers at the extremes of the histogram,
         # and a single saturated marker pixel would otherwise compress the
@@ -503,8 +564,8 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
         # Resize the LONGEST side, then pad -- preserving aspect ratio. Lesion
         # margin and periosteal reaction are morphological signs; squashing a
         # long-bone film into a square deforms exactly the cues that matter.
-        Resized(keys=["image"], spatial_size=size, size_mode="longest", mode="bilinear"),
-        ResizeWithPadOrCropd(keys=["image"], spatial_size=(size, size), mode="constant"),
+        Resized(keys=geo, spatial_size=size, size_mode="longest", mode=interp("bilinear")),
+        ResizeWithPadOrCropd(keys=geo, spatial_size=(size, size), mode="constant"),
     ]
 
     # -- stochastic suffix: re-run every epoch -----------------------------
@@ -515,21 +576,21 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
             # so a mirror is a real radiograph. A VERTICAL flip is not: an
             # upside-down film never occurs, and training on one teaches the
             # model to be invariant to something that carries real information.
-            RandFlipd(keys=["image"], spatial_axis=1, prob=float(aug.hflip_prob)),
+            RandFlipd(keys=geo, spatial_axis=1, prob=float(aug.hflip_prob)),
             RandRotated(
-                keys=["image"],
+                keys=geo,
                 range_x=float(np.deg2rad(float(aug.rotate_degrees))),
                 prob=float(aug.rotate_prob),
                 keep_size=True,
-                mode="bilinear",
+                mode=interp("bilinear"),
                 padding_mode="zeros",
             ),
             RandZoomd(
-                keys=["image"],
+                keys=geo,
                 min_zoom=float(aug.zoom_range[0]),
                 max_zoom=float(aug.zoom_range[1]),
                 prob=float(aug.zoom_prob),
-                mode="bilinear",
+                mode=interp("bilinear"),
                 keep_size=True,
             ),
             # Stands in for exposure and processing differences between the
@@ -558,13 +619,13 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
         if float(aug.get("affine_prob", 0.0)) > 0:
             stages.append(
                 RandAffined(
-                    keys=["image"],
+                    keys=geo,
                     prob=float(aug.affine_prob),
                     rotate_range=(float(np.deg2rad(float(aug.get("affine_degrees", 20.0)))),),
                     shear_range=(float(aug.get("affine_shear", 0.05)),),
                     translate_range=(float(aug.get("affine_translate_px", 16.0)),) * 2,
                     scale_range=(tuple(float(v) for v in aug.get("affine_scale", [-0.15, 0.15])),),
-                    mode="bilinear",
+                    mode=interp("bilinear"),
                     padding_mode="zeros",
                     cache_grid=False,
                 )
@@ -619,6 +680,17 @@ def build_transforms(cfg: Config, mode: str, keep_meta: bool = False) -> Compose
         EnsureTyped(keys=["image"], dtype=torch.float32, track_meta=False),
         EnsureTyped(keys=["label"], dtype=torch.long, track_meta=False),
     ]
+    if with_mask:
+        # track_meta=False for the same reason as the image: a MetaTensor riding
+        # into list_data_collate turns a batch into something the loss cannot use.
+        stages.append(EnsureTyped(keys=["mask"], dtype=torch.float32, track_meta=False))
+        # The annotation path has done its job by now and must not reach
+        # collation. list_data_collate batches every key it finds, and external
+        # controls from controls_manifest.csv carry no annotation, so leaving it
+        # in makes the batch ragged and raises KeyError on the first step of
+        # epoch 1 -- after the full cache has been built, which is an expensive
+        # place to discover it.
+        stages.append(DeleteItemsd(keys=["annotation"]))
     if not keep_meta:
         stages.append(DeleteItemsd(keys=["image_meta_dict"]))
 
@@ -698,7 +770,14 @@ def build_dataset(
 ):
     """Build the dataset for one mode, caching when configured to."""
     records = records if records is not None else build_records(cfg, split=mode)
-    transform = build_transforms(cfg, mode, keep_meta=keep_meta)
+    # Derived from the config rather than passed in, so enabling model.lesion_head
+    # is the single switch that turns mask supervision on. Note this is
+    # deliberately NOT done inside build_transforms: onnm.inference and
+    # explainability.evaluate_localisation call that directly, and neither wants
+    # a mask key -- the checkpoint they load has lesion_head set, but they are
+    # predicting, not training.
+    with_mask = bool(cfg.model.get("lesion_head", False))
+    transform = build_transforms(cfg, mode, keep_meta=keep_meta, with_mask=with_mask)
     cache_rate = float(cfg.loader.cache_rate)
 
     if cache_rate > 0:

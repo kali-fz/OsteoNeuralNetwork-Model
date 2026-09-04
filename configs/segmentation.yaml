@@ -1,0 +1,80 @@
+# Lesion-head override: the model is told WHERE the lesion is, not only what it is.
+#
+#   python scripts/train.py --override configs/densenet121_3class.yaml \
+#                           --override configs/full_run.yaml \
+#                           --override configs/segmentation.yaml --tag seg-w050
+#
+# Nothing in base.yaml is edited, so every existing recipe still reproduces
+# byte-identically and the currently serving v1.0.0 checkpoint keeps loading.
+#
+# WHAT THIS CHANGES, AND WHY
+# --------------------------
+# BTXRD ships a segmentation polygon for all 1867 of its tumour images. Until now
+# they were used only to SCORE the Grad-CAM heatmap -- which measured 0.0936
+# pointing-game accuracy, i.e. roughly chance, with `cam_degenerate: true`. No
+# training loss had ever seen them, so nothing ever told the classifier that a
+# joint is not a lesion.
+#
+# The head added here is trained on those polygons. The point is not a nicer
+# picture: the decoder and the classifier share one backbone, so the features
+# must now satisfy "name the class" AND "outline the lesion" simultaneously, and
+# they cannot do the second by keying on joint texture.
+
+model:
+  lesion_head: true
+  # Decoder width. The map is emitted at 64x64 -- 64x the spatial detail of the
+  # 8x8 grid Grad-CAM reads from features.denseblock4, and 16x cheaper than
+  # decoding to a full 256x256. That ratio matters because the serving container
+  # is a Cloudflare standard-1: half a vCPU, 4 GiB, OMP_NUM_THREADS=1.
+  decoder_channels: 64
+
+loss:
+  lesion:
+    # Multiplier on the pixel loss in `total = classification + weight * lesion`.
+    # This is THE knob for the trade this whole change is making, which is why
+    # the overnight sweep varies it and nothing else:
+    #   too low  -> the decoder learns, the backbone does not move, and the
+    #               classifier's joint shortcut survives intact
+    #   too high -> localisation improves while malignant_recall regresses, and
+    #               the promotion gate in onnm.versioning correctly refuses it
+    weight: 0.5
+
+    # Positive-class weight for the pixel BCE. Measured, not guessed: lesion
+    # polygons cover a mean 2.79% of the frame (median 1.56%) across 400 BTXRD
+    # annotations, and (1 - 0.0279) / 0.0279 = 35. Without it the head converges
+    # to predicting zero everywhere -- correct on 97% of pixels, useless.
+    pos_weight: 35.0
+
+    # Dice alongside BCE. BCE sums per pixel, so a small lesion contributes
+    # little; Dice scores overlap as a ratio and treats it as seriously as a
+    # large one. Skipped on normal films, where the target is empty and Dice
+    # would be 0/0 -- see LesionSupervisionLoss for why an epsilon guard there
+    # would quietly reward predicting nothing.
+    dice: true
+
+    # Linear ramp on `weight` over the first epochs. A freshly initialised
+    # decoder emits noise, and weighting noise at full strength competes with
+    # the classification gradient for the shared backbone. Same reasoning as the
+    # OHEM warmup in base.yaml, same remedy.
+    warmup_epochs: 3
+
+data:
+  # Asserted rather than assumed. CropForegroundd chooses its crop box from the
+  # image alone (source_key="image"), so the mask would keep the old geometry
+  # while the image moved -- silently training the model to find lesions in the
+  # wrong place, which is the exact failure this config exists to fix.
+  # build_transforms raises rather than allowing the combination.
+  crop_foreground: false
+
+augment:
+  # Coarse dropout is turned OFF for lesion-head runs, and the choice is not
+  # obvious in either direction:
+  #   mask included in the dropout -> a hole punched over a lesion teaches "an
+  #     occluded lesion is not a lesion", a false-negative lesson and the worst
+  #     error class this project has
+  #   mask excluded                -> the same hole asks the model to predict a
+  #     lesion from pixels that are no longer there
+  # Neither is acceptable, so it is disabled until the loss can be masked inside
+  # the hole. configs/overnight.yaml sets dropout_prob: 0.5, so an override
+  # order that puts overnight.yaml AFTER this file would silently re-enable it.
+  dropout_prob: 0.0

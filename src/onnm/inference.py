@@ -100,6 +100,11 @@ class InferenceResult:
     original_image: np.ndarray                  # (H, W) float, as decoded
     heatmap: np.ndarray | None = None           # (S, S) float in [0, 1]
     cam_class: str | None = None                # class the CAM was taken against
+    #: "lesion_map" (supervised, class-agnostic) or "gradcam" (attribution), or
+    #: None when no heatmap could be produced. The UI caption switches on this;
+    #: without it a lesion map would be captioned as being "taken against" a
+    #: class, which is a Grad-CAM concept that does not apply to it.
+    heatmap_kind: str | None = None
 
     temperature: float = 1.0                    # 1.0 = uncalibrated logits
     calibrated: bool = False                    # a fitted calibration.json was used
@@ -181,6 +186,7 @@ class InferenceResult:
             "top_class": self.top_class,
             "decision_threshold": self.threshold,
             "cam_class": self.cam_class,
+            "heatmap_kind": self.heatmap_kind,
             "temperature": round(self.temperature, 4),
             "calibrated": self.calibrated,
             "max_probability": round(self.max_probability, 6),
@@ -411,7 +417,30 @@ class RadiographClassifier:
         self.model.eval()
 
         self.transform = build_transforms(self.cfg, "test", keep_meta=True)
-        self.cam = build_cam(self.model, self.cfg)
+
+        # A heatmap is a decision aid. Refusing to classify because the
+        # explanation could not be built is the wrong trade, and until now it was
+        # the behaviour: build_cam -> get_cam_layer RAISES on an unknown layer
+        # name, this constructor is called by ScanService, and inference/main.py
+        # constructs ScanService AT IMPORT. So one renamed module took uvicorn
+        # down before it bound a port, and with max_instances: 1 in
+        # wrangler.jsonc that is the whole site's /api/scan, for everyone.
+        try:
+            self.cam = build_cam(self.model, self.cfg)
+        except Exception as exc:  # noqa: BLE001 - any CAM failure is non-fatal
+            self.cam = None
+            logger.error(
+                "Grad-CAM unavailable (%s). Predictions will be served WITHOUT a "
+                "heatmap. Check explain.target_layer against this checkpoint.", exc,
+            )
+
+        # Set when the checkpoint carries a trained lesion decoder. Its map is
+        # preferred over Grad-CAM: it is a supervised output at 64x64 rather than
+        # an 8x8 after-the-fact gradient attribution, which is why the CAM could
+        # never resolve anything smaller than a joint.
+        self.has_lesion_head = hasattr(self.model, "seg_head")
+        if self.has_lesion_head:
+            logger.info("checkpoint carries a lesion head; it supplies the heatmap")
 
         # calibration.json is written next to the checkpoint by
         # scripts/calibrate.py. Absent, the model runs uncalibrated at a naive
@@ -622,8 +651,22 @@ class RadiographClassifier:
         preprocessed = np.asarray(sample["image"][0].detach().cpu(), dtype=np.float32)
 
         with self._lock:
+            lesion_map = None
             with torch.no_grad():
-                logits = self.model(tensor).float()
+                if self.has_lesion_head:
+                    # One forward pass yields both heads. `return_mask` is
+                    # restored immediately so nothing else in this process --
+                    # MONAI's Grad-CAM especially -- receives a tuple where it
+                    # indexes a tensor.
+                    self.model.return_mask = True
+                    try:
+                        raw_logits, mask_logits = self.model(tensor)
+                    finally:
+                        self.model.return_mask = False
+                    logits = raw_logits.float()
+                    lesion_map = torch.sigmoid(mask_logits.float())[0, 0].cpu().numpy()
+                else:
+                    logits = self.model(tensor).float()
                 # Temperature scaling is monotone, so this cannot move the
                 # argmax -- the predicted class is identical either way. What
                 # changes is the confidence number, which is the one a reader
@@ -634,13 +677,22 @@ class RadiographClassifier:
 
             heatmap = None
             cam_name = None
-            if with_heatmap:
+            heatmap_kind = None
+            if with_heatmap and lesion_map is not None:
+                # The lesion map is class-agnostic: it answers "where is the
+                # lesion", not "what moved the benign logit". That removes the
+                # caption that read "Heat map taken against the Benign class"
+                # under a Normal verdict, which explained nothing to anyone.
+                heatmap = _resize_map(lesion_map, preprocessed.shape)
+                heatmap_kind = "lesion_map"
+            elif with_heatmap and self.cam is not None:
                 index = self.resolve_cam_index(probabilities, cam_class)
                 cam_name = self.class_names[index]
                 try:
                     # Deliberately outside no_grad: Grad-CAM needs the backward
                     # pass through the hooked convolutional block.
                     heatmap = compute_cam(self.cam, tensor, index)
+                    heatmap_kind = "gradcam"
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Grad-CAM failed (%s); returning prediction only", exc)
                     cam_name = None
@@ -695,6 +747,7 @@ class RadiographClassifier:
             original_image=original,
             heatmap=heatmap,
             cam_class=cam_name,
+            heatmap_kind=heatmap_kind,
             source_meta=source_meta,
             elapsed_ms=1000.0 * (time.perf_counter() - started),
             device=str(self.device),
@@ -714,6 +767,25 @@ def to_display_uint8(image: np.ndarray) -> np.ndarray:
     lo, hi = float(np.nanmin(array)), float(np.nanmax(array))
     scaled = (array - lo) / (hi - lo) if hi > lo else np.zeros_like(array)
     return (np.clip(scaled, 0, 1) * 255).astype(np.uint8)
+
+
+def _resize_map(array: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """Bring a decoder output up to the display grid.
+
+    The lesion head predicts at 64x64 to stay cheap on half a vCPU, while
+    ``render_overlay`` blends against the 256px model input and does no resizing
+    of its own -- so without this the two shapes simply fail to broadcast.
+
+    Bilinear rather than nearest: this is for display, and a nearest-neighbour
+    upsample of a 64x64 map draws 4px blocks that read as structure the model
+    never predicted.
+    """
+    target = (int(shape[0]), int(shape[1]))
+    if array.shape == target:
+        return array
+    import cv2
+
+    return cv2.resize(array, (target[1], target[0]), interpolation=cv2.INTER_LINEAR)
 
 
 def render_overlay(

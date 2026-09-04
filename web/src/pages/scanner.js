@@ -70,6 +70,54 @@ function renderRejection(result) {
     </div>`;
 }
 
+/**
+ * What the picture actually is, in the two cases the server can send.
+ *
+ * They are different claims and must not share a caption. Grad-CAM is an
+ * attribution: it answers "which regions moved the score for class X", which is
+ * why it has a class at all -- and why, with cam_class "auto", the old caption
+ * could read "taken against the Benign class" underneath a Normal verdict and
+ * leave a reader none the wiser.
+ *
+ * A lesion map is a trained, class-agnostic output: "this is where the lesion
+ * is". It has no class to be taken against, so saying so would be false.
+ *
+ * Defaults to the Grad-CAM wording when `kind` is absent, so a browser holding
+ * cached JS against a newer API still renders something true.
+ */
+/**
+ * Notes about the uploaded IMAGE, as opposed to the finding.
+ *
+ * Kept above the verdict deliberately: "this is two views in one picture" changes
+ * how the reader should weigh everything below it, so it is not a footnote. It
+ * never alters the verdict itself -- the scan still ran and still answered.
+ *
+ * Defensive about the shape because an older cached frontend may be talking to a
+ * newer API, or the reverse; an absent `advisories` key simply renders nothing.
+ */
+function advisoryNotes(advisories) {
+  if (!Array.isArray(advisories) || advisories.length === 0) return "";
+  return advisories
+    .map((a) => `<p class="onnm-note">${escapeHtml(String(a && a.message ? a.message : ""))}</p>`)
+    .join("");
+}
+
+function overlayCaption(overlay) {
+  if (overlay.kind === "lesion_map") {
+    return "Where the model located a lesion. This is a trained output, not an "
+      + "after-the-fact estimate of what moved the answer.";
+  }
+  const name = CLASS_LABELS[overlay.cam_class] || overlay.cam_class || "predicted";
+  return "Heat map taken against the <strong>" + escapeHtml(name)
+    + "</strong> class. Warmer regions moved the answer more.";
+}
+
+function overlayAlt(overlay) {
+  return overlay.kind === "lesion_map"
+    ? "Predicted lesion location over the radiograph"
+    : "Grad-CAM heat map over the radiograph";
+}
+
 function renderResult(result, threshold) {
   const view = withThreshold(result, threshold, {
     confidenceFloor: result.confidence_floor,
@@ -83,6 +131,8 @@ function renderResult(result, threshold) {
         <div class="onnm-verdict-label">${escapeHtml(view.label)}</div>
         <div class="onnm-verdict-confidence">${view.confidence.toFixed(1)}% confidence</div>
       </div>
+
+      ${advisoryNotes(result.advisories)}
 
       ${
         view.inconclusive
@@ -100,13 +150,9 @@ function renderResult(result, threshold) {
           <h4>Where the model looked</h4>
           ${
             result.overlay
-              ? `<img class="onnm-overlay" alt="Grad-CAM heat map over the radiograph"
+              ? `<img class="onnm-overlay" alt="${escapeHtml(overlayAlt(result.overlay))}"
                       src="data:image/png;base64,${result.overlay.png_b64}" />
-                 <p class="onnm-caption">
-                   Heat map taken against the
-                   <strong>${escapeHtml(CLASS_LABELS[result.overlay.cam_class] || result.overlay.cam_class || "predicted")}</strong>
-                   class. Warmer regions moved the answer more.
-                 </p>`
+                 <p class="onnm-caption">${overlayCaption(result.overlay)}</p>`
               : `<p class="onnm-muted">No heat map was produced for this image.</p>`
           }
         </div>

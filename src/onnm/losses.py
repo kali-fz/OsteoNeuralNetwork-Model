@@ -222,6 +222,114 @@ class HardNegativeMiningLoss(nn.Module):
         )
 
 
+class LesionSupervisionLoss(nn.Module):
+    """Pixel supervision for the lesion head: weighted BCE, plus Dice where there
+    is something to overlap with.
+
+    WHY BOTH TERMS
+    --------------
+    Lesion pixels are a measured 2.79% of the frame on average (median 1.56%,
+    over 400 BTXRD polygons). Unweighted BCE on that distribution has an obvious
+    minimum -- predict zero everywhere, be right 97% of the time, and never
+    localise anything. ``pos_weight`` removes that shortcut; the default 35 is
+    ``(1 - 0.0279) / 0.0279``, i.e. derived from the data rather than guessed.
+
+    Dice then supplies the gradient BCE is worst at: it scores overlap as a
+    ratio, so it cares about a small lesion as much as a large one, where BCE's
+    per-pixel sum does not.
+
+    WHY DICE IS SKIPPED ON NORMAL FILMS
+    -----------------------------------
+    On an all-zero target Dice is 0/0. Guarding it with an epsilon technically
+    "works" and quietly rewards predicting nothing anywhere, which would undo
+    ``pos_weight``. So Dice runs only on images that contain a lesion, and the
+    normals are supervised by BCE alone -- which is the correct division of
+    labour: "there is no lesion on this healthy joint" is a per-pixel statement,
+    not an overlap one.
+
+    DOWNSAMPLING THE TARGET
+    -----------------------
+    The head predicts at 64x64 and the mask arrives at the model input size, so
+    the target is reduced with **max** pooling rather than area averaging. Area
+    averaging followed by a 0.5 threshold erases a lesion that is small relative
+    to one output cell; max pooling keeps it and slightly dilates it instead.
+    That is the right direction for the error to run in a cancer detector.
+    """
+
+    def __init__(self, pos_weight: float = 35.0, dice: bool = True, eps: float = 1.0) -> None:
+        super().__init__()
+        if pos_weight <= 0:
+            raise ValueError(f"pos_weight must be > 0, got {pos_weight}")
+        self.register_buffer("pos_weight", torch.tensor(float(pos_weight)))
+        self.dice = bool(dice)
+        self.eps = float(eps)
+
+    def forward(self, mask_logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if target.ndim == 3:  # (B, H, W) -> (B, 1, H, W)
+            target = target.unsqueeze(1)
+        target = target.to(mask_logits.dtype)
+
+        if target.shape[-2:] != mask_logits.shape[-2:]:
+            target = F.adaptive_max_pool2d(target, mask_logits.shape[-2:])
+
+        loss = F.binary_cross_entropy_with_logits(
+            mask_logits, target, pos_weight=self.pos_weight.to(mask_logits.dtype)
+        )
+
+        if not self.dice:
+            return loss
+
+        has_lesion = target.flatten(1).amax(dim=1) > 0.5
+        if not bool(has_lesion.any()):
+            return loss
+
+        probability = torch.sigmoid(mask_logits[has_lesion]).flatten(1)
+        truth = target[has_lesion].flatten(1)
+        intersection = (probability * truth).sum(dim=1)
+        union = probability.sum(dim=1) + truth.sum(dim=1)
+        dice_loss = 1.0 - ((2.0 * intersection + self.eps) / (union + self.eps))
+        return loss + dice_loss.mean()
+
+    def extra_repr(self) -> str:
+        return f"pos_weight={float(self.pos_weight):.1f}, dice={self.dice}, eps={self.eps}"
+
+
+def build_lesion_loss(cfg) -> LesionSupervisionLoss | None:
+    """Construct the lesion-map loss, or ``None`` when the head is disabled.
+
+    Deliberately separate from :func:`build_loss` rather than folded into it.
+    ``build_loss`` decides the *classification* objective and carries the
+    sampler-versus-alpha exclusivity that ``train.build_sampler`` enforces; the
+    two are combined by the training loop, where the weighting between them is
+    visible, rather than hidden inside a loss that also has to reason about class
+    imbalance.
+    """
+    if not bool(cfg.model.get("lesion_head", False)):
+        return None
+    lesion = cfg.loss.get("lesion", None) or {}
+    return LesionSupervisionLoss(
+        pos_weight=float(lesion.get("pos_weight", 35.0)),
+        dice=bool(lesion.get("dice", True)),
+    )
+
+
+def lesion_weight(cfg, epoch: int) -> float:
+    """The multiplier on the lesion loss at ``epoch``, with a linear warm-up.
+
+    The decoder starts random, so its output for the first epochs is noise.
+    Weighting noise at full strength competes with the classification gradient
+    for the shared backbone and destabilises both -- the same reasoning that
+    gives :class:`HardNegativeMiningLoss` its ``warmup_epochs``, and the same
+    remedy.
+    """
+    lesion = cfg.loss.get("lesion", None) or {}
+    target = float(lesion.get("weight", 0.5))
+    warmup = int(lesion.get("warmup_epochs", 3))
+    if warmup <= 0 or epoch >= warmup:
+        return target
+    return target * (epoch + 1) / (warmup + 1)
+
+
 def resolve_alpha(cfg, alpha: torch.Tensor | None) -> torch.Tensor | None:
     """Decide the final per-class weight vector from config and computed weights.
 
