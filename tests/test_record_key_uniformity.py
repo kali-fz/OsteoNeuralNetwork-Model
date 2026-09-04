@@ -28,11 +28,61 @@ just as quiet.
 
 from __future__ import annotations
 
+import json
+import shutil
+
 import pandas as pd
 import pytest
 from monai.data.utils import list_data_collate
 
 from onnm.dataset import build_dataloader, build_records
+
+
+@pytest.fixture
+def btxrd_root(tmp_path, jpeg_image, cfg, monkeypatch):
+    """A three-row stand-in for BTXRD, so the FIRST branch exists too.
+
+    Without this the tests below could not run at all on a machine with no
+    dataset: ``build_records`` raises ``FileNotFoundError`` on the missing images
+    directory before reaching anything they assert, which is every machine CI
+    ever runs on. The file header claims to be synthetic throughout, and this is
+    what makes that true.
+
+    Three rows, one per class, using the indicator columns ``map_labels`` reads
+    (``tumor``/``benign``/``malignant``) and BTXRD's own ``IMG00000n.jpeg`` id
+    shape, which ``derive_groups`` parses to reconstruct surrogate patients.
+    ``dataset.csv`` rather than ``.xlsx`` because ``read_table`` dispatches on the
+    extension and a CSV keeps openpyxl out of the path being tested.
+    """
+    root = tmp_path / "btxrd"
+    images = root / "images"
+    images.mkdir(parents=True)
+
+    ids = ["IMG000001.jpeg", "IMG000002.jpeg", "IMG000003.jpeg"]
+    for name in ids:
+        shutil.copy(jpeg_image, images / name)
+
+    pd.DataFrame(
+        [
+            {"image_id": ids[0], "tumor": 0, "benign": 0, "malignant": 0},
+            {"image_id": ids[1], "tumor": 1, "benign": 1, "malignant": 0},
+            {"image_id": ids[2], "tumor": 1, "benign": 0, "malignant": 1},
+        ]
+    ).to_csv(root / "dataset.csv", index=False)
+
+    splits = tmp_path / "splits.json"
+    splits.write_text(
+        json.dumps({"train": [i.split(".")[0] for i in ids], "val": [], "test": []}),
+        encoding="utf-8",
+    )
+
+    for key, value in {
+        "data_root": str(root),
+        "table_name": "dataset.csv",
+        "splits_file": str(splits),
+    }.items():
+        monkeypatch.setitem(cfg._data["paths"], key, value)
+    return root
 
 
 @pytest.fixture
@@ -58,7 +108,7 @@ def _key_sets(records) -> set[tuple[str, ...]]:
     return {tuple(sorted(r)) for r in records}
 
 
-def test_records_from_both_branches_share_one_key_set(cfg, manifest, monkeypatch):
+def test_records_from_both_branches_share_one_key_set(cfg, btxrd_root, manifest, monkeypatch):
     """BTXRD rows and manifest rows must be indistinguishable to the collator."""
     monkeypatch.setitem(cfg._data["paths"], "controls_manifest", str(manifest))
 
@@ -74,14 +124,14 @@ def test_records_from_both_branches_share_one_key_set(cfg, manifest, monkeypatch
     )
 
 
-def test_split_bookkeeping_does_not_survive_into_the_batch(cfg, manifest, monkeypatch):
+def test_split_bookkeeping_does_not_survive_into_the_batch(cfg, btxrd_root, manifest, monkeypatch):
     """`_split` is consumed by filter_by_split and must not reach collation."""
     monkeypatch.setitem(cfg._data["paths"], "controls_manifest", str(manifest))
     records = build_records(cfg, split="train")
     assert all("_split" not in r for r in records)
 
 
-def test_a_mixed_batch_actually_collates(cfg, manifest, monkeypatch):
+def test_a_mixed_batch_actually_collates(cfg, btxrd_root, manifest, monkeypatch):
     """The end-to-end version: put both kinds of record in one batch and collate it.
 
     The key-set assertions above would pass on records that still break for some
@@ -92,8 +142,11 @@ def test_a_mixed_batch_actually_collates(cfg, manifest, monkeypatch):
 
     btxrd = [r for r in records if not str(r["image_id"]).startswith("ctrl-")][:2]
     controls = [r for r in records if str(r["image_id"]).startswith("ctrl-")][:2]
-    if not btxrd:
-        pytest.skip("BTXRD is not on disk; the mixed-batch case needs both branches")
+    # Asserted, not skipped. This used to skip when BTXRD was absent, which on a
+    # machine without the dataset made the one end-to-end test in this file a
+    # no-op that reported success. `btxrd_root` now supplies the first branch, so
+    # an empty list here means the fixture broke, and that must fail loudly.
+    assert btxrd and controls, "both branches are required, or this proves nothing"
 
     loader = build_dataloader(cfg, "train", records=btxrd + controls, shuffle=False)
     batch = next(iter(loader))

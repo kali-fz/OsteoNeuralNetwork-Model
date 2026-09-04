@@ -183,10 +183,28 @@ def _collect(run_dir: Path, split: str) -> dict:
 
     cam = run_dir / f"gradcam_{split}" / "gradcam_report.json"
     if cam.is_file():
-        local = json.loads(cam.read_text(encoding="utf-8")).get("localisation", {})
+        report = json.loads(cam.read_text(encoding="utf-8"))
+        local = report.get("localisation", {})
         out["pointing_game"] = local.get("pointing_game_accuracy")
         out["mean_iou"] = local.get("mean_iou")
         out["mean_coverage"] = local.get("mean_coverage")
+        # WHICH INSTRUMENT PRODUCED THAT NUMBER. A lesion-head run is scored on
+        # the head's map and the baseline on Grad-CAM, which is the right
+        # comparison -- each run judged on the explanation it would actually
+        # serve -- but only if the column says so. Without it the table silently
+        # compares two different measurements and looks like one.
+        out["map_source"] = {"lesion_head": "lesion", "gradcam": "cam"}.get(
+            local.get("map_source"), local.get("map_source")
+        )
+        # Chance is per-run because it depends on the films scored, and a
+        # pointing game is meaningless without it: these lesion boxes cover
+        # roughly a tenth of the frame, so ~0.10 is what a random peak scores.
+        out["chance_pointing_game"] = local.get("chance_pointing_game")
+        # Grad-CAM on the SAME lesion-head checkpoint. The head's own score says
+        # the decoder learned; this says whether the shared backbone moved with
+        # it. A run that wins the first and not the second added a picture.
+        cam_local = report.get("localisation_gradcam", {})
+        out["cam_pointing_game"] = cam_local.get("pointing_game_accuracy")
 
     history = run_dir / "history.json"
     if history.is_file():
@@ -204,7 +222,14 @@ def _collect(run_dir: Path, split: str) -> dict:
 COLUMNS: list[tuple[str, str, str | None]] = [
     ("run", "run", None),
     ("epochs", "ep", "{:.0f}"),
+    # `map` and `chance` sit either side of `point` on purpose. Read left to
+    # right they say: this number came from THIS instrument, and a random peak
+    # would have scored THAT on the same films. A pointing game read without
+    # both of those neighbours is the mistake this project already made once.
+    ("map_source", "map", None),
     ("pointing_game", "point", "{:.4f}"),
+    ("chance_pointing_game", "chance", "{:.4f}"),
+    ("cam_pointing_game", "cam-pt", "{:.4f}"),
     ("mean_iou", "IoU", "{:.4f}"),
     ("malignant_recall", "mal-rec", "{:.4f}"),
     ("macro_roc_auc", "ROC", "{:.4f}"),
@@ -215,22 +240,36 @@ COLUMNS: list[tuple[str, str, str | None]] = [
 
 
 def _table(rows: list[dict]) -> str:
-    widths = {key: max(len(header), 9) for key, header, _ in COLUMNS}
-    widths["run"] = max([len(str(r.get("run", ""))) for r in rows] + [3])
-
-    lines = ["  ".join(h.ljust(widths[k]) for k, h, _ in COLUMNS)]
-    lines.append("  ".join("-" * widths[k] for k, _, _ in COLUMNS))
+    # Cells are formatted before the widths are measured, rather than assuming a
+    # 9-character floor. A value wider than its column does not wrap, it shunts
+    # every column to its right out of alignment for that one row, and a table
+    # nobody can read down a column is the one thing this file exists to produce.
+    formatted: list[list[str]] = []
     for row in rows:
         cells = []
         for key, _, fmt in COLUMNS:
             value = row.get(key)
             if value is None:
-                cells.append("-".ljust(widths[key]))
+                cells.append("-")
             elif fmt is None:
-                cells.append(str(value).ljust(widths[key]))
+                cells.append(str(value))
             else:
-                cells.append(fmt.format(value).ljust(widths[key]))
-        lines.append("  ".join(cells))
+                cells.append(fmt.format(value))
+        formatted.append(cells)
+
+    widths = {
+        key: max([len(header)] + [len(cells[i]) for cells in formatted])
+        for i, (key, header, _) in enumerate(COLUMNS)
+    }
+
+    lines = ["  ".join(h.ljust(widths[k]) for k, h, _ in COLUMNS)]
+    lines.append("  ".join("-" * widths[k] for k, _, _ in COLUMNS))
+    for cells in formatted:
+        lines.append(
+            "  ".join(
+                c.ljust(widths[k]) for c, (k, _, _) in zip(cells, COLUMNS, strict=True)
+            )
+        )
     return "\n".join(lines)
 
 
@@ -362,6 +401,15 @@ def main() -> int:
     (sweep_dir / "summary.txt").write_text(table + "\n", encoding="utf-8")
     logger.info("\n%s\n", table)
     logger.info("sweep complete: %s", sweep_dir)
+    logger.info(
+        "HOW TO READ IT: `map` says which explanation each row was scored on --\n"
+        "  `cam` is Grad-CAM, `lesion` is the head's own map -- and `chance` is\n"
+        "  what a peak dropped at random scores on the same films. A `point`\n"
+        "  that does not clear `chance` is not a weak result, it is no result.\n"
+        "  `cam-pt` is Grad-CAM on a lesion-head checkpoint: if `point` rises\n"
+        "  while `cam-pt` does not, the run added a second output without moving\n"
+        "  the classifier, which is not what the head was built for."
+    )
     logger.info(
         "NOTHING was promoted. Read the table, pick one run, then register it:\n"
         "  python scripts/version_model.py register --run <run> --level major"

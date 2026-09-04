@@ -117,7 +117,11 @@ src/onnm/
                      bins, per-stratum (anatomy/subtype) breakdowns
   train.py           training loop, schedulers, evaluate()
   calibrate.py       temperature scaling, threshold search, ECE
-  explainability.py  Grad-CAM, box geometry, pointing game / IoU
+  explainability.py  Grad-CAM AND lesion-map scoring through one shared engine,
+                     box geometry, pointing game / IoU, chance level
+  lesion_head.py     the supervised lesion decoder (a DenseNet subclass, off by
+                     default); trained on BTXRD polygons, replaces Grad-CAM as the
+                     served explanation once a checkpoint carrying it is promoted
   thermal.py         AMD ADL GPU telemetry + duty-cycle governor
   inference.py       single-image prediction for the app; uncertainty gating;
                      production-checkpoint pinning (reports/PRODUCTION marker)
@@ -146,7 +150,7 @@ configs/             base.yaml + overrides: densenet121_3class, full_run,
                      overnight, specificity_tuning
   ablations/         ohem_only, augs_only -- separate the overnight regression
 notebooks/           01_data_sanity, kaggle_train, colab_train
-tests/               311 tests, synthetic fixtures, no dataset required
+tests/               509 tests, synthetic fixtures, no dataset required
 web/                 the site: pages, styles, and the contributor globe
 worker/              the Worker: API routes, sessions, review, retention
 cloudflare/          Worker, D1 schema, migrations, and Wrangler deployment config

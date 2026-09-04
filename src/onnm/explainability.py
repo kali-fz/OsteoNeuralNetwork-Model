@@ -247,6 +247,78 @@ def compute_cam(cam, image: torch.Tensor, class_index: int | None = None) -> np.
 
 
 # ---------------------------------------------------------------------------
+# The lesion head's own map
+# ---------------------------------------------------------------------------
+def has_lesion_head(model: torch.nn.Module) -> bool:
+    """True when this model carries a lesion decoder.
+
+    The same test ``RadiographClassifier`` uses to decide which map to serve
+    (``inference.py``), kept in one place so the scorer and the website can never
+    disagree about which explanation a given checkpoint produces.
+    """
+    return hasattr(model, "seg_head")
+
+
+def upsample_map(array: np.ndarray, size: int) -> np.ndarray:
+    """Bring a decoder output up to the ``size x size`` model-input grid.
+
+    The head predicts at 64x64 to stay cheap on half a vCPU, while the
+    ground-truth mask is rasterised at the model input size -- so the two must be
+    brought onto one grid before any of them can be compared.
+
+    Upsampling the prediction is the right direction rather than downsampling the
+    truth: it is what ``onnm.inference._resize_map`` does before the overlay is
+    drawn, so the map being scored here is pixel-for-pixel the map a visitor sees.
+    Bilinear with ``align_corners=False`` is the same convention as that
+    function's ``cv2.INTER_LINEAR`` (both use half-pixel centres);
+    ``tests/test_lesion_localisation.py`` pins the two together rather than
+    trusting the claim.
+    """
+    if array.shape == (size, size):
+        return array
+    tensor = torch.from_numpy(np.ascontiguousarray(array, dtype=np.float32))[None, None]
+    resized = torch.nn.functional.interpolate(
+        tensor, size=(size, size), mode="bilinear", align_corners=False
+    )
+    return resized[0, 0].numpy()
+
+
+def compute_lesion_map(
+    model: torch.nn.Module, image: torch.Tensor, size: int | None = None
+) -> np.ndarray:
+    """Return the lesion head's probability map for one image tensor ``(1, C, H, W)``.
+
+    The counterpart of :func:`compute_cam`, and deliberately NOT rescaled the way
+    that function rescales a CAM. A Grad-CAM is an unbounded attribution whose
+    absolute magnitude means nothing, so min-max scaling it is the only way to
+    read it; a sigmoid is already a probability per pixel, and stretching it to
+    [0, 1] would turn "0.02 everywhere, nothing here" into a full-range heatmap
+    claiming a lesion on a clean film. The map is returned as the model states it.
+
+    ``return_mask`` is restored to whatever it was rather than forced to False,
+    so calling this inside a loop cannot silently change the behaviour of
+    whatever set it -- MONAI's Grad-CAM indexes ``logits[:, class_idx]`` and
+    would fail on a tuple.
+    """
+    if not has_lesion_head(model):
+        raise ValueError(
+            "this checkpoint has no lesion head, so it produces no lesion map. "
+            "Score it with evaluate_localisation (Grad-CAM) instead."
+        )
+
+    had_mask_flag = getattr(model, "return_mask", False)
+    model.return_mask = True
+    try:
+        with torch.no_grad():
+            _, mask_logits = model(image)
+    finally:
+        model.return_mask = had_mask_flag
+
+    array = torch.sigmoid(mask_logits.float())[0, 0].detach().cpu().numpy()
+    return upsample_map(array, size) if size else array
+
+
+# ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
 #: Above this share of the frame sitting at the CAM maximum, "the hottest pixel"
@@ -322,27 +394,19 @@ def coverage(cam: np.ndarray, gt_mask: np.ndarray, threshold: float = 0.5) -> fl
     return float(cam[gt_mask].sum() / total) if total > 0 else float("nan")
 
 
-def evaluate_localisation(
-    model: torch.nn.Module,
-    cfg,
-    records: list[dict],
-    device: torch.device,
-    class_index: int | None = None,
-    max_samples: int | None = None,
-) -> dict[str, Any]:
-    """Score Grad-CAM against ground-truth boxes over annotated records.
+def _require_scorable_geometry(cfg) -> None:
+    """Refuse to score when the transform chain has a geometry stage we cannot map.
 
-    Only records with an annotation file are scored -- normal images have no
-    lesion, so localisation is undefined for them.
+    ``map_box_to_model_space`` reproduces exactly two geometric stages: resize the
+    longest side, then pad symmetrically. Foreground cropping inserts a third,
+    with an offset that is different for every image, so the mapping silently
+    stops describing the transform chain. Every pointing-game hit and IoU would
+    still be a number, and all of them would be wrong -- so this refuses rather
+    than reports.
+
+    Checked before the model is touched, so a misconfiguration costs a clear
+    error rather than a wasted pass over the split.
     """
-    from .dataset import build_transforms
-
-    # `map_box_to_model_space` reproduces exactly two geometric stages: resize
-    # the longest side, then pad symmetrically. Foreground cropping inserts a
-    # third, with an offset that is different for every image, so the mapping
-    # silently stops describing the transform chain. Every pointing-game hit and
-    # IoU below would still be a number, and all of them would be wrong -- so
-    # this refuses rather than reports.
     if bool(cfg.data.get("crop_foreground", False)):
         raise ValueError(
             "data.crop_foreground is enabled, which changes the geometry between "
@@ -353,16 +417,41 @@ def evaluate_localisation(
             "offset first."
         )
 
+
+def _score_maps(
+    map_for,
+    cfg,
+    records: list[dict],
+    device: torch.device,
+    max_samples: int | None = None,
+) -> dict[str, Any]:
+    """Score any per-image heat map against the ground-truth lesion boxes.
+
+    The shared engine behind :func:`evaluate_localisation` and
+    :func:`evaluate_lesion_localisation`. It exists so that a Grad-CAM and a
+    lesion map are scored by *identical* code over an identical population --
+    same records, same box rasterisation, same threshold, same metric
+    definitions. Two scoring loops that were meant to match and drifted would
+    make every comparison between the two explanations worthless, and the drift
+    would not be visible in either number on its own.
+
+    ``map_for`` takes the model-input tensor ``(1, C, H, W)`` and returns a
+    ``(size, size)`` map. Only records carrying an annotation file are scored:
+    a normal film has no lesion, so localisation is undefined for it.
+    """
+    from .dataset import build_transforms
+
     size = int(cfg.data.image_size)
     threshold = float(cfg.explain.get("cam_threshold", 0.5))
     transform = build_transforms(cfg, "test", keep_meta=True)
-    cam = build_cam(model, cfg)
-    model.eval()
 
     hits: list[bool] = []
     ious: list[float] = []
     coverages: list[float] = []
     peaks: list[float] = []
+    maxima: list[float] = []
+    positives: list[float] = []
+    lesion_fractions: list[float] = []
     n_skipped = 0
 
     for record in records[:max_samples] if max_samples else records:
@@ -379,14 +468,68 @@ def evaluate_localisation(
 
         sample = transform(record)
         image = sample["image"].unsqueeze(0).to(device)
-        heatmap = compute_cam(cam, image, class_index)
+        heatmap = map_for(image)
 
         hits.append(pointing_game(heatmap, gt_mask))
         ious.append(cam_iou(heatmap, gt_mask, threshold))
         coverages.append(coverage(heatmap, gt_mask, threshold))
         peaks.append(peak_fraction(heatmap))
+        maxima.append(float(heatmap.max()))
+        positives.append(float((heatmap >= threshold).mean()))
+        # The share of the frame the lesion occupies IS the pointing game's
+        # chance level: a peak dropped uniformly at random lands inside a box
+        # covering 10% of the film 10% of the time. Accumulated per image and
+        # averaged, so the baseline describes this exact population rather than
+        # a remembered figure from another split.
+        lesion_fractions.append(float(gt_mask.mean()))
 
-    mean_peak = float(np.mean(peaks)) if peaks else float("nan")
+    def _mean(values: list[float]) -> float:
+        return float(np.nanmean(values)) if values else float("nan")
+
+    return {
+        "n_scored": len(hits),
+        "n_skipped": n_skipped,
+        "pointing_game_accuracy": float(np.mean(hits)) if hits else float("nan"),
+        "mean_iou": _mean(ious),
+        "mean_coverage": _mean(coverages),
+        "mean_peak_fraction": _mean(peaks),
+        "mean_max_value": _mean(maxima),
+        "mean_positive_fraction": _mean(positives),
+        "n_below_threshold": int(sum(1 for m in maxima if m < threshold)),
+        "chance_pointing_game": _mean(lesion_fractions),
+        "mean_lesion_fraction": _mean(lesion_fractions),
+        "cam_threshold": threshold,
+    }
+
+
+def evaluate_localisation(
+    model: torch.nn.Module,
+    cfg,
+    records: list[dict],
+    device: torch.device,
+    class_index: int | None = None,
+    max_samples: int | None = None,
+) -> dict[str, Any]:
+    """Score Grad-CAM against ground-truth boxes over annotated records.
+
+    Only records with an annotation file are scored -- normal images have no
+    lesion, so localisation is undefined for them.
+
+    ``chance_pointing_game`` is reported alongside the score and should be read
+    first. Pointing game is not a percentage out of 100: a lesion box covering a
+    tenth of the film is hit a tenth of the time by a peak dropped at random, so
+    the number only means something next to that baseline.
+    """
+    _require_scorable_geometry(cfg)
+
+    cam = build_cam(model, cfg)
+    model.eval()
+    scores = _score_maps(
+        lambda image: compute_cam(cam, image, class_index),
+        cfg, records, device, max_samples=max_samples,
+    )
+
+    mean_peak = scores["mean_peak_fraction"]
     degenerate = bool(mean_peak >= DEGENERATE_PEAK_FRACTION)
     if degenerate:
         # Loud, because every score in this dict is then a number about the CAM's
@@ -400,16 +543,101 @@ def evaluate_localisation(
             100 * mean_peak,
         )
 
-    return {
-        "n_scored": len(hits),
-        "n_skipped": n_skipped,
-        "pointing_game_accuracy": float(np.mean(hits)) if hits else float("nan"),
-        "mean_iou": float(np.nanmean(ious)) if ious else float("nan"),
-        "mean_coverage": float(np.nanmean(coverages)) if coverages else float("nan"),
-        "mean_peak_fraction": mean_peak,
-        "cam_degenerate": degenerate,
-        "cam_threshold": threshold,
-    }
+    # The sigmoid diagnostics are dropped rather than reported as nulls:
+    # `compute_cam` rescales every map to [0, 1], so `mean_max_value` is 1.0 by
+    # construction and `n_below_threshold` counts nothing. Both are real
+    # measurements of a probability map and noise on a rescaled one.
+    for key in ("mean_max_value", "mean_positive_fraction", "n_below_threshold"):
+        scores.pop(key, None)
+
+    scores["map_source"] = "gradcam"
+    scores["cam_degenerate"] = degenerate
+    return scores
+
+
+def evaluate_lesion_localisation(
+    model: torch.nn.Module,
+    cfg,
+    records: list[dict],
+    device: torch.device,
+    max_samples: int | None = None,
+    threshold: float | None = None,
+) -> dict[str, Any]:
+    """Score the LESION HEAD's own map against the same ground-truth boxes.
+
+    WHY THIS IS SEPARATE FROM THE GRAD-CAM SCORE
+    --------------------------------------------
+    Until this existed, ``scripts/gradcam_report.py`` scored Grad-CAM on every
+    checkpoint, lesion head or not -- so a sweep run carrying the new head was
+    measured by the instrument it was built to replace, and a flat pointing-game
+    column would have read as "the head does not work" when it in fact measured
+    nothing about the head at all.
+
+    WHAT IS AND IS NOT COMPARABLE WITH THE GRAD-CAM NUMBERS
+    -------------------------------------------------------
+    ``pointing_game_accuracy`` is directly comparable: it is threshold-free, and
+    both maps are scored over the same films against the same boxes by
+    :func:`_score_maps`.
+
+    ``mean_iou`` and ``mean_coverage`` are NOT, and the reason is the threshold.
+    ``compute_cam`` min-max rescales a CAM so that every film has a pixel at 1.0
+    and 0.5 means "half as hot as this image's hottest point" -- a per-image
+    relative cut. A sigmoid is an absolute probability, so 0.5 means "the model
+    puts even odds on lesion here", and a film the model considers clean can sit
+    entirely below it. That is a real property worth measuring, not a defect,
+    which is why ``n_below_threshold`` is reported next to it.
+
+    ``cam_degenerate`` is deliberately absent. It asks whether the frame is tied
+    at the maximum, which is a saturation failure specific to a rescaled CAM; a
+    sigmoid varies continuously and would essentially never trip it. The
+    equivalent questions for a probability map are "does it predict nothing
+    anywhere" (``n_below_threshold``, ``mean_max_value``) and "does it predict
+    everywhere" (``mean_positive_fraction``), and those are reported instead.
+    """
+    _require_scorable_geometry(cfg)
+
+    if not has_lesion_head(model):
+        raise ValueError(
+            "this checkpoint carries no lesion head, so there is no lesion map to "
+            "score. Use evaluate_localisation for a Grad-CAM checkpoint."
+        )
+
+    size = int(cfg.data.image_size)
+    if threshold is not None:
+        # Kept as an override rather than a new config key, so no YAML that the
+        # serving container reads has to change to re-score a checkpoint.
+        cfg = _with_cam_threshold(cfg, threshold)
+
+    model.eval()
+    scores = _score_maps(
+        lambda image: compute_lesion_map(model, image, size=size),
+        cfg, records, device, max_samples=max_samples,
+    )
+    scores["map_source"] = "lesion_head"
+
+    if scores["n_scored"] and scores["n_below_threshold"] == scores["n_scored"]:
+        logger.warning(
+            "the lesion head never exceeds %.2f on any of the %d scored films "
+            "(mean maximum %.3f). mean_iou is 0 by construction and says nothing "
+            "about localisation; read pointing_game_accuracy, which is "
+            "threshold-free, and consider a lower threshold for the IoU.",
+            scores["cam_threshold"], scores["n_scored"], scores["mean_max_value"],
+        )
+    return scores
+
+
+def _with_cam_threshold(cfg, threshold: float):
+    """Return a copy of ``cfg`` with ``explain.cam_threshold`` replaced.
+
+    A copy, not a mutation: ``cfg`` is shared with the caller and with anything
+    else holding a reference to it, and a scoring run has no business changing
+    the configuration a report is about to record.
+    """
+    from .config import Config
+
+    data = cfg.to_dict()
+    data.setdefault("explain", {})["cam_threshold"] = float(threshold)
+    return Config(data)
 
 
 # ---------------------------------------------------------------------------

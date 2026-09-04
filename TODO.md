@@ -1,10 +1,10 @@
 # ONNM: Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-08-29 (custom domain, review console, retention, terms gate scoped;
-the owner's handwritten roadmap and website polish list transcribed in).
+Last audited: 2026-09-04 (the lesion head landed as code, and the scorer that can
+tell whether it works landed with it; neither has been run on a real checkpoint yet).
 
-**Current state:** 452 Python tests and 51 Worker tests green, repo-wide ruff clean.
+**Current state:** 509 Python tests and 51 Worker tests green, repo-wide ruff clean.
 The whole application is **one Cloudflare Worker live at `osteoneuralnetwork.com`**,
 D1 at **schema_version 7**, with the submission review console at `/admin`, a Terms
 acceptance gate in front of sign-in, and a daily retention job. The Streamlit
@@ -23,10 +23,13 @@ deployment has been removed. Model versioning is live at **v1.0.0**
 > has not been reviewed by anyone qualified, and nobody has walked the Google round
 > trip by hand. Automated checks stop at the session boundary.
 >
-> Second, unchanged: the Grad-CAM localisation claim is *measurable* (the heatmap was
-> inverted; fixed 2026-08-23) but still **roughly at chance**, pointing game 0.0936
-> with no chance baseline established. It does not yet support "the model looks at
-> lesions". Nothing about the classifier's ROC-AUC, recall or calibration was affected.
+> Second: the localisation claim. Grad-CAM was *measurable* but **roughly at chance**,
+> pointing game 0.0936, and the replacement for it — a supervised lesion head — is now
+> **written, tested and merged, but never trained and never deployed**. The site still
+> serves v1.0.0, which has no head. What is owed is a sweep, a winner, and a promotion;
+> the section "Replacing Grad-CAM: the lesion head" below is the live one.
+> Nothing about the classifier's ROC-AUC, recall or calibration has been affected by any
+> of this: no promoted checkpoint has changed since v1.0.0.
 
 ---
 
@@ -265,6 +268,72 @@ against a forged cookie).
       included. `/terms` is additive. Re-check the four surfaces afterwards: landing
       layout, globe, Google sign-in end to end, image upload returning a verdict.
 
+### Replacing Grad-CAM: the lesion head
+
+**This is the live thread. Read it before touching anything else in the explainability
+area.** The replacement exists as code and has never been trained, scored on real data,
+or served. `model_versions.json` still records v1.0.0 (`full-20260822-041653`) as the only
+version and the only thing serving; that checkpoint carries no lesion head.
+
+**Built and merged, 2026-09-04:**
+
+- [x] **The head itself** (`src/onnm/lesion_head.py`). A DenseNet *subclass*, not a
+      wrapper, so `features.denseblock4` keeps its name and `get_cam_layer` cannot raise
+      inside `RadiographClassifier.__init__` and crash-loop the single container instance.
+      Off unless `model.lesion_head` is set, so v1.0.0 still loads bit-identically.
+- [x] **Mask supervision** through the MONAI chain, plus `LesionSupervisionLoss`, plus
+      `tests/test_lesion_mask.py` pinning binarity and co-registration.
+- [x] **Serving already prefers it.** `onnm.inference` returns the head's map when the
+      checkpoint has one, `overlay.kind` reaches the browser, and the caption and fade-in
+      floor already switch on it. **No further app code is needed for the switch** — it
+      happens the moment a lesion-head checkpoint is promoted.
+- [x] **A scorer that measures the head rather than the thing it replaces**
+      (`evaluate_lesion_localisation`, `compute_lesion_map`). This was the gap that would
+      have wasted the whole sweep: `gradcam_report.py` scored Grad-CAM on *every*
+      checkpoint, so a lesion-head run was being measured by the instrument it was built
+      to replace, and a flat pointing-game column would have read as "the head does not
+      work" while measuring nothing about the head at all. Both maps now go through one
+      shared engine over the same films and boxes, so the two are comparable.
+      The map is deliberately **not** min-max rescaled the way a CAM is: stretching a
+      sigmoid would turn "0.002 everywhere, nothing here" into a full-range heatmap
+      claiming a lesion on a clean film. `tests/test_lesion_localisation.py` pins that,
+      and was mutation-tested — reintroducing the rescale fails it.
+- [x] **The chance level, in every report.** See the Grad-CAM section below.
+- [x] **The sweep table says which instrument produced each row.** `overnight_sweep.py`
+      gained `map`, `chance` and `cam-pt` columns. `cam-pt` is Grad-CAM scored on the
+      *same* lesion-head checkpoint: if `point` rises while `cam-pt` does not, the run
+      added a second output without moving the classifier, which is not the point.
+
+**What is left, in order:**
+
+- [ ] **Re-score the sweep checkpoints.** No retraining: `--resume` reuses every
+      `best.pt`. Delete the stale reports first or the resume logic will skip the step
+      and keep the old Grad-CAM numbers:
+
+      Remove-Item reports\sweep-<stamp>-*\gradcam_test\gradcam_report.json
+      .venv\Scripts\python.exe scripts\overnight_sweep.py --plan configs\sweeps\lesion_head.yaml --stamp <stamp> --resume
+
+- [ ] **Run the chance baseline once.** It depends on the architecture and the films, not
+      on which checkpoint it is pointed at, so one run covers the whole sweep:
+      `python scripts\gradcam_report.py --checkpoint reports\<run>\best.pt --split test --chance-baseline`
+- [ ] **Read the table and pick a winner.** A run qualifies only if it improves
+      localisation *and* holds the guarded metrics: `onnm.versioning` refuses a promotion
+      that drops macro ROC-AUC below ~0.8834 or malignant recall below ~0.6227.
+- [ ] **Run `scripts/check_test_radiographs.py` on the winner.** The complaint that
+      started this work — evidence landing on the joint rather than the lesion — is
+      invisible in every other metric the project records.
+- [ ] **Register it.** `python scripts/version_model.py register --run <run> --level major`
+      (`major` per ONN.md's own definition: a new task head).
+- [ ] **Measure container latency first if the winner is 384px or 512px.**
+      `data.image_size` travels inside the checkpoint, so whichever run wins becomes the
+      *serving* resolution, on half a vCPU. 384px is 2.25x the pixels of 256px.
+- [ ] **Publish and deploy.** `scripts/publish_model.py` + `--verify`, then the **full
+      container release** (`npm run deploy`). The runbook's `--containers-rollout=none`
+      path does not apply: the image changes.
+- [ ] **Correct the claims afterwards.** `overview.md`, `MODEL_CARD.md` and this file all
+      still describe the explanation as Grad-CAM at chance. That stays true until a
+      lesion-head checkpoint is actually serving, and must be rewritten the day one is.
+
 ### Grad-CAM: the heatmap was inverted; fixed 2026-08-23
 
 - [x] **The CAM was inverted. Root cause found and fixed.** MONAI's `CAMBase`
@@ -331,12 +400,29 @@ against a forged cookie).
       report the two separately, use a median, or exclude empty maps from the statistic
       and count them alongside it.
 
+      **Answered for the lesion map, still open for Grad-CAM (2026-09-04).**
+      `evaluate_lesion_localisation` does not report `cam_degenerate` at all, because
+      "is the frame tied at the maximum" is a saturation failure specific to a rescaled
+      CAM and a sigmoid varies continuously enough never to trip it. It reports the two
+      questions that *do* apply to a probability map instead: `n_below_threshold` and
+      `mean_max_value` ("predicts nothing anywhere") and `mean_positive_fraction`
+      ("predicts everywhere"). The same split would work for Grad-CAM; nobody has done it.
+
 - [ ] **Interpret the corrected localisation honestly.** Pointing game 0.0936 is low. It
       is no longer *meaningless*, which is the change, but it is not yet evidence that
       the model localises. Establish the chance baseline before claiming anything: score
       a randomly-initialised model the same way, since a lesion box covering ~10% of the
       frame is hit ~10% of the time by accident. Until that comparison exists, the honest
       statement is "measurable, and roughly at chance".
+
+      **The baseline is now computed, and it is still unread (2026-09-04).** Two of them,
+      in fact. `chance_pointing_game` is in every report and costs nothing: it is the mean
+      share of frame the lesion boxes occupy, which *is* the rate at which a peak dropped
+      at random lands inside one. And `gradcam_report.py --chance-baseline` scores the
+      same architecture with random weights, which catches what geometry cannot — an
+      untrained network still prefers the middle of a film, and so do lesions. Neither has
+      been run against the pinned v1.0.0 checkpoint, so **0.0936 still has no number
+      beside it** and the honest statement above is unchanged. One run settles it.
 
       Also note `cam_threshold: 0.5` (`configs/base.yaml:312`) now selects a small
       concentrated region rather than a large diffuse one, so IoU is penalised for a
