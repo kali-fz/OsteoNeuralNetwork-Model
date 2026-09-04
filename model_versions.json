@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-09-04 16:53 UTC",
+  "updated_at": "2026-09-04 21:09 UTC",
   "versions": [
     {
       "version": "v1.0.0",
@@ -40,7 +40,8 @@
         "malignant_recall_hi": 0.7959183673469388,
         "lesion_pointing_game": 0.7228464419475655,
         "lesion_normal_quiet": 0.8029739776951673,
-        "bone_acceptance": 0.96
+        "bone_acceptance": 0.96,
+        "normal_specificity_at_threshold": 0.8364312267657993
       },
       "community": {
         "batches": 1,

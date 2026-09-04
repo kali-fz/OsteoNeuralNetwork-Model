@@ -62,6 +62,25 @@ def main() -> int:
             },
             "confidence_intervals": result["confidence_intervals"],
             "operating_point_from_val": operating_point,
+            # The decision the site actually makes, at the threshold it actually
+            # ships. `evaluate` has always computed this and printed it, and it
+            # was the only thing here not written down -- so nothing downstream
+            # could read it, and every consumer reached for a specificity that
+            # answers a DIFFERENT question:
+            #
+            #   metrics.per_class.normal.specificity -- argmax over three classes,
+            #     ignoring the calibrated threshold entirely
+            #   operating_point_from_val.specificity -- malignant-vs-rest, so its
+            #     negatives are normal AND benign films mixed together
+            #   calibration.achieved_specificity     -- the right decision, but
+            #     measured on validation, not on held-out test
+            #
+            # None of those is "how often does a healthy film get called a
+            # lesion", which is the number this project's false-positive target
+            # is written against. Three plausible neighbours and one right answer
+            # is exactly the shape of mistake that gets made, so the right answer
+            # is now recorded rather than printed and discarded.
+            "binary_decision": result.get("binary_decision"),
         },
         output,
     )

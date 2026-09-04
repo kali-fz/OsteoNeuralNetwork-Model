@@ -98,6 +98,7 @@ GUARDED_METRICS: tuple[str, ...] = (
     "misc_rejection",
     "lesion_pointing_game",
     "lesion_normal_quiet",
+    "normal_specificity_at_threshold",
 )
 
 #: How much a guarded metric may fall before promotion is refused.

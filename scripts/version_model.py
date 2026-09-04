@@ -91,6 +91,13 @@ def _read_metrics(run: str, split: str = "test") -> dict[str, float]:
     elif "malignant_recall" in metrics:
         out["malignant_recall"] = float(metrics["malignant_recall"])
 
+    # The false-positive rate a visitor experiences, at the threshold the site
+    # ships. Recorded as its complement, specificity, so that -- like every
+    # other entry in GUARDED_METRICS -- higher is better. See versioning.
+    binary = data.get("binary_decision") or {}
+    if binary.get("specificity") is not None:
+        out["normal_specificity_at_threshold"] = float(binary["specificity"])
+
     out.update(_localisation_metrics(run, split))
     return out
 
@@ -292,6 +299,66 @@ def cmd_seed(args: argparse.Namespace) -> int:
     return cmd_register(args)
 
 
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Re-read one version's metrics from its run directory. Promotes nothing.
+
+    WHY THIS IS NEEDED
+    ------------------
+    A metric added *after* a version was registered is missing from that
+    version's row forever, and :func:`onnm.versioning.compare` skips any metric
+    absent on either side. So the next candidate is silently unguarded on
+    precisely the number that was just judged important enough to add. The
+    ledger already carried one metric in that state -- ``misc_rejection`` -- and
+    v2.0.0 acquired a second the day it was registered, when the served
+    false-positive rate started being recorded.
+
+    Backfilling by hand is the obvious alternative and it is the wrong one: the
+    numbers would come from a person reading a report rather than from the same
+    ``_read_metrics`` every other row came from, and a transcription error in a
+    promotion guard is invisible until it wrongly blocks or wrongly allows.
+
+    Deliberately narrow. It rewrites the metrics of a version that already
+    exists and touches nothing else -- not the status, not the version number,
+    not which run it points at, and above all not what is serving. Refreshing
+    the numbers must never be able to move production.
+    """
+    versions = load_registry()
+    target = next((v for v in versions if v.version == args.version), None)
+    if target is None:
+        print(f"no such version: {args.version}", file=sys.stderr)
+        return 2
+
+    metrics = dict(_read_metrics(target.run, args.split))
+    if not metrics:
+        print(f"no metrics found for run {target.run}", file=sys.stderr)
+        return 2
+
+    before, after = set(target.metrics), set(metrics)
+    target.metrics.update(metrics)
+
+    added = sorted(after - before)
+    changed = sorted(
+        k for k in after & before
+        if abs(float(metrics[k]) - float(target.metrics[k])) > 1e-12
+    )
+    # A metric present before and absent now is KEPT rather than deleted: it was
+    # measured, and dropping it would rewrite history to match today's pipeline.
+    dropped = sorted(before - after)
+
+    _write(versions)
+    print(f"refreshed {target.version} from reports/{target.run}")
+    for name in added:
+        print(f"  added   {name:<34}{metrics[name]:.4f}")
+    for name in changed:
+        print(f"  updated {name:<34}{metrics[name]:.4f}")
+    for name in dropped:
+        print(f"  kept    {name:<34}(no longer produced, left as recorded)")
+    if not (added or changed):
+        print("  nothing changed")
+    print(f"\nstatus unchanged: {target.status}")
+    return 0
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     _write(load_registry())
     return 0
@@ -350,6 +417,14 @@ def main() -> int:
     add_common(p_reg)
     p_reg.add_argument("--level", default="patch", choices=("major", "minor", "patch"))
     p_reg.set_defaults(func=cmd_register)
+
+    p_refresh = sub.add_parser(
+        "refresh",
+        help="re-read one version's metrics from its run (promotes nothing)",
+    )
+    p_refresh.add_argument("version", help="e.g. v2.0.0")
+    p_refresh.add_argument("--split", default="test")
+    p_refresh.set_defaults(func=cmd_refresh)
 
     p_render = sub.add_parser("render", help="regenerate ONN.md from the JSON")
     p_render.set_defaults(func=cmd_render)

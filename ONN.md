@@ -52,6 +52,7 @@ serving, so a bad retrain costs a row in this table and nothing else.
 | malignant_recall | 0.6735 |
 | malignant_recall_hi | 0.7959 |
 | malignant_recall_lo | 0.5306 |
+| normal_specificity_at_threshold | 0.8364 |
 
 ### v1.0.0: superseded
 

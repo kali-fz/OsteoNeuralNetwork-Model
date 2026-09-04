@@ -35,6 +35,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -227,8 +228,36 @@ def _materialise(name: str, overrides: dict, directory: Path) -> Path:
     return path
 
 
+#: A run directory is its tag followed by train.py's own start stamp, and
+#: nothing else. Matching on that shape rather than on ``{tag}-*`` is what keeps
+#: one run name from swallowing another that merely starts the same way.
+_RUN_STAMP = r"-\d{8}-\d{6}$"
+
+
+def _runs_for(tag: str, reports: Path) -> list[Path]:
+    """Every directory belonging to exactly this run.
+
+    ``{tag}-*`` is WRONG here and cost a row of the comparison table before this
+    existed. ``r384-w050`` is a prefix of ``r384-w050-aug``, so globbing matched
+    both, and ``_newest_run`` then returned whichever had been written last --
+    which after the aug run finished was the aug directory. The table duly
+    printed the aug numbers twice, once under each name, and the real
+    ``r384-w050`` row vanished. Nothing errored.
+
+    Two names in a sweep plan where one is a prefix of the other is a completely
+    reasonable thing to write -- it is how you say "the same recipe, plus
+    augmentation" -- so the fix belongs here rather than in a naming rule nobody
+    would remember.
+    """
+    pattern = re.compile(re.escape(tag) + _RUN_STAMP)
+    return sorted(
+        (p for p in reports.glob(f"{tag}-*") if pattern.fullmatch(p.name)),
+        key=lambda p: p.stat().st_mtime,
+    )
+
+
 def _newest_run(tag: str, reports: Path) -> Path | None:
-    candidates = sorted(reports.glob(f"{tag}-*"), key=lambda p: p.stat().st_mtime)
+    candidates = _runs_for(tag, reports)
     return candidates[-1] if candidates else None
 
 
@@ -250,6 +279,14 @@ def _collect(run_dir: Path, split: str) -> dict:
             out["normal_specificity"] = normal["specificity"]
         errors = payload.get("clinical_errors", {})
         out["normal_called_malignant"] = errors.get("normal_called_malignant")
+        # The decision the SITE makes, at the threshold it ships. `spec` above
+        # is argmax over three classes and ignores the threshold, so the two
+        # columns disagree and are meant to: one says how well the classes
+        # separate, the other says how often a healthy film gets called a lesion
+        # in production. The false-positive target is written against this one.
+        binary = json.loads(metrics.read_text(encoding="utf-8")).get("binary_decision") or {}
+        if binary.get("specificity") is not None:
+            out["served_fp_on_normals"] = 1.0 - float(binary["specificity"])
 
     cam = run_dir / f"gradcam_{split}" / "gradcam_report.json"
     if cam.is_file():
@@ -318,6 +355,8 @@ COLUMNS: list[tuple[str, str, str | None]] = [
     ("malignant_recall", "mal-rec", "{:.4f}"),
     ("macro_roc_auc", "ROC", "{:.4f}"),
     ("normal_specificity", "spec", "{:.4f}"),
+    # Lower is better, and it is the number the sub-10% target is about.
+    ("served_fp_on_normals", "FP-svd", "{:.4f}"),
     ("normal_called_malignant", "N->M", "{:.0f}"),
     ("lesion_loss", "seg-loss", "{:.4f}"),
 ]
@@ -443,10 +482,10 @@ def main() -> int:
             # snapshotted first and ignored, otherwise a re-run of a tag that
             # completed earlier would read the OLD summary.json in the seconds
             # before the new directory appears and declare victory instantly.
-            preexisting = {p.name for p in reports.glob(f"{tag}-*")}
+            preexisting = {p.name for p in _runs_for(tag, reports)}
 
             def _train_artefact(_seen: set[str] = preexisting, _tag: str = tag) -> Path | None:
-                fresh = [p for p in reports.glob(f"{_tag}-*") if p.name not in _seen]
+                fresh = [p for p in _runs_for(_tag, reports) if p.name not in _seen]
                 if not fresh:
                     return None
                 return max(fresh, key=lambda p: p.stat().st_mtime) / "summary.json"
