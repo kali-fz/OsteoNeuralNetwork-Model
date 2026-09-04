@@ -62,6 +62,7 @@ from onnm.explainability import (
     coverage,
     evaluate_lesion_localisation,
     evaluate_localisation,
+    evaluate_normal_activation,
     has_lesion_head,
     load_annotation,
     map_box_to_model_space,
@@ -165,6 +166,30 @@ def main() -> int:
     print("  the annotated lesion. Read it against chance_pointing_game directly")
     print("  above it, which is how often a peak dropped at random would land")
     print(f"  there on these same {scores['n_scored']} films.")
+
+    if lesion:
+        # The complaint that started this work, finally as a number. Scored on
+        # the films _score_maps skips by design -- the normals -- so it adds a
+        # population rather than re-reading the same one. See
+        # explainability.evaluate_normal_activation for why this is lesion-head
+        # only and what it deliberately does not claim.
+        print("\nScoring the lesion map on NORMAL films (no lesion present)...")
+        normals = evaluate_normal_activation(
+            model, cfg, records, device,
+            max_samples=args.max_scored, threshold=args.lesion_threshold,
+        )
+        payload["normal_activation"] = normals
+        print(f"  films scored              : {normals['n_scored']}")
+        print(
+            f"  flagged somewhere         : {normals['n_flagged']} "
+            f"({normals['flagged_fraction']:.1%})   <- lower is better"
+        )
+        print(f"  mean peak activation      : {normals['mean_max_activation']:.3f}")
+        print(f"  median peak activation    : {normals['median_max_activation']:.3f}")
+        print(f"  mean share of frame hot   : {normals['mean_positive_fraction']:.3%}")
+        print("  Activation on healthy bone, not proof of joint attention: BTXRD")
+        print("  labels no normal film with a specific joint, so the anatomy")
+        print("  question stays open until external lower-limb normals are added.")
 
     if lesion and not args.skip_cam_comparison:
         # Not the headline number, and deliberately reported second: it says

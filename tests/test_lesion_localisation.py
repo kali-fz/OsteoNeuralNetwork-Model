@@ -44,6 +44,7 @@ from onnm.explainability import (
     compute_lesion_map,
     evaluate_lesion_localisation,
     evaluate_localisation,
+    evaluate_normal_activation,
     has_lesion_head,
     upsample_map,
 )
@@ -408,3 +409,158 @@ def test_gradcam_scoring_still_works_and_now_says_which_map_it_used(cfg, tmp_pat
     assert scores["chance_pointing_game"] == pytest.approx(EXPECTED_CHANCE)
     for key in ("mean_max_value", "mean_positive_fraction", "n_below_threshold"):
         assert key not in scores
+
+
+# ---------------------------------------------------------------------------
+# Activation on healthy films -- the metric the original complaint needed
+# ---------------------------------------------------------------------------
+# Everything above scores films that HAVE a lesion. None of it can answer the
+# question that started this work: on a normal radiograph, does the map light up
+# the nearest joint? `_score_maps` skips an unannotated record by design, so the
+# 269 normal films in the test split were never looked at. These pin the scorer
+# that finally does look at them.
+def _normal_film(tmp_path, name: str = "NORM"):
+    """A healthy film: label 0, and deliberately NO annotation file written.
+
+    The absence matters. `evaluate_normal_activation` resolves annotations
+    through `annotation_path_for`, exactly as the lesion scorer does, so a
+    fixture that wrote one here would be silently skipped and every assertion
+    below would pass without scoring anything.
+    """
+    image = np.zeros((ORIGINAL_SIZE, ORIGINAL_SIZE), dtype=np.uint8)
+    image[40:150, 70:120] = 200  # a bone-ish shape, no lesion
+    image_path = tmp_path / f"{name}.png"
+    Image.fromarray(image).save(image_path)
+    return {"image": str(image_path), "label": 0, "image_id": name}
+
+
+def test_a_quiet_map_on_a_healthy_film_is_not_flagged(cfg, tmp_path) -> None:
+    """The behaviour being trained for: healthy bone, so claim nothing."""
+    scoring_cfg = _scoring_cfg(cfg, tmp_path)
+    # Uniformly confident-empty: sigmoid(-6) = 0.0025 everywhere.
+    model = _FixedLesionNet(torch.full((16, 16), -6.0))
+
+    scores = evaluate_normal_activation(
+        model, scoring_cfg, [_normal_film(tmp_path)], torch.device("cpu")
+    )
+
+    assert scores["n_scored"] == 1
+    assert scores["n_flagged"] == 0
+    assert scores["flagged_fraction"] == 0.0
+    assert scores["mean_max_activation"] == pytest.approx(0.0025, abs=1e-3)
+    assert scores["mean_positive_fraction"] == 0.0
+
+
+def test_one_hot_cell_on_a_healthy_film_counts_as_flagged(cfg, tmp_path) -> None:
+    """The failure being measured, and it must count from a SINGLE cell.
+
+    A mean over the frame would hide this: one confident cell in 256 moves the
+    average to about 0.006, which is indistinguishable from silence. The film is
+    flagged on its maximum precisely so that a small, confident, wrong claim --
+    which is exactly what a heat map landing on a joint looks like -- registers.
+
+    THE PEAK IS 0.76, NOT 0.9975, AND THAT IS NOT A BUG
+    ---------------------------------------------------
+    The decoder emits a coarse grid which `compute_lesion_map` upsamples to the
+    model input size, so a lone hot cell is bilinearly smoothed against its
+    confidently-empty neighbours: sigmoid(6) = 0.9975 arrives as 0.7643. Pinned
+    here because it silently bounds the threshold. A cut above about 0.77 can
+    never flag a single-cell claim no matter how certain the head is about it,
+    so anyone raising `explain.cam_threshold` to make this number look better
+    would be measuring the interpolation rather than the model.
+    """
+    scoring_cfg = _scoring_cfg(cfg, tmp_path)
+    model = _FixedLesionNet(_mask_with_hot_cell(3, 4))
+
+    scores = evaluate_normal_activation(
+        model, scoring_cfg, [_normal_film(tmp_path)], torch.device("cpu")
+    )
+
+    assert scores["n_flagged"] == 1
+    assert scores["flagged_fraction"] == 1.0
+    assert scores["mean_max_activation"] == pytest.approx(0.7643, abs=1e-3)
+    # And the frame is overwhelmingly quiet, which is why the mean cannot be
+    # the statistic that decides it.
+    assert scores["mean_activation"] < 0.01
+
+
+def test_the_fraction_is_over_healthy_films_only(cfg, tmp_path) -> None:
+    """Lesion films and annotated films are skipped, and counted as skipped.
+
+    Mixing an annotated film into the denominator would make the headline number
+    depend on the class balance of the split rather than on the model.
+    """
+    scoring_cfg = _scoring_cfg(cfg, tmp_path)
+    model = _FixedLesionNet(_mask_with_hot_cell(3, 4))
+    records = [
+        _normal_film(tmp_path, "N1"),
+        _normal_film(tmp_path, "N2"),
+        _annotated_film(tmp_path),          # label 2, has boxes
+    ]
+
+    scores = evaluate_normal_activation(model, scoring_cfg, records, torch.device("cpu"))
+
+    assert scores["n_scored"] == 2
+    assert scores["n_skipped"] == 1
+    assert scores["flagged_fraction"] == 1.0
+
+
+def test_a_normal_labelled_film_that_carries_boxes_is_skipped(cfg, tmp_path) -> None:
+    """Label and annotation contradict each other, so neither is trusted.
+
+    Scoring it as healthy would count a real lesion's activation as a false
+    positive; scoring it as a lesion would need a label the record denies. It is
+    skipped and counted, so the contradiction shows up as a shrinking
+    denominator rather than as a quietly wrong number.
+    """
+    scoring_cfg = _scoring_cfg(cfg, tmp_path)
+    contradictory = dict(_annotated_film(tmp_path))
+    contradictory["label"] = 0
+
+    scores = evaluate_normal_activation(
+        _FixedLesionNet(_mask_with_hot_cell(3, 4)),
+        scoring_cfg, [contradictory], torch.device("cpu"),
+    )
+
+    assert scores["n_scored"] == 0
+    assert scores["n_skipped"] == 1
+
+
+def test_a_gradcam_checkpoint_is_refused_rather_than_scored(cfg, tmp_path) -> None:
+    """The guard that stops this metric being reported as a meaningless constant.
+
+    `compute_cam` min-max rescales every map, so its maximum is 1.0 on every
+    film ever scored and `flagged_fraction` would read 1.0 for any model at all,
+    trained or random. That is worse than refusing, because it looks like a
+    measurement. The question is only answerable for an absolutely-scaled map.
+    """
+    scoring_cfg = _scoring_cfg(cfg, tmp_path, explain={"target_layer": "features"})
+
+    with pytest.raises(ValueError, match="min-max rescaled"):
+        evaluate_normal_activation(
+            _TinyConvNet(), scoring_cfg, [_normal_film(tmp_path)], torch.device("cpu")
+        )
+
+
+def test_the_threshold_override_moves_the_flagged_count(cfg, tmp_path) -> None:
+    """The cut is reported alongside the count, because it decides the count.
+
+    The single-cell map above peaks at 0.7643 after upsampling, so it is flagged
+    at 0.5 and not flagged at 0.9. Reporting the fraction without the threshold
+    it was taken at would let two runs be compared at two different cuts, which
+    is the one way this number could be made to improve without the model
+    changing at all.
+    """
+    scoring_cfg = _scoring_cfg(cfg, tmp_path)
+    model = _FixedLesionNet(_mask_with_hot_cell(3, 4))
+    films = [_normal_film(tmp_path)]
+
+    lenient = evaluate_normal_activation(
+        model, scoring_cfg, films, torch.device("cpu"), threshold=0.5)
+    strict = evaluate_normal_activation(
+        model, scoring_cfg, films, torch.device("cpu"), threshold=0.9)
+
+    assert lenient["n_flagged"] == 1
+    assert lenient["cam_threshold"] == 0.5
+    assert strict["n_flagged"] == 0
+    assert strict["cam_threshold"] == 0.9

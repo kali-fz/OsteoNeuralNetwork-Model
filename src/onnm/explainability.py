@@ -626,6 +626,115 @@ def evaluate_lesion_localisation(
     return scores
 
 
+def evaluate_normal_activation(
+    model: torch.nn.Module,
+    cfg,
+    records: list[dict],
+    device: torch.device,
+    max_samples: int | None = None,
+    threshold: float | None = None,
+    normal_index: int = 0,
+) -> dict[str, Any]:
+    """How hot does the lesion map get on films that contain NO lesion?
+
+    THE METRIC THAT MEASURES THE ORIGINAL COMPLAINT
+    -----------------------------------------------
+    Every other localisation number in this module is computed over annotated
+    films only -- :func:`_score_maps` skips a record with no boxes, because "did
+    the peak land in the lesion" is undefined when there is no lesion. That
+    leaves the failure this project is actually chasing entirely unmeasured: on a
+    *normal* radiograph the evidence lands on the nearest joint, where
+    overlapping cortical margins resemble a lesion margin. 269 of the 536 test
+    films are normal and, until this existed, not one of them was ever scored for
+    where the model looked.
+
+    ``flagged_fraction`` is the headline: the share of healthy films on which the
+    map claims a lesion somewhere. It is the localisation counterpart of
+    one-minus-specificity, and it is what the project's sub-10% target should be
+    read against -- with the difference that it cannot be bought by moving the
+    decision threshold, because it does not involve the classifier at all.
+
+    WHY THIS REFUSES A GRAD-CAM CHECKPOINT
+    --------------------------------------
+    The same question asked of a CAM is not merely unreliable, it is vacuous.
+    :func:`compute_cam` min-max rescales every map so that some pixel is exactly
+    1.0, so the maximum on a normal film is 1.0 for every film and every model
+    ever trained, and ``flagged_fraction`` would be a constant 1.0 that looks
+    like a measurement. A sigmoid is an absolute per-pixel probability, which is
+    what makes the question answerable. Refusing is better than returning a
+    number that is fine-looking and meaningless.
+
+    WHAT IT DOES NOT SAY
+    --------------------
+    It does not say the hot region is a *joint*. Nothing in BTXRD's labelling can
+    support that: the anatomy column is confounded with the class, since normal
+    films carry generic region labels and lesion films carry specific bones, so
+    there are no normal ankles labelled as ankles anywhere in the dataset. This
+    measures activation on healthy bone. Attributing it specifically to joint
+    anatomy still needs external lower-limb normals.
+    """
+    _require_scorable_geometry(cfg)
+
+    if not has_lesion_head(model):
+        raise ValueError(
+            "activation on normal films is only meaningful for an absolutely-"
+            "scaled map. Grad-CAM is min-max rescaled per image, so its maximum "
+            "is 1.0 on every film by construction and the answer would be a "
+            "constant. Use a lesion-head checkpoint."
+        )
+
+    from .dataset import build_transforms
+
+    size = int(cfg.data.image_size)
+    if threshold is not None:
+        cfg = _with_cam_threshold(cfg, threshold)
+    cut = float(cfg.explain.get("cam_threshold", 0.5))
+    transform = build_transforms(cfg, "test", keep_meta=True)
+
+    model.eval()
+    maxima: list[float] = []
+    means: list[float] = []
+    positives: list[float] = []
+    n_skipped = 0
+
+    for record in records[:max_samples] if max_samples else records:
+        if int(record.get("label", -1)) != normal_index:
+            n_skipped += 1
+            continue
+        # A normal film should carry no annotation. When one does, the label and
+        # the annotation contradict each other and scoring it either way would be
+        # a guess dressed up as a measurement, so it is skipped and counted.
+        annotation = load_annotation(annotation_path_for(record["image_id"], cfg))
+        if annotation["boxes"]:
+            n_skipped += 1
+            continue
+
+        sample = transform(record)
+        image = sample["image"].unsqueeze(0).to(device)
+        heatmap = compute_lesion_map(model, image, size=size)
+
+        maxima.append(float(heatmap.max()))
+        means.append(float(heatmap.mean()))
+        positives.append(float((heatmap >= cut).mean()))
+
+    def _mean(values: list[float]) -> float:
+        return float(np.nanmean(values)) if values else float("nan")
+
+    n_flagged = sum(1 for m in maxima if m >= cut)
+    return {
+        "map_source": "lesion_head",
+        "n_scored": len(maxima),
+        "n_skipped": n_skipped,
+        "n_flagged": n_flagged,
+        "flagged_fraction": (n_flagged / len(maxima)) if maxima else float("nan"),
+        "mean_max_activation": _mean(maxima),
+        "median_max_activation": float(np.median(maxima)) if maxima else float("nan"),
+        "mean_activation": _mean(means),
+        "mean_positive_fraction": _mean(positives),
+        "cam_threshold": cut,
+    }
+
+
 def _with_cam_threshold(cfg, threshold: float):
     """Return a copy of ``cfg`` with ``explain.cam_threshold`` replaced.
 
