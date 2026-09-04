@@ -127,6 +127,11 @@ _worktrees/cloudflare-parity/
 # without anyone having to remember to add it.
 test_radiographs/
 
-# Sweep driver logs, written beside the repo root by scripts/overnight_sweep.py.
-sweep_run.log
-sweep_err.log
+# Transient driver logs written beside the repo root -- sweep runs, one-off
+# scoring runs, anything redirected there while working. Ignored BY PATTERN and
+# not by name, for the same reason test_radiographs/ is: the next one will be
+# called something else, and whoever redirects output into it will not read this
+# file first. They also quote absolute local paths, which is noise in a public
+# repository. Nothing under a subdirectory is affected, so a log a script
+# deliberately commits still can be.
+/*.log

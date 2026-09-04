@@ -32,10 +32,13 @@ bad config should cost one row of the table, not the remaining seven hours.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -65,8 +68,59 @@ STEP_TIMEOUTS: dict[str, int] = {
 #: enough that a teardown hang costs seconds instead of the whole timeout.
 EXIT_GRACE_SECONDS = 30
 
+#: Breathing room after killing a hung step, before the next one asks for the
+#: GPU. The driver does not release a context the instant the process dies.
+GPU_SETTLE_SECONDS = 10
 
-def _run(step: str, argv: list[str], log: Path, expect: Path | None = None) -> bool:
+
+def _kill_tree(process: subprocess.Popen) -> None:
+    """Kill the step AND everything it spawned.
+
+    ``.venv\\Scripts\\python.exe`` on this machine is a **shim**: it re-execs into
+    the Windows Store interpreter, so the process handed to this function is the
+    *parent* of the one doing the work. ``Popen.kill`` terminates the shim and
+    leaves the real interpreter alive -- holding a GPU context, spinning at half
+    a core, and invisible in the sweep log because its stdout handle is gone.
+
+    Measured on 2026-09-04, and it cost most of a day. A ``calibrate.py``
+    orphaned this way at 07:48 was still burning CPU at 17:10. Orphans accumulate
+    across runs, and they are why the ``w010`` calibrate, evaluate and gradcam
+    steps produced no artefacts whatsoever: each started, could not obtain the
+    GPU behind two dead runs' contexts, and sat there until its own timeout.
+
+    ``taskkill /T`` walks the child tree, which ``Popen.kill`` cannot do.
+    """
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        process.kill()
+    # The real interpreter is usually already gone; wait only to reap the shim.
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=30)
+
+
+def _resolve(expect: Path | Callable[[], Path | None] | None) -> Path | None:
+    """Allow a step's completion artefact to be named lazily.
+
+    ``train.py`` stamps its own output directory with the time it started, so the
+    path cannot be written down before launching it. A callable defers the
+    question until the directory exists.
+    """
+    if expect is None or isinstance(expect, Path):
+        return expect
+    return expect()
+
+
+def _run(
+    step: str,
+    argv: list[str],
+    log: Path,
+    expect: Path | Callable[[], Path | None] | None = None,
+) -> bool:
     """Run one pipeline step, treating its OUTPUT FILE as the completion signal.
 
     WHY NOT SIMPLY WAIT FOR THE PROCESS TO EXIT
@@ -86,12 +140,20 @@ def _run(step: str, argv: list[str], log: Path, expect: Path | None = None) -> b
         the same, plus ONE convolution forward pass       -> hangs
         a dataloader iterated with no model at all        -> exits cleanly
 
-    ``scripts/train.py`` happens to exit cleanly, which is why this went unnoticed
-    for so long; ``calibrate.py``, ``evaluate.py``, ``gradcam_report.py`` and
-    ``stratified_report.py`` do not. With ``subprocess.run`` waiting on exit, a
-    single hung step blocked the entire sweep -- the run that prompted this fix
-    sat for 33 minutes on a ``calibrate`` whose ``calibration.json`` had been
-    written, complete and valid, in the first 40 seconds.
+    ``calibrate.py``, ``evaluate.py``, ``gradcam_report.py`` and
+    ``stratified_report.py`` all hang this way. With ``subprocess.run`` waiting on
+    exit, a single hung step blocked the entire sweep -- the run that prompted
+    this fix sat for 33 minutes on a ``calibrate`` whose ``calibration.json`` had
+    been written, complete and valid, in the first 40 seconds.
+
+    ``scripts/train.py`` was believed to be exempt, and this function used to say
+    so. **It is not.** It exits cleanly only when the lesion head is off, which is
+    exactly the configuration the workaround was first tested against. With
+    ``model.lesion_head: true`` it hangs like everything else -- consistent with
+    the bisection above, since the decoder adds convolutions. The cost of that
+    wrong assumption on 2026-09-04: ``w010`` finished training at 09:20 having
+    reached its best epoch, then sat until the four-hour ceiling killed it at
+    12:48. So train is polled for its artefact too; see ``_train_artefact``.
 
     So completion is detected from the artefact the step exists to produce. The
     output is whole before the hang begins -- the hang is strictly after the work
@@ -112,6 +174,7 @@ def _run(step: str, argv: list[str], log: Path, expect: Path | None = None) -> b
         process = subprocess.Popen(argv, cwd=REPO_ROOT, stdout=handle, stderr=subprocess.STDOUT)
 
         produced_at: float | None = None
+        killed = False
         while True:
             code = process.poll()
             if code is not None:
@@ -120,25 +183,32 @@ def _run(step: str, argv: list[str], log: Path, expect: Path | None = None) -> b
                 break
 
             if time.time() - started > timeout:
-                process.kill()
+                _kill_tree(process)
                 handle.write(f"\n*** {step} exceeded {timeout}s and was killed ***\n")
                 ok, status = False, f"TIMED OUT after {timeout}s"
+                killed = True
                 break
 
-            if expect is not None and expect.is_file():
+            target = _resolve(expect)
+            if target is not None and target.is_file():
                 if produced_at is None:
                     produced_at = time.time()
                 elif time.time() - produced_at > EXIT_GRACE_SECONDS:
-                    process.kill()
+                    _kill_tree(process)
                     handle.write(
-                        f"\n*** {step} wrote {expect.name} but did not exit within "
+                        f"\n*** {step} wrote {target.name} but did not exit within "
                         f"{EXIT_GRACE_SECONDS}s. Killed. This is the known ROCm "
                         "teardown hang; the output is complete. See _run. ***\n"
                     )
                     ok, status = True, "ok (output written, killed after teardown hang)"
+                    killed = True
                     break
 
             time.sleep(2.0)
+
+    if killed:
+        # Let the driver reclaim the context before the next step asks for it.
+        time.sleep(GPU_SETTLE_SECONDS)
 
     logger.info("  %s: %s in %.1fs", step, status, time.time() - started)
     return ok
@@ -205,6 +275,15 @@ def _collect(run_dir: Path, split: str) -> dict:
         # it. A run that wins the first and not the second added a picture.
         cam_local = report.get("localisation_gradcam", {})
         out["cam_pointing_game"] = cam_local.get("pointing_game_accuracy")
+        # The share of HEALTHY films the map claims a lesion on. Every other
+        # column here is computed over annotated films only, so this is the one
+        # that speaks to the original complaint -- evidence landing on a normal
+        # joint -- and the one to read against the sub-10% target. Unlike
+        # normal_specificity it cannot be bought by moving the decision
+        # threshold, because the classifier is not involved in it.
+        out["normal_flagged"] = report.get("normal_activation", {}).get(
+            "flagged_fraction"
+        )
 
     history = run_dir / "history.json"
     if history.is_file():
@@ -231,6 +310,11 @@ COLUMNS: list[tuple[str, str, str | None]] = [
     ("chance_pointing_game", "chance", "{:.4f}"),
     ("cam_pointing_game", "cam-pt", "{:.4f}"),
     ("mean_iou", "IoU", "{:.4f}"),
+    # Sits next to IoU because they are the two halves of the same question:
+    # does the map find the lesion when there is one, and does it stay quiet
+    # when there is not. Lower is better here, which is why it is labelled with
+    # what it counts rather than with a bare metric name.
+    ("normal_flagged", "FP-map", "{:.4f}"),
     ("malignant_recall", "mal-rec", "{:.4f}"),
     ("macro_roc_auc", "ROC", "{:.4f}"),
     ("normal_specificity", "spec", "{:.4f}"),
@@ -347,10 +431,32 @@ def main() -> int:
             logger.info("  train: already done, reusing %s", existing.name)
             run_dir = existing
         else:
-            # `expect` is deliberately not passed for training: train.py rewrites
-            # best.pt once per improving epoch, so its presence says nothing about
-            # completion. train.py also exits cleanly, so it needs no workaround.
-            if not _run("train", [PYTHON, "scripts/train.py", *override_argv, "--tag", tag], log):
+            # Training needs the same artefact detection as every other step --
+            # see _run for why the original "train exits cleanly" assumption was
+            # wrong, and what it cost. The signal is summary.json, NOT best.pt:
+            # best.pt is rewritten once per improving epoch, so its presence says
+            # nothing about completion, whereas summary.json is written exactly
+            # once, after the last epoch.
+            #
+            # The directory is stamped with train.py's own start time, so it
+            # cannot be named in advance. Anything already matching this tag is
+            # snapshotted first and ignored, otherwise a re-run of a tag that
+            # completed earlier would read the OLD summary.json in the seconds
+            # before the new directory appears and declare victory instantly.
+            preexisting = {p.name for p in reports.glob(f"{tag}-*")}
+
+            def _train_artefact(_seen: set[str] = preexisting, _tag: str = tag) -> Path | None:
+                fresh = [p for p in reports.glob(f"{_tag}-*") if p.name not in _seen]
+                if not fresh:
+                    return None
+                return max(fresh, key=lambda p: p.stat().st_mtime) / "summary.json"
+
+            if not _run(
+                "train",
+                [PYTHON, "scripts/train.py", *override_argv, "--tag", tag],
+                log,
+                expect=_train_artefact,
+            ):
                 results.append({"run": tag, "error": "train failed"})
                 continue
             run_dir = _newest_run(tag, reports)
@@ -360,26 +466,48 @@ def main() -> int:
             continue
         checkpoint = str(run_dir / "best.pt")
 
-        # calibrate/evaluate/gradcam deliberately get NO --override: since
-        # model.build_model_for_checkpoint reads the architecture out of the
-        # checkpoint itself, they no longer need to be told about it. That is the
-        # same property daily_cycle.py relies on.
+        # calibrate/evaluate/gradcam get THE SAME override chain as train, and
+        # leaving it off was a real bug rather than a tidy simplification.
+        #
+        # build_model_for_checkpoint honours the checkpoint's `model` block and
+        # NOTHING ELSE, by design -- a checkpoint records where its data lived
+        # when it was trained, which is not necessarily where yours is now. So
+        # everything else still comes from YAML, and two things that matter came
+        # from the wrong YAML:
+        #
+        #   data.image_size -- these scripts build their own transforms. A run
+        #     trained at 384px was about to be calibrated, evaluated and scored
+        #     at base.yaml's 256px, which would have quietly invalidated every
+        #     row of Block B and Block C.
+        #
+        #   the threshold block -- full_run.yaml calibrates specificity_floor at
+        #     0.80 and base.yaml calibrates sensitivity_floor at 0.95. Dropping
+        #     the overrides moved w010 and w025 to a lesion threshold of ~0.16
+        #     against v1.0.0's 0.4959. Promoting one of those would have shipped
+        #     a far more trigger-happy operating point while every guarded
+        #     metric still looked like an improvement, because the guards are
+        #     computed from argmax and never see the threshold.
+        #
+        # daily_cycle.py still passes none and still works, which is the property
+        # build_model_for_checkpoint exists to give it. The difference is that a
+        # sweep KNOWS its recipe, so withholding it buys nothing.
         steps: list[tuple[str, list[str], Path]] = [
             (
                 "calibrate",
-                [PYTHON, "scripts/calibrate.py", "--checkpoint", checkpoint],
+                [PYTHON, "scripts/calibrate.py", "--checkpoint", checkpoint,
+                 *override_argv],
                 run_dir / "calibration.json",
             ),
             (
                 "evaluate",
                 [PYTHON, "scripts/evaluate.py", "--checkpoint", checkpoint,
-                 "--split", args.split],
+                 *override_argv, "--split", args.split],
                 run_dir / f"metrics_{args.split}.json",
             ),
             (
                 "gradcam",
                 [PYTHON, "scripts/gradcam_report.py", "--checkpoint", checkpoint,
-                 "--split", args.split],
+                 *override_argv, "--split", args.split],
                 run_dir / f"gradcam_{args.split}" / "gradcam_report.json",
             ),
         ]
