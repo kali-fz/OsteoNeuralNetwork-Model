@@ -90,6 +90,52 @@ def _read_metrics(run: str, split: str = "test") -> dict[str, float]:
         out["malignant_recall_hi"] = float(recall.get("hi", recall["point"]))
     elif "malignant_recall" in metrics:
         out["malignant_recall"] = float(metrics["malignant_recall"])
+
+    out.update(_localisation_metrics(run, split))
+    return out
+
+
+def _localisation_metrics(run: str, split: str = "test") -> dict[str, float]:
+    """Pull the guarded localisation numbers out of the Grad-CAM report.
+
+    ``evaluate.py`` knows nothing about where the evidence landed, so without
+    this the ledger records a model that classifies well and points at a joint
+    exactly as favourably as one that points at the lesion -- which is the
+    failure this whole version exists to fix.
+
+    ONLY LESION-HEAD RUNS CONTRIBUTE
+    --------------------------------
+    A Grad-CAM checkpoint's pointing game is reported by the same file, and it
+    is deliberately ignored here. The two are different instruments and mixing
+    them would put a 0.0936 attribution score and a 0.72 decoder score in the
+    same column; see GUARDED_METRICS for why an unguarded first lesion version
+    is the right outcome rather than a gap to be filled.
+
+    Absent report, absent metrics. That is not an error: ``compare`` skips a
+    metric missing on either side, so an older version registered before this
+    existed still promotes normally instead of being blocked by a number nobody
+    could have recorded at the time.
+    """
+    path = REPORTS / run / f"gradcam_{split}" / "gradcam_report.json"
+    if not path.is_file():
+        return {}
+
+    report = json.loads(path.read_text(encoding="utf-8"))
+    local = report.get("localisation", {})
+    if local.get("map_source") != "lesion_head":
+        return {}
+
+    out: dict[str, float] = {}
+    if local.get("pointing_game_accuracy") is not None:
+        out["lesion_pointing_game"] = float(local["pointing_game_accuracy"])
+
+    # INVERTED ON PURPOSE. The report states the share of healthy films the map
+    # falsely lights up, where lower is better; the ledger stores the share it
+    # correctly stays quiet on, where higher is better. Storing the raw rate
+    # would make the guard read a rising false-positive rate as an improvement.
+    flagged = report.get("normal_activation", {}).get("flagged_fraction")
+    if flagged is not None:
+        out["lesion_normal_quiet"] = 1.0 - float(flagged)
     return out
 
 

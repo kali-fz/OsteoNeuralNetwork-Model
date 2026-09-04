@@ -12,13 +12,17 @@ improve: telling a bone from a hotdog.
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from onnm.ood_eval import evaluate_gate
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from onnm.ood_eval import evaluate_gate  # noqa: E402
 from onnm.versioning import (
     GUARDED_METRICS,
     REGRESSION_TOLERANCE,
@@ -303,3 +307,117 @@ def test_a_manifest_row_whose_image_vanished_is_not_counted(tmp_path: Path) -> N
     report = evaluate_gate(manifest)
     assert report.misc_total == 0
     assert report.misc_rejection is None
+
+
+# ---------------------------------------------------------------------------
+# Localisation guards: the direction of the comparison
+# ---------------------------------------------------------------------------
+# v0.2.0 added two guards for where the evidence lands, and one of them measures
+# a quantity where LOWER is better. `should_promote` has no per-metric direction
+# -- it treats any negative delta as a regression -- so the inversion has to
+# happen when the number is read. Get that wrong and the ledger promotes exactly
+# the regressions the guard was added to block, while reporting an improvement.
+def _write_localisation_report(tmp_path, run, *, map_source, pointing, flagged=None):
+    """Write a gradcam_report.json shaped like the real one."""
+    report_dir = tmp_path / run / "gradcam_test"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "localisation": {"map_source": map_source, "pointing_game_accuracy": pointing}
+    }
+    if flagged is not None:
+        payload["normal_activation"] = {"flagged_fraction": flagged}
+    (report_dir / "gradcam_report.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.fixture
+def localisation_metrics(tmp_path, monkeypatch):
+    """`_localisation_metrics` pointed at a temporary reports directory."""
+    import version_model
+
+    monkeypatch.setattr(version_model, "REPORTS", tmp_path)
+    return version_model._localisation_metrics
+
+
+def test_the_false_positive_rate_is_stored_inverted(tmp_path, localisation_metrics):
+    """The report says 27.5% of healthy films light up; the ledger stores 72.5% quiet.
+
+    This is the whole reason the metric is not called what the report calls it.
+    A raw rate in GUARDED_METRICS would make a model that falsely lights up MORE
+    healthy films read as a positive delta, and promote on it.
+    """
+    _write_localisation_report(
+        tmp_path, "run-a", map_source="lesion_head", pointing=0.7191, flagged=0.2751
+    )
+
+    metrics = localisation_metrics("run-a")
+
+    assert metrics["lesion_normal_quiet"] == pytest.approx(0.7249)
+    assert metrics["lesion_pointing_game"] == pytest.approx(0.7191)
+    assert "flagged_fraction" not in metrics
+
+
+def test_more_false_positives_on_healthy_films_blocks_promotion(tmp_path, localisation_metrics):
+    """The regression this guard exists to catch, end to end.
+
+    A retrain that keeps classifying well but starts claiming lesions on twice
+    as many healthy films must not be allowed to serve.
+    """
+    _write_localisation_report(
+        tmp_path, "old", map_source="lesion_head", pointing=0.72, flagged=0.20
+    )
+    _write_localisation_report(
+        tmp_path, "new", map_source="lesion_head", pointing=0.72, flagged=0.40
+    )
+    incumbent = localisation_metrics("old") | {"macro_roc_auc": 0.92, "malignant_recall": 0.67}
+    candidate = localisation_metrics("new") | {"macro_roc_auc": 0.92, "malignant_recall": 0.67}
+
+    ok, reason = should_promote(candidate, incumbent)
+
+    assert ok is False
+    assert "lesion_normal_quiet" in reason
+
+
+def test_a_gradcam_run_contributes_no_localisation_metrics(tmp_path, localisation_metrics):
+    """Grad-CAM's 0.0936 and a decoder's 0.72 are different instruments.
+
+    Recording the CAM number under the same key would let any lesion head clear
+    the guard on arrival by a factor of seven, which is not a guard. The absence
+    is what makes the FIRST lesion version unguarded and every one after it
+    guarded against a like-for-like predecessor.
+    """
+    _write_localisation_report(
+        tmp_path, "cam-run", map_source="gradcam", pointing=0.0936
+    )
+
+    assert localisation_metrics("cam-run") == {}
+
+
+def test_a_run_with_no_report_at_all_is_not_an_error(tmp_path, localisation_metrics):
+    """Versions registered before this existed must still promote.
+
+    `compare` skips a metric missing on either side, so an empty dict here means
+    "unguarded on localisation", not "blocked".
+    """
+    assert localisation_metrics("never-scored") == {}
+
+    ok, _ = should_promote(
+        {"macro_roc_auc": 0.90, "malignant_recall": 0.65},
+        {"macro_roc_auc": 0.89, "malignant_recall": 0.64},
+    )
+    assert ok is True
+
+
+def test_every_guarded_metric_is_higher_is_better():
+    """A naming check, because the direction is a convention the code relies on.
+
+    `should_promote` reads a negative delta as a regression for every entry in
+    GUARDED_METRICS. Anything whose name states a quantity to be minimised is
+    therefore on the wrong side of the comparison and would invert the gate.
+    """
+    minimised = ("false_positive", "_fp", "error", "rate_of", "flagged", "loss")
+    for name in GUARDED_METRICS:
+        assert not any(word in name for word in minimised), (
+            f"{name!r} reads as a lower-is-better metric but GUARDED_METRICS "
+            "treats every entry as higher-is-better. Invert it where it is read, "
+            "as version_model._localisation_metrics does for normal_quiet."
+        )

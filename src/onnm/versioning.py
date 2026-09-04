@@ -69,13 +69,35 @@ REGISTRY_PATH = REPO_ROOT / "model_versions.json"
 MARKDOWN_PATH = REPO_ROOT / "ONN.md"
 
 #: Metrics compared when deciding whether a new version may be promoted, and
-#: the direction that counts as better. All three are "higher is better", but
-#: naming the map keeps a future lower-is-better metric from being added
-#: silently on the wrong side of the comparison.
+#: the direction that counts as better. Every entry is "higher is better", which
+#: is what lets :func:`should_promote` treat a negative delta as a regression
+#: without carrying a direction per metric.
+#:
+#: A lower-is-better quantity is therefore INVERTED where it is read, not
+#: special-cased here -- see ``version_model._read_metrics``, which stores the
+#: share of healthy films the lesion map stays quiet on rather than the share it
+#: falsely lights up. Adding a raw "false positive rate" to this tuple would
+#: invert the guard silently and promote exactly the regressions it exists to
+#: block.
+#:
+#: WHY THE LOCALISATION GUARDS CARRY A `lesion_` PREFIX
+#: ---------------------------------------------------
+#: They are recorded only for checkpoints that have a lesion head, and are
+#: deliberately NOT comparable with v1.0.0's Grad-CAM pointing game of 0.0936.
+#: That number came from a different instrument -- an attribution map scored
+#: against the malignant class -- so any lesion head would "beat" it by a factor
+#: of seven on arrival, and a guard that is trivially satisfied is not a guard.
+#: Because :func:`compare` skips a metric absent on either side, the first
+#: lesion-head version is simply unguarded on localisation, and every lesion
+#: version after it is guarded against the previous one. That is the comparison
+#: worth making: not "is a decoder better than Grad-CAM", which is settled, but
+#: "did this retrain quietly stop finding lesions".
 GUARDED_METRICS: tuple[str, ...] = (
     "macro_roc_auc",
     "malignant_recall",
     "misc_rejection",
+    "lesion_pointing_game",
+    "lesion_normal_quiet",
 )
 
 #: How much a guarded metric may fall before promotion is refused.
