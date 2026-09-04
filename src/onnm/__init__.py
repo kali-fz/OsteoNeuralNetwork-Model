@@ -1,6 +1,6 @@
 """OsteoNeuralNetwork-Model: explainable bone-tumor detection on plain radiographs."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 CLASS_NAMES: tuple[str, ...] = ("normal", "benign", "malignant")
 MALIGNANT_INDEX: int = 2

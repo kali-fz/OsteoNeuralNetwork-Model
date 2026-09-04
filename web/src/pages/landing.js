@@ -21,10 +21,16 @@ import { getContributors, getGlobe, getStats } from "../api.js";
  * regressed. This number moves when what a visitor gets changes, which includes
  * changes that touch no weights at all.
  *
- * 0.1.1 is the first such move: the model is unchanged, and the release is the
- * Terms gate, the Privacy notice and the governance work behind them.
+ * 0.1.1 was the first such move: the model was unchanged, and the release was
+ * the Terms gate, the Privacy notice and the governance work behind them.
+ *
+ * 0.2.0 changes what the visitor is shown about the model's reasoning. The heat
+ * map is no longer Grad-CAM -- an attribution computed after the answer, which
+ * scored 0.0936 on the pointing game against a chance level of 0.0314 -- but a
+ * lesion map the network is trained to produce, scoring 0.72 on the same test.
+ * Uploads combining two views in one image are also now detected and flagged.
  */
-const MODEL_VERSION = "0.1.1";
+const MODEL_VERSION = "0.2.0";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(

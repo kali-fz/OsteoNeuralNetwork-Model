@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnm"
-version = "0.1.0"
+version = "0.2.0"
 description = "OsteoNeuralNetwork-Model: explainable detection of primary bone tumors on plain radiographs"
 readme = "README.md"
 requires-python = ">=3.10"
