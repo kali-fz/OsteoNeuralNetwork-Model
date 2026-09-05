@@ -1,15 +1,15 @@
 # ONNM: Status & Backlog
 
 Companion to `overview.md`. Checked items are verified done, not assumed.
-Last audited: 2026-09-04 (the lesion head landed as code, and the scorer that can
-tell whether it works landed with it; neither has been run on a real checkpoint yet).
+Last audited: 2026-09-05 (the lesion head is trained, promoted and SERVING; the
+sweep is finished; Grad-CAM is no longer the explanation the site shows).
 
-**Current state:** 509 Python tests and 51 Worker tests green, repo-wide ruff clean.
+**Current state:** 524 Python tests and 56 Worker tests green, repo-wide ruff clean.
 The whole application is **one Cloudflare Worker live at `osteoneuralnetwork.com`**,
 D1 at **schema_version 7**, with the submission review console at `/admin`, a Terms
 acceptance gate in front of sign-in, and a daily retention job. The Streamlit
-deployment has been removed. Model versioning is live at **v1.0.0**
-(`full-20260822-041653`).
+deployment has been removed. Model versioning is live at **v2.0.0**
+(`sweep-20260904-002410-w025-20260904-150749`), release line **0.2.0**.
 
 > **Read this first if you read nothing else.**
 > The Terms gate is **built and deployed** (2026-08-29). `/api/auth/google/start`
@@ -23,13 +23,23 @@ deployment has been removed. Model versioning is live at **v1.0.0**
 > has not been reviewed by anyone qualified, and nobody has walked the Google round
 > trip by hand. Automated checks stop at the session boundary.
 >
-> Second: the localisation claim. Grad-CAM was *measurable* but **roughly at chance**,
-> pointing game 0.0936, and the replacement for it — a supervised lesion head — is now
-> **written, tested and merged, but never trained and never deployed**. The site still
-> serves v1.0.0, which has no head. What is owed is a sweep, a winner, and a promotion;
-> the section "Replacing Grad-CAM: the lesion head" below is the live one.
-> Nothing about the classifier's ROC-AUC, recall or calibration has been affected by any
-> of this: no promoted checkpoint has changed since v1.0.0.
+> Second: **Grad-CAM has been replaced and the replacement is live** (2026-09-04,
+> Worker version `d61dfdf3`). The site serves a trained lesion map, not an attribution.
+> Pointing game went 0.0936 to **0.7228** against a chance level of 0.0314, IoU 0.0428
+> to 0.3584, and the classifier improved rather than being traded away: macro ROC-AUC
+> 0.8934 to 0.9206, malignant recall 0.6327 to 0.6735. Grad-CAM is kept as a fallback
+> and still scores 0.1348 on that same checkpoint, which is the evidence that the gain
+> is the head and not a luckier backbone.
+>
+> **The owner's sub-10% false-positive target is NOT met, and the sweep showed why it
+> will not be met by more training on BTXRD.** Of the 269 normal test films the site
+> calls **16.4%** a lesion, against v1.0.0's 15.2% — false positives went slightly *up*.
+> Across all ten sweep runs, both axes that improve detection (lesion-loss weight,
+> input resolution) make false positives *worse*: sensitivity reaches 0.94 and false
+> positives reach 26%. The serving model has the lowest false-positive rate of every
+> lesion-head run. BTXRD cannot fix this, because no normal film in it is labelled with
+> a specific joint, so there are no healthy ankles or hips to learn a normal joint from.
+> **The next high-value work is external lower-limb normals, not another sweep.**
 
 ---
 
@@ -270,10 +280,18 @@ against a forged cookie).
 
 ### Replacing Grad-CAM: the lesion head
 
-**This is the live thread. Read it before touching anything else in the explainability
-area.** The replacement exists as code and has never been trained, scored on real data,
-or served. `model_versions.json` still records v1.0.0 (`full-20260822-041653`) as the only
-version and the only thing serving; that checkpoint carries no lesion head.
+**DONE, 2026-09-04. The lesion map is what the site shows.** v2.0.0
+(`sweep-20260904-002410-w025-20260904-150749`) is promoted and serving; v1.0.0 is
+`superseded` in the ledger and stays rollback-able with `version_model.py rollback`.
+Grad-CAM is retained as the fallback for any checkpoint without a head, and as the
+historical baseline.
+
+Verified before the deploy rather than assumed: the container image digest tested
+locally with real authenticated `/infer` calls (returning `kind=lesion_map`, floor 0.35,
+`cam_class` null) is byte-identical to the one Cloudflare is running, and the four
+fragile surfaces were re-checked afterwards — landing layout, globe, Google sign-in
+walked end to end through the Terms gate to `accounts.google.com`, and `/api/scan`
+refusing an unauthenticated post.
 
 **Built and merged, 2026-09-04:**
 
@@ -304,35 +322,109 @@ version and the only thing serving; that checkpoint carries no lesion head.
       *same* lesion-head checkpoint: if `point` rises while `cam-pt` does not, the run
       added a second output without moving the classifier, which is not the point.
 
-**What is left, in order:**
+**All of it was completed on 2026-09-04:**
 
-- [ ] **Re-score the sweep checkpoints.** No retraining: `--resume` reuses every
-      `best.pt`. Delete the stale reports first or the resume logic will skip the step
-      and keep the old Grad-CAM numbers:
+- [x] **Sweep run to completion** — 10 runs, `reports/sweep-20260904-002410/summary.txt`.
+      Baseline (no head) plus lesion weights 0.10/0.25/0.50/1.00/2.00 at 256px, three
+      384px runs and one 512px run.
+- [x] **Chance baseline reported in every row** (`chance` column, ~0.031).
+- [x] **Winner picked, checked on the real failure films, registered, deployed.**
+      `check_test_radiographs.py` passes 4/4: the normal femur that used to attend to
+      the ball-and-socket joint now reads Normal at 76.1% with no heat on the joint,
+      and the osteosarcoma and both composites are outlined on the lesion.
+- [x] **Latency measured before promoting** — one CPU thread, as the container runs:
+      256px 962 ms, 384px 2155 ms (2.24x), 512px 3761 ms (3.91x). End-to-end `/infer`
+      at 256px is ~0.8 s. The winner is 256px, so serving cost is unchanged; a 384px
+      promotion would more than double it against the 5-hour monthly breaker.
+- [x] **Deployed** via `npm run deploy` (full container release, image digest changed).
 
-      Remove-Item reports\sweep-<stamp>-*\gradcam_test\gradcam_report.json
-      .venv\Scripts\python.exe scripts\overnight_sweep.py --plan configs\sweeps\lesion_head.yaml --stamp <stamp> --resume
+**Three defects were found and fixed while doing this. Do not reintroduce them:**
 
-- [ ] **Run the chance baseline once.** It depends on the architecture and the films, not
-      on which checkpoint it is pointed at, so one run covers the whole sweep:
-      `python scripts\gradcam_report.py --checkpoint reports\<run>\best.pt --split test --chance-baseline`
-- [ ] **Read the table and pick a winner.** A run qualifies only if it improves
-      localisation *and* holds the guarded metrics: `onnm.versioning` refuses a promotion
-      that drops macro ROC-AUC below ~0.8834 or malignant recall below ~0.6227.
-- [ ] **Run `scripts/check_test_radiographs.py` on the winner.** The complaint that
-      started this work — evidence landing on the joint rather than the lesion — is
-      invisible in every other metric the project records.
-- [ ] **Register it.** `python scripts/version_model.py register --run <run> --level major`
-      (`major` per ONN.md's own definition: a new task head).
-- [ ] **Measure container latency first if the winner is 384px or 512px.**
-      `data.image_size` travels inside the checkpoint, so whichever run wins becomes the
-      *serving* resolution, on half a vCPU. 384px is 2.25x the pixels of 256px.
-- [ ] **Publish and deploy.** `scripts/publish_model.py` + `--verify`, then the **full
-      container release** (`npm run deploy`). The runbook's `--containers-rollout=none`
-      path does not apply: the image changes.
-- [ ] **Correct the claims afterwards.** `overview.md`, `MODEL_CARD.md` and this file all
-      still describe the explanation as Grad-CAM at chance. That stays true until a
-      lesion-head checkpoint is actually serving, and must be rewritten the day one is.
+- [x] **`_kill_tree`, not `Popen.kill`.** `.venv/Scripts/python.exe` is a shim that
+      re-execs into the Store interpreter, so killing it orphans the real process, which
+      keeps its GPU context and spins. Orphans starved later steps of the GPU and cost
+      most of a day.
+- [x] **`train.py` hangs too when the lesion head is on**, so it is polled for
+      `summary.json` like every other step. The old comment claiming it exits cleanly was
+      true only for the no-head configuration it had been tested against.
+- [x] **calibrate/evaluate/gradcam need the same `--override` chain as train.**
+      `build_model_for_checkpoint` honours only the checkpoint's `model` block, by
+      design, so `data.image_size` and the whole threshold block still come from YAML.
+      Without the overrides the 384/512 runs would have been scored at 256px, and every
+      run was calibrated at `sensitivity_floor 0.95` (threshold ~0.16) instead of
+      production's `specificity_floor 0.80` (0.4959) — which would have shipped a far
+      more trigger-happy model while every guarded metric still read as an improvement.
+
+**A measurement trap that already caused one wrong claim. Read this before quoting any
+specificity on this project:**
+
+`evaluate` computes the normal-vs-lesion decision at the calibrated threshold — the
+decision the site actually makes — and used to print it and throw it away. Three other
+numbers look like it and answer different questions:
+
+| number | what it actually measures |
+|---|---|
+| `metrics.per_class.normal.specificity` | argmax over three classes, ignores the threshold |
+| `operating_point_from_val.specificity` | malignant-vs-rest; negatives are normal **and benign** |
+| `calibration.achieved_specificity` | right decision, but on **validation**, not test |
+| `binary_decision.specificity` | **the right one.** Now saved, guarded, and in the sweep table as `FP-svd` |
+
+- [x] Saved into `metrics_test.json`, carried into the ledger as
+      `normal_specificity_at_threshold`, surfaced as the `FP-svd` sweep column.
+- [x] `version_model.py refresh <version>` added, because a metric introduced after a
+      version is registered is missing from that row forever and `compare()` skips a
+      metric absent on either side — leaving the next candidate unguarded on exactly the
+      number just judged worth adding. It rewrites one version's metrics and cannot move
+      what is serving.
+- [x] Run-directory lookup no longer matches on prefix. `r384-w050` was matching
+      `r384-w050-aug` and silently reporting its numbers, so the table printed the aug
+      row twice and lost the real one. `tests/test_sweep_runner.py` pins it.
+
+**Promotion is now guarded on six metrics**, all higher-is-better: `macro_roc_auc`,
+`malignant_recall`, `misc_rejection`, `lesion_pointing_game`, `lesion_normal_quiet`,
+`normal_specificity_at_threshold`. The two false-positive guards between them refuse
+**all six** later sweep runs — including `r384-w050`, which wins on ROC, recall,
+pointing game and IoU and would have pushed false positives from 16.4% to 20.8%. That
+is the guard working, not an obstacle to route around.
+
+### What to do next, in value order
+
+- [ ] **External lower-limb normals (was Feature 7.2).** The single highest-value item,
+      and the only one that can reach the sub-10% target. BTXRD's anatomy label is
+      confounded with the class — `tibia` is 88 lesion / 0 normal, `lower limb` is
+      0 lesion / 142 normal — so it contains no normal film labelled with a specific
+      joint and cannot teach what a healthy joint looks like. `fetch_controls.py` never
+      scrapes; it reads a directory downloaded deliberately and records licence per row.
+      Candidates to licence-check, none confirmed: LERA (Stanford, lower-extremity,
+      directly the failing anatomy), FracAtlas, OAI/MOST. MURA is **upper-limb only** and
+      does not address this. Spec: `.github/agents/bone-cancer-dataset-researcher.agent.md`.
+- [ ] **Correct the stale claims in `overview.md` and `MODEL_CARD.md`.** Both still
+      describe the explanation as Grad-CAM at chance. That became false on 2026-09-04.
+- [ ] **Feature 3: the withhold gate** (`src/onnm/plausibility.py`, not yet written).
+      Classifier says lesion, locator finds nothing compact -> withhold and say why. Now
+      implementable, since the locator exists. It must ship together with the
+      `withThreshold` fix in `web/src/api.js`: that function deliberately recomputes the
+      uncertainty gate in the browser from `class_probabilities` alone, so a
+      localisation-based withhold cannot be recomputed there, and moving the threshold
+      slider would resurrect a finding the server had withheld. Ship the verdict once as
+      a precomputed `{withheld, reason}` and OR it in. Keep the invariant that it can
+      only ever withdraw a positive finding, never create one.
+- [ ] **Feature 4: the admin correction tool.** Migration `0008_review_regions.sql`
+      (additive `ALTER TABLE submissions ADD COLUMN` only), `PATCH /api/admin/regions/:id`
+      registered inside the existing `/api/admin/*` guard so it inherits the four-check
+      auth chain and needs no new auth design, SVG overlay driven by Pointer Events (the
+      owner reviews on a phone), export as LabelMe against the 256px preprocessed image
+      so `load_annotation` reads it unchanged. Refuse edits once `batch_id IS NOT NULL`,
+      or an exported row could be trained on twice.
+- [ ] **Feature 6: automation.** Active-learning queue order, hard-negative harvesting of
+      the site's own false positives, flip-consistency self-supervision — that last one
+      needs no labels, so it trains on the 1,879 normal films that have no supervision
+      today, which is where the false-positive problem lives.
+- [ ] **Feature 7.1: copy-paste lesion augmentation.** Train split only, capped at 30% of
+      malignant training samples, normal-into-normal paste controls so a blended seam
+      cannot become a malignant cue, and recalibrate afterwards.
+- [ ] **Run `daily_cycle.py` end to end.** It has never completed a full pass; the eight
+      queued community submissions are the test case.
 
 ### Grad-CAM: the heatmap was inverted; fixed 2026-08-23
 

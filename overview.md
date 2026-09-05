@@ -8,8 +8,10 @@ Human-facing detail lives in `README.md`.
 ## Mission
 
 Explainable detection of primary bone tumours on plain radiographs. Classifies each film
-**normal / benign / malignant**, and produces Grad-CAM heatmaps that are *scored against
-ground-truth lesion boxes* rather than merely displayed.
+**normal / benign / malignant**, and produces a **trained lesion map** -- a segmentation
+head supervised by BTXRD's lesion polygons -- that is *scored against ground-truth lesion
+boxes* rather than merely displayed. Grad-CAM is retained as a fallback for checkpoints
+without a head, and as the historical baseline it replaced.
 
 **Hard constraint: $0 running cost.** Open dataset, local AMD GPU, free/open-source
 libraries only (MIT/Apache-2.0). No cloud compute, no paid APIs, no telemetry. Kaggle's
@@ -568,10 +570,26 @@ user or system environment variables, since a scheduled task has no shell sessio
 | run | epochs | val ROC-AUC | notes |
 |---|---|---|---|
 | `smoke-20260822-012828` | 1 | ~0.5 | throwaway; bal-acc 0.483 |
-| **`full-20260822-041653`** | **26 (best 19)** | **0.8905** | **current best; calibrated + test-evaluated** |
+| `full-20260822-041653` | 26 (best 19) | 0.8905 | v1.0.0; served until 2026-09-04, now `superseded` |
 | `overnight-20260822-055132` | 39 (best 24) | 0.8629 | aggressive augs + OHEM; **regressed** |
+| **`sweep-20260904-002410-w025-...`** | **29 (best 22)** | **0.9126** | **v2.0.0, SERVING; first with a lesion head** |
 
-**`full-20260822-041653` held-out test** (n=536): macro ROC-AUC 0.893, PR-AUC 0.814,
+A ten-run sweep on 2026-09-04 (`reports/sweep-20260904-002410/summary.txt`) compared a
+no-head control against lesion-loss weights 0.10-2.00 at 256px and three higher
+resolutions. The winner is the 256px, weight-0.25 run.
+
+**v2.0.0 held-out test** (n=536): macro ROC-AUC 0.921, PR-AUC 0.861, F1 0.804, balanced
+accuracy 0.787. Malignant recall 0.673 [0.531–0.796]. 1 normal film called malignant.
+Calibrated T=1.28, threshold 0.361. Pointing game **0.7228** against a chance level of
+0.0314, mean IoU 0.3584 — the explanation is now a trained lesion map rather than
+Grad-CAM, which scored 0.0936 on v1.0.0 and still scores 0.1348 on this checkpoint.
+
+**False positives on normal films did not improve:** 16.4% of the 269 normal test films
+are called a lesion, against v1.0.0's 15.2%. The recall and ranking gains were bought
+with a slight rise there. The acceptance target is under 10% and is unmet; every run in
+the sweep that improved detection made this worse, so it is not a tuning gap. See TODO.md.
+
+**v1.0.0 held-out test**, for comparison (n=536): macro ROC-AUC 0.893, PR-AUC 0.814,
 F1 0.764, balanced accuracy 0.749. Malignant recall 0.633 [0.490–0.776]. 3 normal films
 called malignant. Calibrated T=1.41, threshold 0.496 → 0.813 sensitivity / 0.848
 specificity. ECE improved 0.053 → 0.017.
@@ -580,7 +598,8 @@ specificity. ECE improved 0.053 → 0.017.
 is genuinely worse ranking, not recoverable by tuning the threshold. False positives did
 fall (65 → 37 normal films called lesion) but malignant recall fell with them (0.653 →
 0.469), which is a bias shift, not better discrimination. The aggressive augmentation and
-OHEM penalty are the suspects. `full-20260822-041653` remains the checkpoint to serve.
+OHEM penalty are the suspects. It was superseded on 2026-09-04 by the lesion-head sweep
+winner, which beat it on both ranking and recall rather than trading one for the other.
 
 **Known open issue:** false positives on complex joint anatomy (a normal pelvis flagged at
 59.6%). The durable fix is more normal controls in training, not a harsher loss, the

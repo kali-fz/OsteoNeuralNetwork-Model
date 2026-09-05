@@ -1,8 +1,9 @@
 # Model Card: OsteoNeuralNetwork-Model (ONNM)
 
-DenseNet-121 classifier for triage of primary bone tumours on plain 2D
-radiographs. Last updated 2026-08-22, describing checkpoint
-`full-20260822-041653` (the pinned production run).
+DenseNet-121 classifier with a trained lesion-localisation head, for triage of
+primary bone tumours on plain 2D radiographs. Last updated 2026-09-05,
+describing **v2.0.0** / `sweep-20260904-002410-w025-20260904-150749`, the pinned
+production run. It replaced v1.0.0 (`full-20260822-041653`) on 2026-09-04.
 
 ---
 
@@ -28,7 +29,7 @@ clinician regardless of the model's output.
 | Head | 3-class linear head: normal / benign / malignant |
 | Input | 256 px grayscale, aspect-preserved, padded; MONAI transform chain |
 | Verdict | calibrated P(benign)+P(malignant) vs a validation-fitted threshold |
-| Explainability | Grad-CAM on `features.denseblock4` |
+| Explainability | Trained lesion map (FPN-lite decoder, 64x64, ~181k params); Grad-CAM on `features.denseblock4` retained as fallback |
 | Hardware | trained on one AMD RX 7900 XT (ROCm 7.2.1, Windows) |
 
 ## Training data
@@ -47,19 +48,26 @@ clinician regardless of the model's output.
 
 ## Performance (measured, not projected)
 
-Test-split results for `full-20260822-041653`, threshold fitted on validation
-only:
+Test-split results for **v2.0.0** (`sweep-20260904-002410-w025-20260904-150749`),
+threshold fitted on validation only. v1.0.0's figures are given alongside, since
+those are what these replaced.
 
-- **Malignant recall (test): 0.633, 95% CI [0.490-0.776].** Roughly **one in
-  three malignant films is missed**. This is the number that matters most for
-  anyone reading a result, so it is stated first: a "normal" verdict from this
-  model is weak evidence of absence, and must never be used to decide against
-  seeking care.
-- **Macro ROC-AUC (test): 0.893**
+- **Malignant recall (test): 0.673, 95% CI [0.531-0.796]** (v1.0.0: 0.633).
+  Roughly **one malignant film in three is still missed**. This is the number
+  that matters most for anyone reading a result, so it is stated first: a
+  "normal" verdict from this model is weak evidence of absence, and must never
+  be used to decide against seeking care.
+- **Macro ROC-AUC (test): 0.921** (v1.0.0: 0.893)
 - Validation operating points (specificity-floor mode):
-  - holding specificity ≥ 80% → sensitivity ≈ 78%
-  - holding specificity ≥ 90% → sensitivity ≈ 67% (~6 more missed cancers
-    per 49 than the 80% point)
+  - holding specificity ≥ 80% → sensitivity ≈ 88% (v1.0.0: ≈ 78%)
+- **False positives did not improve, and the acceptance target is not met.** Of
+  the 269 normal test films, the served threshold calls **16.4%** of them a
+  lesion, against v1.0.0's 15.2%. The recall and ROC gains above were bought
+  with a slight rise here, not alongside a fall. The target is under 10%. Across
+  a ten-run sweep, every configuration that improved detection made this worse,
+  and the model now serving has the lowest false-positive rate of any run with a
+  lesion head — so this is not a tuning gap. See TODO.md: BTXRD labels no normal
+  film with a named joint, so it cannot teach what a healthy joint looks like.
 - Calibration: temperature scaling (T ≈ 1.41) fitted on validation;
   the app refuses to present an uncalibrated probability as a policy.
 
@@ -75,15 +83,28 @@ interval is the result.
   (observed cases: a normal pelvis at 59.6%, a normal femur at 69.8%). The
   planned fix is more normal controls in training; the app-layer uncertainty
   gate only contains the symptom.
-- **Grad-CAM localisation is scored, and roughly at chance.** Measured
-  2026-08-23 on the pinned checkpoint over 267 annotated test films:
-  pointing game **0.0936**, mean IoU 0.0428, mean coverage 0.0440. A lesion box
-  covering around a tenth of the frame is hit about a tenth of the time by
-  accident, so **this does not yet support the claim "the model looks at
-  lesions"** -- the chance baseline has not been established. Earlier readings of
-  0.0000 were an artefact: the heatmap was inverted (MONAI's default
-  postprocessing maps min/max to 1/0), which is fixed. Note the correction
-  changed no prediction -- the CAM is display-only.
+- **Localisation supports the claim that the model looks at lesions. It did not
+  before v2.0.0.** v1.0.0 explained itself with Grad-CAM, scoring a pointing
+  game of **0.0936** over 267 annotated test films against a measured chance
+  level of **0.0314** — barely distinguishable from dropping the peak at random,
+  and so not evidence of anything. v2.0.0 replaces it with a decoder trained on
+  BTXRD's lesion polygons, scoring **0.7228** on the same films against the same
+  boxes, mean IoU **0.3584** (from 0.0428). The gain is the head and not a
+  better backbone: Grad-CAM scored on that same v2.0.0 checkpoint still returns
+  0.1348.
+
+  **Two limits, stated plainly.** The lesion map claims a lesion somewhere on
+  **19.7%** of healthy films, measured on the absolute sigmoid — that is the
+  direct measure of the failure this work was aimed at, and it is not solved.
+  And nothing here shows the remaining activation is specifically *joint*
+  anatomy: BTXRD's anatomy label is confounded with the class, so it contains no
+  normal film labelled with a named joint and the question cannot be answered
+  from this dataset at all.
+
+  Historical note: pointing-game readings of 0.0000 before 2026-08-23 were an
+  artefact of an inverted heatmap (MONAI's default postprocessing maps min/max
+  to 1/0), fixed then. That correction changed no prediction — the CAM was
+  display-only.
 - **Single distribution.** Trained and evaluated on BTXRD only. No external
   validation exists; performance on other scanners, populations, or
   acquisition protocols is unknown and should be presumed worse.
